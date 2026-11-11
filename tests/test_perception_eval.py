@@ -1,11 +1,10 @@
 import json
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from typesafe_computer_use import perception_eval as pe
 from typesafe_computer_use.models import Item
-from typesafe_computer_use.platform_adapter import desktop
 
 
 def item(text, x1, y1, x2, y2, index=0):
@@ -138,11 +137,15 @@ def test_a_region_is_read_as_a_crop_and_scored_in_capture_pixels(tmp_path):
     assert report["summary"]["text"]["recall"] == 1.0
 
 
-def test_the_current_pipeline_reads_the_file_through_ocr_alone(monkeypatch):
-    monkeypatch.setattr(desktop, "recognize_text", lambda image: [("Open", 0.9, (10.0, 10.0, 50.0, 30.0))])
-    items, seconds = pe.current_pipeline(Image.new("RGB", (200, 100)))
-    assert [it.text for it in items] == ["Open"]
-    assert "ocr_region_pct" not in seconds and "total" in seconds
+def test_the_current_pipeline_reads_text_and_icons_off_the_file_alone(fake_models):
+    image = Image.new("RGB", (200, 100), "white")
+    ImageDraw.Draw(image).ellipse((120, 20, 150, 50), outline="black", width=3)
+    fake_models.lines = [("Open", 0.9, (10.0, 10.0, 50.0, 30.0))]
+    fake_models.icons = [((118.0, 18.0, 152.0, 52.0), 0.7)]
+    fake_models.captions = lambda icon: "circle"
+    items, seconds = pe.current_pipeline(image)
+    assert sorted((it.text, it.source) for it in items) == [("Open", "ocr"), ("circle", "icon")]
+    assert "ocr_region_pct" not in seconds and {"total", "ocr", "detect", "caption"} <= set(seconds)
 
 
 def test_compare_reports_the_differences_and_each_target_that_changed():

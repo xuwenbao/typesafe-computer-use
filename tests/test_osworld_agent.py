@@ -25,6 +25,8 @@ from typesafe_computer_use.decide import Decision
 from typesafe_computer_use.osworld import ocr, tree
 from typesafe_computer_use.osworld.agent import SAVE_A11Y, JevAgent, describe
 from typesafe_computer_use.osworld.desktop import APP_PID, OSWorldDesktop
+from typesafe_computer_use.parse import detect as parse_detect
+from typesafe_computer_use.parse import ocr as parse_ocr
 from typesafe_computer_use.platform_adapter import current, host
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "osworld" / "ubuntu-chrome.xml").read_text()
@@ -78,6 +80,8 @@ def jev(monkeypatch, tmp_path):
         fake = FakeTypeSafe(policy)
         monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)
         monkeypatch.setitem(ocr.BACKENDS, "fake", lambda: lambda image: list(lines))
+        monkeypatch.setattr(parse_ocr, "recognize_text", lambda image: list(lines))
+        monkeypatch.setattr(parse_detect, "detect", lambda image, *args, **kwargs: [])
         kwargs.setdefault("writer", None)
         agent = JevAgent("fake", out_root=tmp_path, step_seconds=STEP_SECONDS, **kwargs)
         made.append(agent)

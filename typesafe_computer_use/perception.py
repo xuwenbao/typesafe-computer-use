@@ -1,26 +1,41 @@
-"""Turn the display into clickable items: OCR text blocks and accessibility controls."""
+"""Turn the display into clickable items: text blocks, icons, and accessibility controls.
+
+One pipeline on every desktop: RapidOCR reads the lines and YOLOv9 finds the icons over the
+frontmost window's region, the two are fused line by line, the remaining lines join into blocks,
+Florence-2 describes the icons that carry no text, and the result merges with the app's own
+controls. The models are in `parse/`; this module decides what to read and what to keep.
+"""
 
 from __future__ import annotations
 
 import math
 import threading
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
 from .config import MAX_OPTIONS, MIN_OCR_CONFIDENCE
 from .models import MENU_BAR_PT, AxNode, Box, Item, Screen
+from .parse import caption as parse_caption
+from .parse import detect as parse_detect
+from .parse import ocr as parse_ocr
+from .parse.fuse import fuse
 from .platform_adapter import desktop
 from .timing import OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, phase
 
 Line = tuple[str, float, Box]
-PIPELINE_VERSION = "platform-ocr-1"  # names this pipeline in an evaluation report, beside the OS it ran on
+Detection = tuple[Box, float]  # an icon box in capture pixels, and the detector's score
+PIPELINE_VERSION = "omniparser-1"  # names this pipeline in an evaluation report and a run's record
 ECHO_CHARS = 24
 MIN_BOX_OVERLAP = 0.5  # intersection over the smaller box
 MIN_TOKEN_OVERLAP = 0.5
-ICON_HOSTS = {"button", "link"}  # one target each; a tab or a row holds others, such as its close box
+TEXT_SOURCES = ("ocr",)
+ICON_SOURCES = ("icon", "icon+ocr")
+# An icon box whose gray levels span less than this is flat: the detector's guess at a patch of
+# background, which the captioner still describes, as an SVG path or a word it makes up.
+ICON_MIN_CONTRAST = 32
 
 # OCR costs about two thirds of a step, and it scales with the amount of text, so the way to make it
 # cheaper is to read less of the screen: the frontmost window's own columns instead of the display,
@@ -41,14 +56,14 @@ def capture(
     url: str | None = None,
     browser: str = "",
     timing: dict[str, float] | None = None,
-    ahead: OcrCache | None = None,
+    ahead: ParseCache | None = None,
 ) -> Screen:
     """Capture the main display, or load a saved capture for replay (then app/url are taken as given).
 
     Each query below is a round trip to the window server, AX, or AppleScript. Pass `timing` to
     record the seconds each one costs under "screenshot", "app", "window", "field", and "url".
     Pass `ahead`, the run's OCR cache, to start reading the capture while those queries run (see
-    `OcrCache.read_ahead`).
+    `ParseCache.read_ahead`).
     """
     replay = image_path is not None and app is not None
     with phase(timing, "screenshot"):
@@ -90,9 +105,9 @@ def perceive(
     budget: int,
     goal: str,
     timing: dict[str, float] | None = None,
-    cache: OcrCache | None = None,
+    cache: ParseCache | None = None,
 ) -> list[Item]:
-    """Everything worth clicking on this screen: OCR text blocks, plus the app's own controls.
+    """Everything worth clicking on this screen: text blocks and icons, plus the app's own controls.
 
     Fills `screen.ax_refs` on the way, so an item that came from the accessibility tree can be
     pressed through it later. The merge renumbers everything, hence the side table over the
@@ -102,11 +117,10 @@ def perceive(
     Fills `screen.offscreen` too: labelled controls the app exposes but does not show. They are
     offered on their own, never as items, because nothing on the capture points at them.
 
-    A `cache` carries the previous capture's OCR, so only the tiles that changed are read again.
+    A `cache` carries the previous capture's reading, so only the tiles that changed are read again.
     Pass None to read the whole region every time, which is what a replay and an inspection do.
     """
-    with phase(timing, "ocr"):
-        blocks = ocr(screen, budget, goal, cache, timing)
+    found = ocr(screen, budget, goal, cache, timing)
     with phase(timing, "ax"):
         nodes, hidden = ax_nodes(screen, budget)
         gray = screen.image.convert("L")
@@ -114,7 +128,7 @@ def perceive(
         nodes = [node for node in nodes if node not in blank]
         hidden = hidden + blank
         controls = to_ax_items(nodes, screen.scale)
-    merged = merge_with_origins([block for block in blocks if not in_field(block, screen)], controls, budget)
+    merged = merge_with_origins(found, controls, budget)
     screen.ax_refs.clear()
     screen.ax_refs.update({it.index: nodes[origin].ref for it, origin in merged if origin is not None and nodes[origin].ref})
     screen.covered.clear()
@@ -131,38 +145,72 @@ def ocr(
     screen: Screen,
     budget: int,
     goal: str,
-    cache: OcrCache | None = None,
+    cache: ParseCache | None = None,
     timing: dict[str, float] | None = None,
 ) -> list[Item]:
-    """The screen's text as items, filtered and merged into blocks.
+    """The screen's text blocks and icons as items, without the accessibility tree.
+
+    The lines are filtered first: too faint, the goal echoed back, or inside the focused one-line
+    field, whose value is in the state already. The rest fuse with the icon boxes (see
+    `parse.fuse`); the lines no icon took join into blocks, an icon that holds text takes it, and
+    an icon with none is described by the captioner, unless its box is flat.
 
     The filter runs over the raw lines every step, including the reused ones, so a cached line is
     treated exactly as a freshly read one. A read the cache made ahead of the step counts as its
-    own when it read this screen (see `OcrCache.read_ahead`), and the seconds it took go under
-    "ocr_ahead".
+    own when it read this screen (see `ParseCache.read_ahead`); the step's "ocr" phase is then the
+    wait for it, and the seconds it took go under "ocr_ahead".
     """
-    ahead = cache.take_ahead(screen) if cache is not None else None
-    lines, read_pct, rects = ahead.lines if ahead is not None else ocr_lines(screen, cache)
+    if cache is not None:
+        with phase(timing, "ocr"):
+            ahead = cache.take_ahead(screen)
+    else:
+        ahead = None
+    reading = ahead.reading if ahead is not None else read_screen(screen, cache, timing)
     if timing is not None:
-        timing[OCR_REGION_PCT] = round(read_pct, 1)
-        timing[OCR_RECTS] = rects
+        timing[OCR_REGION_PCT] = round(reading.read_pct, 1)
+        timing[OCR_RECTS] = reading.rects
         if ahead is not None:
             timing[OCR_AHEAD] = round(ahead.seconds, 3)
     echoes = goal_echoes(goal)
     kept: list[Line] = [
-        (t.strip(), c, b) for t, c, b in lines if t.strip() and c >= MIN_OCR_CONFIDENCE and not is_echo(t, echoes)
+        (t.strip(), c, b)
+        for t, c, b in reading.lines
+        if t.strip() and c >= MIN_OCR_CONFIDENCE and not is_echo(t, echoes) and not in_field(Item(0, t, c, *b), screen)
     ]
-    return to_items(merge_blocks(kept), budget)
+    texts, icons = fuse(kept, reading.icons)
+    items = [Item(0, t, c, *b) for t, c, b in merge_blocks(texts)]
+    items += [Item(0, i.text, i.text_confidence or 0.0, *i.box, source="icon+ocr") for i in icons if i.text is not None]
+    gray = screen.image.convert("L")
+    bare = [i for i in icons if i.text is None and contrast(gray, i.box) >= ICON_MIN_CONTRAST]
+    if bare:
+        with phase(timing, "caption"):
+            captions = parse_caption.caption(screen.image, [i.box for i in bare], cache.captions if cache is not None else None)
+        items += [
+            Item(0, text, i.score, *i.box, role="icon", source="icon") for i, text in zip(bare, captions, strict=True) if text
+        ]
+    items = order_items(items)
+    return order_items([items[i] for i in kept_by_budget(items, budget)])
+
+
+def contrast(gray: Image.Image, box: Box) -> int:
+    """The spread of gray levels inside `box`, 0 for a box with no pixel on the capture."""
+    x1, y1 = max(0, math.floor(box[0])), max(0, math.floor(box[1]))
+    x2, y2 = min(gray.width, math.ceil(box[2])), min(gray.height, math.ceil(box[3]))
+    if x2 <= x1 or y2 <= y1:
+        return 0
+    low, high = gray.crop((x1, y1, x2, y2)).getextrema()
+    return high - low
 
 
 # ------------------------------------------------------------------ reading less of the screen
 
 
-class OcrCache:
-    """The previous capture's OCR, and what makes it reusable.
+class ParseCache:
+    """The previous capture's reading, and what makes it reusable.
 
-    Holds a reduced grayscale copy of the capture, to find what moved, and the raw lines before
-    merging and filtering, in full-capture pixels. One cache belongs to one run.
+    Holds a reduced grayscale copy of the capture, to find what moved; the raw OCR lines before
+    merging and filtering, and the icon boxes, both in full-capture pixels; and the icon captions
+    by crop. One cache belongs to one run.
     """
 
     def __init__(self) -> None:
@@ -171,6 +219,9 @@ class OcrCache:
         self.region: Box | None = None
         self.thumb: Image.Image | None = None
         self.lines: list[Line] = []
+        self.icons: list[Detection] | None = None  # None until a detection ran over this region
+        self.unchanged = False  # whether the last read found no tile changed, so its icons still hold
+        self.captions = parse_caption.CaptionCache()
         self._ahead: ReadAhead | None = None
 
     def reusable(self, screen: Screen, region: Box, thumb: Image.Image) -> bool:
@@ -183,16 +234,21 @@ class OcrCache:
             and self.region == region
         )
 
-    def store(self, screen: Screen, region: Box, thumb: Image.Image, lines: list[Line]) -> None:
+    def store(self, screen: Screen, region: Box, thumb: Image.Image, lines: list[Line], unchanged: bool = False) -> None:
         self.app, self.window, self.region, self.thumb, self.lines = screen.app, screen.window, region, thumb, list(lines)
+        self.unchanged = unchanged
 
-    def adopt(self, other: OcrCache) -> None:
-        """Take what `other` remembers of the previous capture as this cache's own."""
+    def adopt(self, other: ParseCache) -> None:
+        """Take what `other` remembers of the previous capture as this cache's own. The captions are
+        shared, not copied: they hold for any capture."""
         self.app, self.window, self.region, self.thumb = other.app, other.window, other.region, other.thumb
         self.lines = list(other.lines)
+        self.icons = None if other.icons is None else list(other.icons)
+        self.unchanged = other.unchanged
+        self.captions = other.captions
 
-    def copy(self) -> OcrCache:
-        other = OcrCache()
+    def copy(self) -> ParseCache:
+        other = ParseCache()
         other.adopt(self)
         return other
 
@@ -200,11 +256,12 @@ class OcrCache:
         """Start reading `image` on a thread of its own, while the capture asks which app and window it
         shows. Where those queries are slow, as an OSWorld VM's tree is, the read overlaps them.
 
-        The read is `ocr_lines` over the previous capture's app and window, into a copy of this cache,
-        so it is the very read `ocr_lines` makes once the capture finds them unchanged, as a page that
-        stays in one window does; `ocr` takes it then, and reads the screen itself otherwise. The
-        first capture has nothing to go on, so nothing is read ahead of it. A read still running
-        from an earlier capture is waited out first, so the OCR engine never reads two at once.
+        The read is `read_screen` over the previous capture's app and window, into a copy of this
+        cache, so it is the very read `read_screen` makes once the capture finds them unchanged, as a
+        page that stays in one window does; `ocr` takes it then, and reads the screen itself
+        otherwise. The first capture has nothing to go on, so nothing is read ahead of it. A read
+        still running from an earlier capture is waited out first, and every model call takes the
+        one inference lock, so two reads never run at once.
         """
         self.drop_ahead()
         if self.thumb is None:
@@ -219,7 +276,7 @@ class OcrCache:
         if ahead is None:
             return None
         ahead.wait()
-        if ahead.lines is None or not ahead.fits(screen):
+        if ahead.reading is None or not ahead.fits(screen):
             return None
         self.adopt(ahead.cache)
         return ahead
@@ -231,41 +288,77 @@ class OcrCache:
             self._ahead = None
 
 
-class ReadAhead:
-    """One capture's OCR, read on a thread of its own over the app and window it guessed."""
+@dataclass(frozen=True)
+class Reading:
+    """One capture's raw OCR lines and icon boxes over its region, in full-capture pixels."""
 
-    def __init__(self, screen: Screen, cache: OcrCache) -> None:
+    lines: list[Line]
+    icons: list[Detection]
+    read_pct: float  # share of the capture OCR read
+    rects: int  # how many rectangles it read; 0 for the whole region or for nothing
+    detected: bool  # whether the icons were detected for this capture, not reused
+
+
+class ReadAhead:
+    """One capture's reading, made on a thread of its own over the app and window it guessed."""
+
+    def __init__(self, screen: Screen, cache: ParseCache) -> None:
         self.screen = screen  # the capture, and the app and window the read bet on
         self.cache = cache  # a copy of the run's cache, which the read updates
-        self.lines: tuple[list[Line], float, int] | None = None  # what `ocr_lines` returned; None if it raised
+        self.reading: Reading | None = None  # None if the read raised
         self.seconds = 0.0
-        self._thread = threading.Thread(target=self._read, name="jev-ocr-ahead", daemon=True)
+        self._thread = threading.Thread(target=self._read, name="jev-read-ahead", daemon=True)
         self._thread.start()
 
     def _read(self) -> None:
         started = time.perf_counter()
         try:
-            self.lines = ocr_lines(self.screen, self.cache)
+            self.reading = read_screen(self.screen, self.cache)
         except Exception:  # the step reads the screen itself, and raises what this one swallowed
-            self.lines = None
+            self.reading = None
         self.seconds = time.perf_counter() - started
 
     def wait(self) -> None:
         self._thread.join()
 
     def fits(self, screen: Screen) -> bool:
-        """Whether this read is the one `ocr_lines` would make of `screen`."""
+        """Whether this read is the one `read_screen` would make of `screen`."""
         guess = self.screen
         return screen.image is guess.image and (screen.scale, screen.app, screen.window) == (guess.scale, guess.app, guess.window)
 
 
-def ocr_lines(screen: Screen, cache: OcrCache | None = None) -> tuple[list[Line], float, int]:
+def read_screen(screen: Screen, cache: ParseCache | None = None, timing: dict[str, float] | None = None) -> Reading:
+    """The capture's OCR lines and icon boxes over its region.
+
+    The text is read incrementally (see `ocr_lines`). The icons are detected over the whole region
+    again whenever any tile changed, and reused only when none did: the detector finds other boxes
+    on a crop than on the whole, so stitching crops together would trade accuracy for little time.
+    """
+    with phase(timing, "ocr"):
+        lines, read_pct, rects = ocr_lines(screen, cache)
+    if cache is not None and cache.unchanged and cache.icons is not None:
+        return Reading(lines, list(cache.icons), read_pct, rects, detected=False)
+    with phase(timing, "detect"):
+        icons = detect_region(screen.image, ocr_region(screen))
+    if cache is not None:
+        cache.icons = list(icons)
+    return Reading(lines, icons, read_pct, rects, detected=True)
+
+
+def detect_region(image: Image.Image, region: Box) -> list[Detection]:
+    """The icon boxes in one rectangle of the capture, in full-capture pixels."""
+    x1, y1, x2, y2 = (round(v) for v in region)
+    crop = image if (x1, y1, x2, y2) == (0, 0, image.width, image.height) else image.crop((x1, y1, x2, y2))
+    return [((b[0] + x1, b[1] + y1, b[2] + x1, b[3] + y1), score) for b, score in parse_detect.detect(crop)]
+
+
+def ocr_lines(screen: Screen, cache: ParseCache | None = None) -> tuple[list[Line], float, int]:
     """Raw OCR lines for this capture in full-capture pixels, the share of it read, and how many crops.
 
     Without a cache this reads the region once. With one it reads only the rectangles covering the
-    tiles that changed, one Vision call each, unless too much of the screen moved, in which case the
+    tiles that changed, one OCR call each, unless too much of the screen moved, in which case the
     whole region is cheaper than stitching. A line a re-read rectangle touches is dropped and read
-    again whole, because Vision segments a crop slightly differently from the full image.
+    again whole, because OCR segments a crop slightly differently from the full image.
     """
     region = ocr_region(screen)
     area = float(max(1, screen.image.width * screen.image.height))
@@ -285,7 +378,7 @@ def ocr_lines(screen: Screen, cache: OcrCache | None = None) -> tuple[list[Line]
         return _read_region(screen, region, thumb, cache), read_pct([region]), 0
     rects = reocr_rects(changed, region, cache.lines)
     if not rects:
-        cache.store(screen, region, thumb, cache.lines)
+        cache.store(screen, region, thumb, cache.lines, unchanged=True)
         return cache.lines, 0.0, 0
     if sum(area_of(rect) for rect in rects) > REOCR_FRACTION * area_of(region):
         return _read_region(screen, region, thumb, cache), read_pct([region]), 0
@@ -295,7 +388,7 @@ def ocr_lines(screen: Screen, cache: OcrCache | None = None) -> tuple[list[Line]
     return lines, read_pct(rects), len(rects)
 
 
-def _read_region(screen: Screen, region: Box, thumb: Image.Image, cache: OcrCache) -> list[Line]:
+def _read_region(screen: Screen, region: Box, thumb: Image.Image, cache: ParseCache) -> list[Line]:
     lines = ocr_crop(screen.image, region)
     cache.store(screen, region, thumb, lines)
     return lines
@@ -328,7 +421,7 @@ def ocr_crop(image: Image.Image, rect: Box) -> list[Line]:
     knows a crop happened."""
     x1, y1, x2, y2 = (round(v) for v in rect)
     crop = image if (x1, y1, x2, y2) == (0, 0, image.width, image.height) else image.crop((x1, y1, x2, y2))
-    raw = desktop.recognize_text(crop)
+    raw = parse_ocr.recognize_text(crop)
     return [(text, conf, (b[0] + x1, b[1] + y1, b[2] + x1, b[3] + y1)) for text, conf, b in raw]
 
 
@@ -529,10 +622,13 @@ def merge_reocr(previous: list[Line], fresh: list[Line], rects: list[Box]) -> li
 
 
 def ax_nodes(screen: Screen, budget: int) -> tuple[list[AxNode], list[AxNode]]:
-    """The frontmost app's labelled controls, in screen points, and the off-screen ones it still exposes.
+    """The frontmost app's on-screen controls, in screen points, and the labelled off-screen ones it
+    still exposes.
 
-    Icon-only buttons are invisible to OCR and live only here. Accessibility is best effort:
-    a missing pid, a refusing app, or a raising bridge all mean OCR carries the step alone.
+    An on-screen control without a label is kept: it can take its name from the icon drawn on it
+    (see `merge_with_origins`), and is dropped there when no icon covers it. Accessibility is best
+    effort: a missing pid, a refusing app, or a raising bridge all mean the capture carries the
+    step alone.
     """
     if screen.pid is None:
         return [], []
@@ -541,7 +637,7 @@ def ax_nodes(screen: Screen, budget: int) -> tuple[list[AxNode], list[AxNode]]:
         nodes, hidden, _capped = desktop.actionable_elements(screen.pid, width_pt, height_pt)
     except Exception:
         return [], []
-    return [node for node in nodes[:budget] if node.label], [node for node in hidden if node.label]
+    return list(nodes[:budget]), [node for node in hidden if node.label]
 
 
 def drawn(image: Image.Image, node: AxNode, scale: float) -> bool:
@@ -628,17 +724,21 @@ def to_ax_items(nodes: list[AxNode], scale: float) -> list[Item]:
 
 def ax_items(screen: Screen, budget: int) -> list[Item]:
     """The frontmost app's labelled on-screen controls as items on the capture."""
-    return to_ax_items(ax_nodes(screen, budget)[0], screen.scale)
+    return [it for it in to_ax_items(ax_nodes(screen, budget)[0], screen.scale) if it.text]
 
 
-def merge_sources(ocr_items: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[Item]:
-    """One item per thing. An accessibility control that sits on the OCR block naming it replaces both,
-    and a button or link stands for the symbol OCR read off its icon."""
-    return [it for it, _ in merge_with_origins(ocr_items, ax_items, budget)]
+def merge_sources(found: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[Item]:
+    """One item per thing: a control that sits on the text block naming it, or on an icon, replaces both."""
+    return [it for it, _ in merge_with_origins(found, ax_items, budget)]
 
 
-def merge_with_origins(ocr_items: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[tuple[Item, int | None]]:
-    """The merge, each item paired with the position of the control it came from, or None for plain text.
+def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[tuple[Item, int | None]]:
+    """The merge, each item paired with the position of the control it came from, or None.
+
+    A control pairs first with the text block it overlaps that names it ("ax+ocr"), and failing
+    that with the icon it overlaps most ("ax+icon"), whatever the icon says: a caption is English
+    and a label may not be, and a label may be empty, when the icon's text or caption names the
+    item instead. A control with no label and no icon under it names nothing, and goes.
 
     The pairing survives the budget cut and the renumbering, which is the only way back from a
     final item to the accessibility element behind it.
@@ -646,34 +746,37 @@ def merge_with_origins(ocr_items: list[Item], ax_items: list[Item], budget: int 
     taken: set[int] = set()
     merged: list[tuple[Item, int | None]] = []
     for origin, control in enumerate(ax_items):
-        best, best_overlap = None, MIN_BOX_OVERLAP
-        for i, block in enumerate(ocr_items):
-            if i in taken:
-                continue
-            overlap = box_overlap(control, block)
-            if overlap >= best_overlap and texts_match(control.text, block.text):
-                best, best_overlap = i, overlap
-        if best is None:
-            merged.append((control, origin))
+        block = _best(control, found, taken, TEXT_SOURCES, named=True)
+        if block is not None:
+            taken.add(block)
+            text = control.text if len(control.text) >= len(found[block].text) else found[block].text
+            merged.append((replace(found[block], text=text, role=control.role, source="ax+ocr"), origin))
             continue
-        block = ocr_items[best]
-        taken.add(best)
-        text = control.text if len(control.text) >= len(block.text) else block.text
-        merged.append((replace(block, text=text, role=control.role, source="ax+ocr"), origin))
-    merged += [(block, None) for i, block in enumerate(ocr_items) if i not in taken and not is_icon(block, ax_items)]
+        icon = _best(control, found, taken, ICON_SOURCES, named=False)
+        if icon is not None and (control.text or found[icon].text):
+            taken.add(icon)
+            merged.append(
+                (replace(found[icon], text=control.text or found[icon].text, role=control.role, source="ax+icon"), origin)
+            )
+        elif control.text:
+            merged.append((control, origin))
+    merged += [(it, None) for i, it in enumerate(found) if i not in taken]
     kept = [merged[i] for i in kept_by_budget([it for it, _ in merged], budget)]
     order = reading_order([it for it, _ in kept])
     return [(replace(kept[j][0], index=i), kept[j][1]) for i, j in enumerate(order)]
 
 
-def is_icon(block: Item, controls: list[Item]) -> bool:
-    """An OCR block with no letter or digit, centered on a button or link: its icon, read as a stray
-    symbol ('←' on Back, '☆' on the bookmark star, '+' on New Tab). The control already offers that
-    target under its name, and a second option for the same click only splits the vote."""
-    if any(ch.isalnum() for ch in block.text):
-        return False
-    cx, cy = block.center
-    return any(c.role in ICON_HOSTS and c.x1 <= cx <= c.x2 and c.y1 <= cy <= c.y2 for c in controls)
+def _best(control: Item, found: list[Item], taken: set[int], sources: tuple[str, ...], named: bool) -> int | None:
+    """The position of the untaken item of `sources` that overlaps `control` most, at least
+    `MIN_BOX_OVERLAP`, and when `named` also matches its label; None when there is none."""
+    best, best_overlap = None, MIN_BOX_OVERLAP
+    for i, it in enumerate(found):
+        if i in taken or it.source not in sources:
+            continue
+        overlap = box_overlap(control, it)
+        if overlap >= best_overlap and (not named or texts_match(control.text, it.text)):
+            best, best_overlap = i, overlap
+    return best
 
 
 def box_overlap(a: Item, b: Item) -> float:
@@ -696,11 +799,14 @@ def texts_match(a: str, b: str) -> bool:
 
 
 def kept_by_budget(items: list[Item], budget: int) -> list[int]:
-    """Which items survive the Choice ceiling: the faintest OCR-only blocks go first,
-    and a control is never dropped for text. Their positions, in the order given."""
+    """Which items survive the Choice ceiling: the faintest text blocks go first, then the icons the
+    detector was least sure of, and a control is never dropped for either. Their positions, in the
+    order given."""
     if len(items) <= budget:
         return list(range(len(items)))
-    ranked = sorted(range(len(items)), key=lambda i: (items[i].from_ax, items[i].ocr_confidence))
+    ranked = sorted(
+        range(len(items)), key=lambda i: (items[i].from_ax, items[i].source not in TEXT_SOURCES, items[i].ocr_confidence)
+    )
     dropped = set(ranked[: len(items) - budget])
     return [i for i in range(len(items)) if i not in dropped]
 

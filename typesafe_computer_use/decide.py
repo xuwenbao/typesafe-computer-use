@@ -89,13 +89,14 @@ def row_mates(items: list[Item], limit: int | None = ROW_MATES) -> dict[int, lis
 
 
 def item_criteria(screen: Screen, items: list[Item]) -> dict[str, str]:
-    """Each item as one line. A role prefix marks the ones the app itself declared, a
+    """Each item as one line. A role prefix marks the ones the app itself declared, and "icon"
+    an icon named by what an image model saw in it rather than by text on the screen. A
     duplicated label carries its row, and one under a popup says which."""
     hints = date_hints(items, screen)
     mates = row_mates(items)
     return {
         str(it.index): (
-            f"{it.role + ' ' if it.from_ax and it.role else ''}{it.text!r} "
+            f"{it.role + ' ' if it.role and (it.from_ax or it.source == 'icon') else ''}{it.text!r} "
             f"({screen.region(it)}"
             f"{'; ' + hints[it.index] if it.index in hints else ''}"
             f"{'; in the row of ' + ', '.join(repr(t) for t in mates[it.index]) if it.index in mates else ''}"
@@ -237,9 +238,11 @@ def decide(
         questions["item"] = Choice(
             instructions=(
                 "If clicking an on-screen item is the right move, which item? Items marked with a "
-                "role come from the app's accessibility tree and are real controls; plain items are "
-                "text read from the screen. Never pick an item that an action listed as already tried "
-                "on this screen clicked or pressed: each of those led straight back here."
+                "role come from the app's accessibility tree and are real controls; items marked "
+                "'icon' are icons without text, named by a short English description of how they "
+                "look; plain items are text read from the screen. Never pick an item that an action "
+                "listed as already tried on this screen clicked or pressed: each of those led "
+                "straight back here."
             ),
             criteria=item_criteria(screen, items),
         )

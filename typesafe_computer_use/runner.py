@@ -14,7 +14,7 @@ from .calls import Calls, MeteredClassifier, MeteredWriter
 from .config import DEFAULT_DELAY, DEFAULT_HANDOFFS, DEFAULT_MIN_CONFIDENCE, DEFAULT_STEPS, MAX_OPTIONS
 from .decide import Decision, decide, offscreen_records
 from .models import Abort, Guidance, Item, Screen, Signature, same_screen, signature
-from .perception import OcrCache, capture, perceive
+from .perception import ParseCache, capture, perceive
 from .platform_adapter import desktop
 from .report import Log, annotate, ax_count, render_payload, top
 from .timing import format_timing, phase, summarize
@@ -58,7 +58,7 @@ class RunConfig:
     app: str | None = None  # frontmost app to report during replay
     url: str | None = None  # browser URL to report during replay
     # Start each capture's OCR on a thread of its own while the capture asks for the app, window,
-    # field, and URL (see `OcrCache.read_ahead`). Worth it where those questions are slow, as over an
+    # field, and URL (see `ParseCache.read_ahead`). Worth it where those questions are slow, as over an
     # OSWorld VM; off for this machine, whose own are quick.
     read_ahead: bool = False
 
@@ -90,7 +90,7 @@ class RunState:
         default_factory=list
     )  # every screen acted on, with the action; None for a wait
     outcome: str = "crashed"  # every way out of the loop names its own; only an exception leaves this
-    ocr_cache: OcrCache = field(default_factory=OcrCache)  # carries one step's OCR into the next
+    parse_cache: ParseCache = field(default_factory=ParseCache)  # carries one step's reading into the next
     view: tuple[Screen, list[Item]] | None = None  # the latest capture, until an action makes it stale
     answer: Answer | None = None  # the writer's latest; the last one is the run's answer
     guidance: Guidance = field(default_factory=Guidance)  # the writer's focus and the user's replies, as they stand
@@ -287,7 +287,7 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     desktop.check_abort()
     timing: dict[str, float] = {}
     started = time.perf_counter()
-    cache = None if cfg.replay else state.ocr_cache
+    cache = None if cfg.replay else state.parse_cache
     with phase(timing, "capture"):
         screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser, timing, ahead=cache if cfg.read_ahead else None)
     items = perceive(screen, MAX_OPTIONS, cfg.goal, timing, cache)
@@ -382,10 +382,7 @@ def resolve(
             log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}; stopping")
             state.outcome = "low confidence"
             return False
-        log(
-            f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}, "
-            f"but it leads the next option; continuing"
-        )
+        log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}, but it leads the next option; continuing")
     if not cfg.act or cfg.replay:
         log(f"  would do: {decision.chosen}. dry run (pass --act without --image to drive the machine)")
         state.outcome = "dry run"

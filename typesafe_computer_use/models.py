@@ -121,9 +121,10 @@ def same_screen(a: Signature, b: Signature) -> bool:
 class Item:
     """One clickable thing: text plus its pixel box on the capture.
 
-    `source` says where it came from: "ocr" for a merged text block, "ax" for an
-    accessibility control, "ax+ocr" when the two agree on the same thing. `role` is a
-    short human word (button, link, field, ...) and is empty for OCR-only items.
+    `source` says where it came from: "ocr" for a merged text block, "icon+ocr" for a detected icon
+    with text inside it, "icon" for one without, named by its caption, "ax" for an accessibility
+    control, and "ax+ocr" or "ax+icon" when a control sits on a text block or an icon. `role` is a
+    short human word (button, link, field, ...): "icon" for a captioned icon, empty for text.
     """
 
     index: int
@@ -142,7 +143,7 @@ class Item:
 
     @property
     def from_ax(self) -> bool:
-        return self.source in ("ax", "ax+ocr")
+        return self.source in ("ax", "ax+ocr", "ax+icon")
 
 
 @dataclass(frozen=True)

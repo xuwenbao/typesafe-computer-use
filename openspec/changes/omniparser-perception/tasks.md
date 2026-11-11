@@ -28,18 +28,18 @@
 
 ## 4. 接入感知层
 
-- [ ] 4.1 `Item.source` 增加 `icon+ocr`、`icon`、`ax+icon`；`icon` 元素的 `role` 设为 `icon`；`item_criteria` 与 `base_state` 把无文字图标写成 `icon '<描述>'`
-- [ ] 4.2 改写 `perception.ocr()` 的管线顺序：读取区域 → OCR 行（收紧）与 YOLO → 过滤 → 融合 → 剩余文字行 `merge_blocks` 并段 → 描述无文字图标；输出整张截图坐标
-- [ ] 4.3 `merge_with_origins` 增加图标框与无障碍控件按重叠（≥0.5）配对、不要求文字匹配的规则，得到 `ax+icon`（label 为空时用图标文字或描述），保留无障碍引用；删除 `is_icon()`
-- [ ] 4.4 调整 `kept_by_budget` 的淘汰顺序：低置信度 `ocr` 先，其次低分 `icon`，无障碍元素不让位；补单测
-- [ ] 4.5 把 `OcrCache` 扩展为 `ParseCache`（OCR 行 + 图标框）：无分块变化时复用图标框，有变化时整区重新检测，文字仍按分块增量重读；更新 `tests/test_ocr_cache.py`
-- [ ] 4.6 扩展 `ReadAhead`：预读同时完成 OCR 与 YOLO，在推理锁下运行，采用条件不变（截图、应用、窗口、缩放一致）
+- [x] 4.1 `Item.source` 增加 `icon+ocr`、`icon`、`ax+icon`；`icon` 元素的 `role` 设为 `icon`；`item_criteria` 与 `base_state` 把无文字图标写成 `icon '<描述>'`
+- [x] 4.2 改写 `perception.ocr()` 的管线顺序：读取区域 → OCR 行（收紧）与 YOLO → 过滤 → 融合 → 剩余文字行 `merge_blocks` 并段 → 描述无文字图标；输出整张截图坐标
+- [x] 4.3 `merge_with_origins` 增加图标框与无障碍控件按重叠（≥0.5）配对、不要求文字匹配的规则，得到 `ax+icon`（label 为空时用图标文字或描述），保留无障碍引用；删除 `is_icon()`
+- [x] 4.4 调整 `kept_by_budget` 的淘汰顺序：低置信度 `ocr` 先，其次低分 `icon`，无障碍元素不让位；补单测
+- [x] 4.5 把 `OcrCache` 扩展为 `ParseCache`（OCR 行 + 图标框）：无分块变化时复用图标框，有变化时整区重新检测，文字仍按分块增量重读；更新 `tests/test_ocr_cache.py`
+- [x] 4.6 扩展 `ReadAhead`：预读同时完成 OCR 与 YOLO，在推理锁下运行，采用条件不变（截图、应用、窗口、缩放一致）
 - [ ] 4.7 用评测集重新校准 `merge_blocks` 阈值（以 RapidOCR + `hug_ink` 为基准），更新相关单测
-- [ ] 4.8 更新 `report.annotate`，按来源给图标元素单独配色；更新 `clicker-inspect` 的输出
+- [x] 4.8 更新 `report.annotate`，按来源给图标元素单独配色；更新 `clicker-inspect` 的输出
 
 ## 5. 分类器标注图
 
-- [ ] 5.1 实现 `parse/marks.py`：用最终 items 在读取区域裁剪图上画框和编号，颜色按来源区分；缩放到最长边不超过 1568，不足 280 时等比放大或补边，总像素在限制内；编号在最终图中至少 14 像素高；输出 PNG；为规格中的尺寸场景写单测
+- [x] 5.1 实现 `parse/marks.py`：用最终 items 在读取区域裁剪图上画框和编号，颜色按来源区分；缩放到最长边不超过 1568，不足 280 时等比放大或补边，总像素在限制内；编号在最终图中至少 14 像素高；输出 PNG；为规格中的尺寸场景写单测
 - [ ] 5.2 `decide()` 在 `state` 中加 `screen_image`（每步新 UUID），通过 `extra_body` 发送 `assets`、通过 `extra_headers` 发送 `TypeSafe-Danger-Zone-Images: true`；`item` 问题说明加上"编号画在 `screen_image` 中元素框旁"；单测检查请求结构
 - [ ] 5.3 实现图片被拒时不带图重试一次：只针对与图片相关的 `400`/`413`，在日志与 `run.json` 中记录；无关错误照常抛出；补单测
 - [ ] 5.4 确认 `verify_typed()` 与浏览器路径的请求不带 `assets` 和图片请求头，补单测

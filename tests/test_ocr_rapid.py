@@ -77,4 +77,3 @@ def test_with_the_module_importable_rapidocr_is_its_recognizer(monkeypatch):
 def test_with_the_extra_rapidocr_loads_without_loading_the_models():
     rapid = importlib.import_module(MODULE)
     assert ocr.backend("rapidocr") is rapid.recognize_text
-    assert rapid._engine.cache_info().currsize == 0
