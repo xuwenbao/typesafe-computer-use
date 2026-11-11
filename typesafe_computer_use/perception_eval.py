@@ -214,9 +214,9 @@ def current_pipeline(image: Image.Image) -> tuple[list[Item], dict[str, float]]:
 
 
 def pipeline_info() -> dict:
-    from .perception import PIPELINE_VERSION
+    from .perception import pipeline_record
 
-    return {"pipeline": PIPELINE_VERSION, "platform": sys.platform, "weights": {}}
+    return {**pipeline_record(), "platform": sys.platform}
 
 
 def read_sample(sample: Sample, read: Read) -> tuple[list[Item], dict[str, float]]:

@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import functools
 import io
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -42,11 +43,13 @@ def color_of(item: Item) -> tuple[int, int, int]:
 
 @dataclass(frozen=True)
 class Marked:
-    """The picture as sent: PNG bytes, and its size."""
+    """The picture as sent: PNG bytes, its size, and the reference the state names it by, new
+    for every picture drawn."""
 
     png: bytes
     width: int
     height: int
+    ref: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def image(self) -> Image.Image:
         return Image.open(io.BytesIO(self.png))

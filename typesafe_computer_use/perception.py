@@ -21,6 +21,7 @@ from .models import MENU_BAR_PT, AxNode, Box, Item, Screen
 from .parse import caption as parse_caption
 from .parse import detect as parse_detect
 from .parse import ocr as parse_ocr
+from .parse import weights as parse_weights
 from .parse.fuse import fuse
 from .platform_adapter import desktop
 from .timing import OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, phase
@@ -325,6 +326,11 @@ class ReadAhead:
         """Whether this read is the one `read_screen` would make of `screen`."""
         guess = self.screen
         return screen.image is guess.image and (screen.scale, screen.app, screen.window) == (guess.scale, guess.app, guess.window)
+
+
+def pipeline_record() -> dict:
+    """The pipeline and the model files it reads, for a run's or an evaluation's record."""
+    return {"pipeline": PIPELINE_VERSION, "weights": parse_weights.record()}
 
 
 def read_screen(screen: Screen, cache: ParseCache | None = None, timing: dict[str, float] | None = None) -> Reading:

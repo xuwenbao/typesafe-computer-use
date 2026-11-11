@@ -14,7 +14,8 @@ from .calls import Calls, MeteredClassifier, MeteredWriter
 from .config import DEFAULT_DELAY, DEFAULT_HANDOFFS, DEFAULT_MIN_CONFIDENCE, DEFAULT_STEPS, MAX_OPTIONS
 from .decide import Decision, decide, offscreen_records
 from .models import Abort, Guidance, Item, Screen, Signature, same_screen, signature
-from .perception import ParseCache, capture, perceive
+from .parse.marks import marks
+from .perception import ParseCache, capture, ocr_region, perceive, pipeline_record
 from .platform_adapter import desktop
 from .report import Log, annotate, ax_count, render_payload, top
 from .timing import format_timing, phase, summarize
@@ -96,6 +97,7 @@ class RunState:
     guidance: Guidance = field(default_factory=Guidance)  # the writer's focus and the user's replies, as they stand
     handoffs: list[Handoff] = field(default_factory=list)
     calls: Calls = field(default_factory=Calls)  # requests to each model, over the whole run
+    image_refusals: list[dict] = field(default_factory=list)  # steps asked again without their picture, and why
 
 
 def run(cfg: RunConfig, ctx_factory) -> RunState:
@@ -138,6 +140,8 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "handoffs": [asdict(h) for h in state.handoffs],
             "questions": [asdict(e) for e in state.guidance.exchanges],
             "timing": summarize(state.timings),
+            "perception": pipeline_record(),
+            "image_refusals": state.image_refusals,
             "history": state.history,
             "config": {k: str(v) for k, v in asdict(cfg).items()},
         }
@@ -297,12 +301,21 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     tried = tried_here(state)
     prefix = cfg.out / f"step-{step:03d}"  # three digits, so a run of 100 steps still lists in order
     screen.image.save(prefix.with_name(prefix.name + "-raw.png"))
+    picture = marks(screen.image, items, ocr_region(screen))
+    sent = prefix.with_name(prefix.name + "-sent.png")
+    sent.write_bytes(picture.png)
     prefix.with_name(prefix.name + "-payload.txt").write_text(
-        render_payload(cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance), encoding="utf-8"
+        render_payload(cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance, picture, sent.name),
+        encoding="utf-8",
     )
 
     with phase(timing, "decide"):
-        decision = decide(ctx.typesafe, cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance)
+        decision = decide(
+            ctx.typesafe, cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance, picture
+        )
+    if decision.image_refused is not None:
+        log(f"  the screen picture was refused, and the step asked again without it: {decision.image_refused}")
+        state.image_refusals.append({"step": step, "reason": decision.image_refused})
     by_index = {str(it.index): it for it in items}
     annotate(screen, items, decision.chosen, prefix.with_suffix(".png"))
 
@@ -331,7 +344,10 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     prefix.with_name(prefix.name + "-answers.json").write_text(
         json.dumps(answers(decision, screen, items, timing, tried, state), indent=2), encoding="utf-8"
     )
-    log(f"  files: {prefix.name}-raw.png, {prefix.name}.png, {prefix.name}-payload.txt, {prefix.name}-answers.json")
+    log(
+        f"  files: {prefix.name}-raw.png, {prefix.name}.png, {prefix.name}-sent.png, {prefix.name}-payload.txt, "
+        f"{prefix.name}-answers.json"
+    )
     log(format_timing(timing))
 
     if state.view is None:  # an action ran: let the screen settle before the next step, or the answer, reads it

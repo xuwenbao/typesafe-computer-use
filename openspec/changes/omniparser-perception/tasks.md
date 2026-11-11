@@ -40,10 +40,10 @@
 ## 5. 分类器标注图
 
 - [x] 5.1 实现 `parse/marks.py`：用最终 items 在读取区域裁剪图上画框和编号，颜色按来源区分；缩放到最长边不超过 1568，不足 280 时等比放大或补边，总像素在限制内；编号在最终图中至少 14 像素高；输出 PNG；为规格中的尺寸场景写单测
-- [ ] 5.2 `decide()` 在 `state` 中加 `screen_image`（每步新 UUID），通过 `extra_body` 发送 `assets`、通过 `extra_headers` 发送 `TypeSafe-Danger-Zone-Images: true`；`item` 问题说明加上"编号画在 `screen_image` 中元素框旁"；单测检查请求结构
-- [ ] 5.3 实现图片被拒时不带图重试一次：只针对与图片相关的 `400`/`413`，在日志与 `run.json` 中记录；无关错误照常抛出；补单测
-- [ ] 5.4 确认 `verify_typed()` 与浏览器路径的请求不带 `assets` 和图片请求头，补单测
-- [ ] 5.5 `runner` 每步保存 `NNN-sent.png`；`render_payload` 写图片引用与宽高，不写 base64；更新 `docs/run-folder.md`
+- [x] 5.2 `decide()` 在 `state` 中加 `screen_image`（每步新 UUID），通过 `extra_body` 发送 `assets`、通过 `extra_headers` 发送 `TypeSafe-Danger-Zone-Images: true`；`item` 问题说明加上"编号画在 `screen_image` 中元素框旁"；单测检查请求结构
+- [x] 5.3 实现图片被拒时不带图重试一次：只针对与图片相关的 `400`/`413`，在日志与 `run.json` 中记录；无关错误照常抛出；补单测
+- [x] 5.4 确认 `verify_typed()` 与浏览器路径的请求不带 `assets` 和图片请求头，补单测
+- [x] 5.5 `runner` 每步保存 `NNN-sent.png`；`render_payload` 写图片引用与宽高，不写 base64；更新 `docs/run-folder.md`
 
 ## 6. 评测与实测
 

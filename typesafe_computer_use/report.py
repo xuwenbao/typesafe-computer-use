@@ -7,9 +7,9 @@ from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
 
-from .decide import base_state, item_criteria, kind_criteria, offscreen_criteria, site_criteria
+from .decide import SCREEN_IMAGE, base_state, item_criteria, kind_criteria, offscreen_criteria, site_criteria
 from .models import Guidance, Item, Screen
-from .parse.marks import color_of
+from .parse.marks import Marked, color_of
 
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 RULE = "=" * 78
@@ -50,14 +50,30 @@ def render_payload(
     email: str | None,
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
+    picture: Marked | None = None,
+    sent_png: str = "",
 ) -> str:
-    """Exactly what goes to TypeSafe for this screen, plus a table of every item."""
+    """Exactly what goes to TypeSafe for this screen, plus a table of every item. The picture is
+    named by its reference and size; its bytes are in the run folder, never in this text."""
+    state = base_state(goal, screen, items, history, tried, guidance)
+    if picture is not None:
+        state[SCREEN_IMAGE] = picture.ref
     parts = [
         RULE,
         "STATE  (sent as `state`)",
         RULE,
-        json.dumps(base_state(goal, screen, items, history, tried, guidance), indent=2),
+        json.dumps(state, indent=2),
         "",
+    ]
+    if picture is not None:
+        parts += [
+            RULE,
+            f"IMAGE  {SCREEN_IMAGE}={picture.ref}  {picture.width}x{picture.height} PNG, {len(picture.png)} bytes"
+            + (f"  ({sent_png})" if sent_png else ""),
+            RULE,
+            "",
+        ]
+    parts += [
         RULE,
         "QUESTION kind  (Choice criteria)",
         RULE,

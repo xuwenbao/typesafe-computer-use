@@ -119,6 +119,15 @@ def versions() -> dict[str, str]:
     return {weights.repo: weights.revision for weights in ALL}
 
 
+def record() -> dict[str, dict]:
+    """Each repository's commit and the SHA-256 of its checked files: what a run's record names."""
+    out: dict[str, dict] = {}
+    for weights in ALL:
+        entry = out.setdefault(weights.repo, {"revision": weights.revision, "sha256": {}})
+        entry["sha256"].update(weights.sha256)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     """`clicker-models fetch`: download and check every model file, to run offline afterwards."""
     parser = argparse.ArgumentParser(prog="clicker-models", description="The desktop perception's model files.")

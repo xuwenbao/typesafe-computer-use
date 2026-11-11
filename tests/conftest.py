@@ -279,11 +279,7 @@ def endpoint():
                                 "message": {
                                     "role": "assistant",
                                     "content": state["reply"],
-                                    **(
-                                        {"reasoning_content": state["reasoning_content"]}
-                                        if "reasoning_content" in state
-                                        else {}
-                                    ),
+                                    **({"reasoning_content": state["reasoning_content"]} if "reasoning_content" in state else {}),
                                 },
                                 "finish_reason": "stop",
                             }
