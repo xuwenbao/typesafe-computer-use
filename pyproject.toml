@@ -33,12 +33,31 @@ dependencies = [
     "pywin32==312; sys_platform == 'win32'",
     "uiautomation==2.0.29; sys_platform == 'win32'",
     "winocr==0.0.15; sys_platform == 'win32'",
+    # The desktop perception: text, the icon detector, and the icon captioner. Neither PyTorch nor ONNX
+    # Runtime ships a wheel for an Intel Mac, so none of these installs there: jev still imports and its
+    # tests still run, but the desktop path does not.
+    "rapidocr==3.9.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "onnxruntime==1.30.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch==2.15.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torchvision==0.29.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "transformers==5.22.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "huggingface-hub==2.4.0",
+    "numpy==2.5.3",
 ]
 
 [project.optional-dependencies]
-# Portable OCR for Linux, where macOS Vision does not exist: the OSWorld benchmark reads the VM's
-# screen with it (`--ocr rapidocr`). Optional, so a Mac that stays on Vision never installs it.
-rapidocr = ["rapidocr==3.9.2", "onnxruntime==1.30.0"]
+# Kept for `uv sync --extra rapidocr` in existing setups; RapidOCR is now a dependency of every install.
+rapidocr = []
+
+[tool.uv.sources]
+# Linux runs the OSWorld host and the sandbox, neither with a GPU: the CPU build spares a few GB of CUDA.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.urls]
 Homepage = "https://github.com/awlevin/typesafe-computer-use"
@@ -48,6 +67,8 @@ Issues = "https://github.com/awlevin/typesafe-computer-use/issues"
 clicker = "typesafe_computer_use.cli:main"
 clicker-inspect = "typesafe_computer_use.cli:inspect"
 clicker-bench = "typesafe_computer_use.browser.bench:main"
+clicker-perception-eval = "typesafe_computer_use.perception_eval:main"
+clicker-models = "typesafe_computer_use.parse.weights:main"
 
 [dependency-groups]
 dev = ["pytest==9.1.1", "ruff==0.16.8"]

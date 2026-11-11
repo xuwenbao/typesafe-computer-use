@@ -16,6 +16,7 @@ from .platform_adapter import desktop
 from .timing import OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, phase
 
 Line = tuple[str, float, Box]
+PIPELINE_VERSION = "platform-ocr-1"  # names this pipeline in an evaluation report, beside the OS it ran on
 ECHO_CHARS = 24
 MIN_BOX_OVERLAP = 0.5  # intersection over the smaller box
 MIN_TOKEN_OVERLAP = 0.5
@@ -71,8 +72,11 @@ def capture(
 
 
 def goal_echoes(goal: str) -> set[str]:
-    """Substrings that identify a screen line as the command that launched this run."""
+    """Substrings that identify a screen line as the command that launched this run. None without a
+    goal, as an evaluation reads a capture for no task, and an empty substring is in every line."""
     norm = " ".join(goal.lower().split())
+    if not norm:
+        return set()
     return {norm[:ECHO_CHARS], norm[-ECHO_CHARS:]} if len(norm) >= ECHO_CHARS else {norm}
 
 

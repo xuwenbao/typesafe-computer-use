@@ -137,6 +137,8 @@ setup() {
   run_in_checkout .venv/bin/python -c "import desktop_env, typesafe_computer_use.osworld.agent"
   run_in_checkout .venv/bin/python -c \
     'from importlib.metadata import version; [print(n, version(n)) for n in ("pillow", "openai", "anthropic")]'
+  # The perception's model files, so the first step of the first run does not wait on a download.
+  run_in_checkout .venv/bin/clicker-models fetch
 
   if $v2_tasks; then
     if [[ -z "${HF_TOKEN:-}" ]]; then

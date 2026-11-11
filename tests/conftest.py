@@ -37,6 +37,9 @@ def _stub(name: str) -> types.ModuleType:
     module = types.ModuleType(name)
 
     def _getattr(attr: str) -> object:
+        # Module metadata, which libraries such as PyTorch probe on every loaded module.
+        if attr.startswith("__") and attr.endswith("__"):
+            raise AttributeError(attr)
         raise RuntimeError(f"{name}.{attr} is unavailable on this OS; tests must not call the platform adapter")
 
     module.__getattr__ = _getattr
@@ -70,6 +73,9 @@ from PIL import Image  # noqa: E402
 from typesafe_computer_use import macos, windows  # noqa: E402
 from typesafe_computer_use.browser import cdp  # noqa: E402
 from typesafe_computer_use.models import Item, Screen  # noqa: E402
+from typesafe_computer_use.parse import caption as parse_caption  # noqa: E402
+from typesafe_computer_use.parse import detect as parse_detect  # noqa: E402
+from typesafe_computer_use.parse import ocr as parse_ocr  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +117,46 @@ def no_real_machine(monkeypatch):
     monkeypatch.setattr(cdp, "_get_json", refuse("the CDP HTTP endpoint"))
     monkeypatch.setattr(cdp.websocket, "create_connection", refuse("a CDP websocket"))
     _loopback_only(monkeypatch, refuse)
+
+    # The perception's models: hundreds of MB each, and no PyTorch at all on an Intel Mac. A test
+    # that reads a capture patches the step that would load one, as `fake_models` does.
+    def refuse_model(what: str):
+        def call(*args, **kwargs):
+            raise RuntimeError(f"a test loaded {what}; patch it in the test, for instance with the fake_models fixture")
+
+        return call
+
+    monkeypatch.setattr(parse_detect, "load_model", refuse_model("the icon detector"))
+    monkeypatch.setattr(parse_caption, "load_model", refuse_model("the icon captioner"))
+    monkeypatch.setattr(parse_ocr, "_engine", refuse_model("the OCR engine"))
+
+
+@pytest.fixture
+def fake_models(monkeypatch):
+    """Stand-ins for the three models, fed by the test: OCR lines, icon boxes, and captions.
+
+    Set `lines` to what OCR reads off any image (boxes in that image's pixels), `icons` to the
+    detector's (box, score) pairs, and `captions` to a callable from a 64x64 crop to its caption.
+    `calls` counts how often each model ran.
+    """
+    fake = SimpleNamespace(lines=[], icons=[], captions=lambda icon: "icon", calls={"ocr": 0, "detect": 0, "caption": 0})
+
+    def recognize(image):
+        fake.calls["ocr"] += 1
+        return list(fake.lines)
+
+    def find(image, *args, **kwargs):
+        fake.calls["detect"] += 1
+        return list(fake.icons)
+
+    def describe(icons):
+        fake.calls["caption"] += 1
+        return [fake.captions(icon) for icon in icons]
+
+    monkeypatch.setattr(parse_ocr, "recognize_text", recognize)
+    monkeypatch.setattr(parse_detect, "detect", find)
+    monkeypatch.setattr(parse_caption, "generate_captions", describe)
+    return fake
 
 
 def _is_loopback(host: object) -> bool:
