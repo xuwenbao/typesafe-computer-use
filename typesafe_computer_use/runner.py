@@ -27,6 +27,8 @@ MAX_REPEATS = 2  # consecutive actions already taken on the same screen earlier 
 MAX_STALLS = 3  # stalls with no new page between them; the last is final, since two focuses from the writer did not free the run
 EARLIER_LINES = 600  # lines of text from the screens before the last one that the answer may also be read from
 MAX_QUESTIONS = 3  # questions the writer may put to the user in one run; an empty reply ends the asking sooner
+LEAD = 2.0  # a choice under the floor still counts when it is at least this many times the runner-up
+FLOOR_FRACTION = 0.75  # and still at least this much of the floor; a thin vote is not a decision
 
 # The outcomes the writer is handed, each in words it can pass on. A dry run took no action and
 # an abort is the user's own stop, so neither has anything to report.
@@ -337,6 +339,26 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     return keep_going
 
 
+def _lead_covers(decision: Decision, floor: float) -> bool:
+    """Whether a below-floor choice is still a decision, because it leads its runner-up.
+
+    Only the answer that names a target may be excused this way, and only when the kind of action
+    itself already clears the floor. A click the model is unsure it should make at all still stops.
+    """
+    if decision.clicking:
+        return decision.kind.confidence >= floor and _leads(decision.item, floor)
+    if decision.pressing_offscreen:
+        return decision.kind.confidence >= floor and _leads(decision.offscreen, floor)
+    return _leads(decision.kind, floor)
+
+
+def _leads(answer, floor: float) -> bool:
+    ranked = sorted((getattr(answer, "probabilities", None) or {}).values(), reverse=True)
+    if len(ranked) < 2 or ranked[1] <= 0:
+        return False
+    return ranked[0] >= floor * FLOOR_FRACTION and ranked[0] >= ranked[1] * LEAD
+
+
 def resolve(
     cfg: RunConfig,
     ctx: Context,
@@ -353,9 +375,17 @@ def resolve(
         state.outcome = "done" if decision.kind.choice == "done" else "nothing helps"
         return False
     if decision.confidence < cfg.min_confidence:
-        log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}; stopping")
-        state.outcome = "low confidence"
-        return False
+        # A crowded screen spreads one click across a hundred rows, so a sure target can sit just
+        # under the floor while still leading the next row by a wide margin. A near tie stays a
+        # stop: two rows that both look right are what the floor is there for.
+        if not _lead_covers(decision, cfg.min_confidence):
+            log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}; stopping")
+            state.outcome = "low confidence"
+            return False
+        log(
+            f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}, "
+            f"but it leads the next option; continuing"
+        )
     if not cfg.act or cfg.replay:
         log(f"  would do: {decision.chosen}. dry run (pass --act without --image to drive the machine)")
         state.outcome = "dry run"

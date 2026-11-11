@@ -38,7 +38,8 @@ def test_a_request_goes_to_chat_completions_with_the_schema_and_only_the_endpoin
     assert body["response_format"]["json_schema"]["strict"] is True
     assert body["response_format"]["json_schema"]["schema"]["required"] == ["ok", "url", "reason"]
     assert body["max_tokens"] == 200
-    assert "thinking" not in body
+    # A custom endpoint thinks by default and can spend the whole budget before writing the JSON.
+    assert body["thinking"] == {"type": "disabled"}
 
 
 def test_usage_comes_back_in_the_messages_shape_with_cached_tokens_apart(openai_env, endpoint):
@@ -106,6 +107,20 @@ def test_the_writer_and_the_answer_model_each_get_their_own_reasoning_effort(ope
         ("gpt-6-luna", "none"),
         ("gpt-6-luna", "low"),
     ]
+
+
+def test_an_endpoint_that_refuses_thinking_is_asked_without_it_from_then_on(openai_env, endpoint):
+    endpoint.state["reject"] = lambda body: "unknown parameter: thinking" if "thinking" in body else None
+    w = writer()
+    assert compose_url(w, "open example", []) == "https://example.com"
+    assert compose_url(w, "open example again", []) == "https://example.com"
+    assert ["thinking" in r["body"] for r in endpoint.seen] == [True, False, False]
+
+
+def test_an_empty_content_can_still_carry_the_json_in_reasoning_content(openai_env, endpoint):
+    endpoint.state["reply"] = None
+    endpoint.state["reasoning_content"] = '{"ok": true, "url": "https://example.com", "reason": "thought"}'
+    assert compose_url(writer(), "open example", []) == "https://example.com"
 
 
 def test_an_endpoint_that_refuses_reasoning_effort_is_asked_without_it_from_then_on(openai_env, endpoint):
