@@ -13,9 +13,9 @@ OSWorld's VM runs under QEMU and needs a Linux host with KVM, so it does not run
 
 ```
 scripts/osworld setup                                    # OSWorld at the pinned commit, jev beside it
-scripts/osworld run-jev chrome/<task id> --ocr rapidocr  # one OSWorld 1.0 task with jev
-scripts/osworld run-jev chrome/<id> chrome/<id> --ocr rapidocr   # several, one after another
-scripts/osworld run-jev chrome/<id> chrome/<id> chrome/<id> --ocr rapidocr --envs 3   # three VMs side by side
+scripts/osworld run-jev chrome/<task id>                 # one OSWorld 1.0 task with jev
+scripts/osworld run-jev chrome/<id> chrome/<id>          # several, one after another
+scripts/osworld run-jev chrome/<id> chrome/<id> chrome/<id> --envs 3   # three VMs side by side
 scripts/osworld run-luna chrome/<task id>                # the same with OSWorld's GPT agent on Luna
 scripts/osworld results                                  # each task's score, steps, time, and tokens, then each agent's means
 ```
@@ -35,15 +35,18 @@ since OSWorld's GPT agent records none. Its agent is OSWorld's own, counting eac
 nothing else. Luna runs at the GPT runner's default reasoning effort, `xhigh`, which sets its
 accuracy and cost more than anything else; `OSWORLD_LUNA_EFFORT` picks another, and `usage.json`
 records it. Every run copies the overlay again, so an edit to it needs no second `setup`.
-With `OSWORLD_OCR=rapidocr` it installs jev's RapidOCR extra too. `setup --v2-tasks` also
+It ends by fetching the perception's model files (`clicker-models fetch`, about 1.4 GB), so the
+first step of the first run does not wait on a download. `setup --v2-tasks` also
 downloads OSWorld 2.0's tasks, a gated Hugging Face dataset, and needs `HF_TOKEN`; a 2.0 task is
 `tasks/<id>`.
 
 A run reads its keys from `.env`: `TYPESAFE_API_KEY` for jev and `OPENAI_API_KEY` for both. jev's
 writer and answer model in OSWorld are Luna too, so a run compares jev with Luna inside it to Luna
 alone: `run-jev` points the `CLICKER_WRITER_*` settings at OpenAI's API and `gpt-6-luna`, with no
-reasoning for the writer's short calls and `low` for the answer model. `.env` overrides any of them. `--ocr` is required, since a result depends on the OCR that read the
-screen: `rapidocr` is the benchmark backend, and `vision` is macOS's own and runs only there.
+reasoning for the writer's short calls and `low` for the answer model. `.env` overrides any of them. jev
+reads the screen with the same perception everywhere, RapidOCR with OmniParser's icon detector and
+captioner, so there is no backend to name; `--ocr` is gone, and a run that passes it stops with a
+message saying so.
 `OSWORLD_PROVIDER` picks OSWorld's VM provider, `docker` by default. Both runs keep OSWorld's
 screen recording and its VNC server on, so the VM can be watched live. Every command prints what
 it runs.
@@ -54,7 +57,8 @@ Results land where OSWorld's runner puts them,
 `results/pyautogui/<observation type>/<model>/<domain>/<task id>/`: `result.txt` with the score,
 `traj.jsonl` with every action, a screenshot per step, and `recording.mp4`. jev's usual run folder
 is inside, as `jev/`, so `clicker --image` replays any step; its `run.json` holds the tokens per
-model and the OCR backend, provider, and architecture the run used, and `results` shows them, as
+model, the perception pipeline with the commit and SHA-256 of each model file, and the provider
+and architecture the run used, and `results` shows them, as
 it shows Luna's tokens from `usage.json`, reasoning tokens among them, with its model time and
 reasoning effort. jev's results are filed under `screenshot_a11y_tree`, since it reads the tree, and
 Luna's under the GPT script's default, `screenshot`; OSWorld's observations carry the screenshot
@@ -97,10 +101,10 @@ OSWorld's Chrome tasks, jev read the same app, window, focused field, URL, and c
 boxes off both, from a sixth of the nodes and about a tenth of the AT-SPI calls;
 `tests/test_osworld_tree.py` checks that on the trees in `tests/fixtures/osworld/`.
 
-The fetch runs on a thread of its own while the step's OCR reads the screenshot, and only a read of
-the tree waits for it. The OCR bets on the previous step's app and window, which a page in one
-window keeps, and the step reads the screen again itself when the tree says otherwise
-(`OcrCache.read_ahead` in `perception.py`). No fetch runs while the VM acts: the step's actions go
+The fetch runs on a thread of its own while the step's OCR and icon detection read the screenshot,
+and only a read of the tree waits for it. The read bets on the previous step's app and window, which
+a page in one window keeps, and the step reads the screen again itself when the tree says otherwise
+(`ParseCache.read_ahead` in `perception.py`). No fetch runs while the VM acts: the step's actions go
 to OSWorld only once the fetch before them is over. OSWorld's 2 s wait and its `env.step` for every
 action stay as they were, so the tree's time moves from OSWorld's step into jev's own.
 
@@ -110,7 +114,7 @@ fetch stands in, and a warning in OSWorld's log says why. That fetch asks with n
 chrome/2ad9387a, after a click on Chrome's menu, it never came back and held the run up for good. So
 each request runs on a thread of its own with a deadline, 10 s for the light walk and 20 s for
 OSWorld's fetch, and when both miss, the step goes on with no tree: the app and the controls are
-unknown, and OCR still reads the screen. jev's `run.json` records it all under `osworld`: `tree` is
+unknown, and the perception still reads the screen. jev's `run.json` records it all under `osworld`: `tree` is
 `jev-light`, `tree_fetches` counts the fetches, `tree_fallbacks` those OSWorld's stood in for, with
 the reasons, `tree_missing` those that brought no tree at all, and `tree_seconds` and `tree_nodes`
 give each one's mean and maximum.
@@ -163,7 +167,7 @@ applies to the next run with no commit. Locally it needs only `terraform`, `gclo
 ```
 cp infra/gcp/terraform.tfvars.example infra/gcp/terraform.tfvars   # set project, region, zone
 scripts/osworld-gcp up                                    # terraform apply; the machine sets itself up
-scripts/osworld-gcp run-jev chrome/<id> --ocr rapidocr    # start, sync, run, copy the results back
+scripts/osworld-gcp run-jev chrome/<id>                   # start, sync, run, copy the results back
 scripts/osworld-gcp run-luna chrome/<id>                  # the same with OSWorld's GPT agent
 scripts/osworld-gcp watch                                 # during a run: the task VM's screen, in a browser
 scripts/osworld-gcp status                                # running or stopped, and since when
@@ -181,7 +185,7 @@ machine's project, zone, and name in `.osworld/gcp.json`, so the other commands 
 The machine is long-lived: a run starts it when it is stopped, and waits for its startup script.
 The first boot installs Docker, uv, a C toolchain with the kernel and Python headers (OSWorld's lock
 builds a few packages from source), this repo, and OSWorld (`scripts/osworld setup`, with
-`OSWORLD_PROVIDER=docker` and the `rapidocr` extra), which takes several minutes; later boots only
+`OSWORLD_PROVIDER=docker`, and the model files), which takes several minutes; later boots only
 check, and a run starts in about a minute. On the machine, the repo is `/opt/typesafe-computer-use`,
 owned by an unprivileged `osworld` user, and the startup log is `/var/log/osworld-startup.log`.
 

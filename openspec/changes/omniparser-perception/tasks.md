@@ -61,8 +61,8 @@
 
 ## 8. 文档
 
-- [ ] 8.1 README：按实测更新"每个任务约 0.003 美元"与"每步约 1.5 秒"，写明安装体积与首次下载权重；加入截图内容发给 System One 的披露
-- [ ] 8.2 `docs/how-a-step-works.md`：重写感知一节（融合、图标描述、缓存、标注图）
-- [ ] 8.3 `docs/known-limits.md`：加入截图中可见输入内容会发给 System One、图片接口为 Dreamer-ready、图标描述是英文
-- [ ] 8.4 `docs/osworld.md` 与 `docs/windows.md`：删除 `--ocr` 与 Windows OCR 的说明，加入预取权重的步骤
+- [ ] 8.1 README：按实测更新"每个任务约 0.003 美元"与"每步约 1.5 秒"，写明安装体积与首次下载权重；加入截图内容发给 System One 的披露（已写安装体积、首次下载与披露，并注明表中数字测于旧管线；数字本身待 6.3 实测后更新）
+- [x] 8.2 `docs/how-a-step-works.md`：重写感知一节（融合、图标描述、缓存、标注图）
+- [x] 8.3 `docs/known-limits.md`：加入截图中可见输入内容会发给 System One、图片接口为 Dreamer-ready、图标描述是英文
+- [x] 8.4 `docs/osworld.md` 与 `docs/windows.md`：删除 `--ocr` 与 Windows OCR 的说明，加入预取权重的步骤
 - [ ] 8.5 `OBSERVATIONS.md`：记下评测与实测得出的结论，每条一句

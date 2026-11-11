@@ -23,7 +23,9 @@ identical in both paths, so the difference is purely how the screen is read:
 | news.ycombinator.com | 4.5 ms (120 elements) | 697.3 ms (46 blocks) | 155x |
 | en.wikipedia.org/wiki/Singapore | 14.4 ms (91 elements) | 897.0 ms (50 blocks) | 62x |
 
-The OCR column is roughly 143-177 ms capture + 573-710 ms Vision OCR + ~0.2 ms merge.
+The OCR column is roughly 143-177 ms capture + 573-710 ms Vision OCR + ~0.2 ms merge. These
+were measured before the desktop perception moved to RapidOCR; `clicker-bench perception` now
+compares the DOM with RapidOCR, and has not been run again since.
 
 Speed is the smaller half of it. OCR reproduced only 7/13, 7/88 and 3/85 of the DOM's labels
 verbatim across those pages — under 10% on real sites. A classifier choosing between OCR
@@ -93,5 +95,5 @@ reconstructed state matches the saved one, so a stall can be re-decided without 
 
 Viewport only, the same as OCR only saw the visible screen; elements below the fold need
 `scroll_down` first. The DOM sees elements rather than paint, so canvas-drawn UI and text
-baked into images are invisible here and **are** visible to OCR — use `macos.py` for those.
+baked into images are invisible here and **are** visible to the desktop perception — use the desktop path for those.
 One tab, one page target, no iframes or shadow-DOM piercing.
