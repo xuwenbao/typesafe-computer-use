@@ -53,17 +53,7 @@ if _absent("Quartz"):
     _stub("Quartz").kCGHIDEventTap = 0
 if not REAL_ACCESSIBILITY:
     _stub("ApplicationServices")
-if _absent("ocrmac"):
-
-    class _OCR:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            raise RuntimeError("ocrmac is unavailable off macOS")
-
-    _package = _stub("ocrmac")
-    _package.__path__ = []
-    _package.ocrmac = _stub("ocrmac.ocrmac")
-    _package.ocrmac.OCR = _OCR
-for _windows_module in ("psutil", "uiautomation", "win32api", "win32con", "win32gui", "win32process", "winocr"):
+for _windows_module in ("psutil", "uiautomation", "win32api", "win32con", "win32gui", "win32process"):
     if _absent(_windows_module):
         _stub(_windows_module)
 

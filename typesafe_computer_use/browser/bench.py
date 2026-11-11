@@ -6,7 +6,7 @@
 
 `perception` is the headline: the same page, the same machine, the same moment.
 One path reads the DOM over CDP. The other does what the original does —
-`Page.captureScreenshot` -> Apple Vision OCR -> merge blocks -> reading order.
+`Page.captureScreenshot` -> RapidOCR -> merge blocks -> reading order.
 The TypeSafe decision that follows is identical in both, so the difference is
 purely perception.
 
@@ -55,9 +55,10 @@ def _norm(text: str) -> str:
 
 # --------------------------------------------------------------------------- #
 def ocr_perception(session, *, budget: int = 120) -> dict:
-    """The original pipeline, isolated and timed: screenshot -> Vision OCR -> blocks."""
-    from ocrmac import ocrmac
+    """The desktop path's reading, isolated and timed: screenshot -> RapidOCR -> blocks."""
     from PIL import Image
+
+    from ..parse.ocr import recognize_text
 
     t0 = time.perf_counter()
     shot = session.call("Page.captureScreenshot", {"format": "png"})
@@ -65,7 +66,7 @@ def ocr_perception(session, *, budget: int = 120) -> dict:
     image = Image.open(io.BytesIO(base64.b64decode(shot["data"]))).convert("RGB")
 
     t0 = time.perf_counter()
-    raw = ocrmac.OCR(image, recognition_level="accurate").recognize(px=True)
+    raw = recognize_text(image)
     ocr_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
@@ -136,16 +137,14 @@ def benchmark_perception(args: argparse.Namespace) -> int:
                 "p95_ms": _pct(totals, 95),
                 "min_ms": round(min(totals), 1),
                 "capture_ms": round(statistics.median([r["capture_ms"] for r in ocr]), 1),
-                "vision_ocr_ms": round(statistics.median([r["ocr_ms"] for r in ocr]), 1),
+                "rapidocr_ms": round(statistics.median([r["ocr_ms"] for r in ocr]), 1),
                 "merge_ms": round(statistics.median([r["post_ms"] for r in ocr]), 1),
                 "items": ocr[0]["items"],
                 "raw_lines": ocr[0]["lines"],
             }
             o = out["ocr"]
             print(f"OCR perception:   p50 {o['p50_ms']:>7.1f}ms  p95 {o['p95_ms']:>7.1f}ms  ({o['items']} blocks)")
-            print(
-                f"                  = capture {o['capture_ms']}ms + Vision OCR {o['vision_ocr_ms']}ms + merge {o['merge_ms']}ms"
-            )
+            print(f"                  = capture {o['capture_ms']}ms + RapidOCR {o['rapidocr_ms']}ms + merge {o['merge_ms']}ms")
             speedup = o["p50_ms"] / out["dom"]["p50_ms"] if out["dom"]["p50_ms"] else 0
             out["speedup"] = round(speedup, 1)
             print(f"                  DOM is {speedup:.1f}x faster")

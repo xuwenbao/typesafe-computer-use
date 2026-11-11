@@ -1,7 +1,7 @@
-"""Windows adapter: synthetic input, app control, screen capture, OCR, and the focused UI Automation element.
+"""Windows adapter: synthetic input, app control, screen capture, and the focused UI Automation element.
 
-Experimental. This is the only module that touches pywin32, UI Automation, Win32 SendInput, or
-Windows.Media.Ocr; macos.py provides the same functions for macOS, and platform_adapter.py picks one.
+Experimental. This is the only module that touches pywin32, UI Automation, or Win32 SendInput;
+macos.py provides the same functions for macOS, and platform_adapter.py picks one.
 The bounded tree walk itself lives in ax_walk.py, shared by both.
 
 Once the process is per-monitor DPI aware (set below), Windows has no Retina-style point and pixel
@@ -27,7 +27,6 @@ import win32api
 import win32con
 import win32gui
 import win32process
-import winocr
 from PIL import Image, ImageGrab
 
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
@@ -42,11 +41,6 @@ EVENT_GAP = 0.04  # seconds between synthetic events, as on macOS
 CLICK_TOLERANCE_PX = 1  # how far the cursor may land from its target before a click is refused
 WHEEL_DELTA = 120  # one notch of the wheel
 LINES_PER_NOTCH = 3  # the Windows default; the actions ask for lines, as on macOS
-
-# Windows.Media.Ocr reads one language per engine and reports no confidence, so every line it returns
-# counts as certain and passes MIN_OCR_CONFIDENCE. The language pack must be installed (see docs/windows.md).
-OCR_LANGUAGE = "en"
-OCR_CONFIDENCE = 1.0
 
 # UI Automation's ControlTypeName mapped onto the "AX*" role vocabulary ax_walk.py, models.ROLE_WORDS,
 # and models.TEXT_ROLES already speak, so none of that shared logic needs a Windows-specific branch.
@@ -148,21 +142,6 @@ def wheel_delta(lines: int) -> int:
 
 def landed(target: tuple[int, int], actual: tuple[float, float]) -> bool:
     return abs(actual[0] - target[0]) <= CLICK_TOLERANCE_PX and abs(actual[1] - target[1]) <= CLICK_TOLERANCE_PX
-
-
-def ocr_lines(result: dict) -> list[tuple[str, float, tuple[float, float, float, float]]]:
-    """winocr's plain-dict result as text, confidence, and a box around the line's words."""
-    out = []
-    for line in result.get("lines", []):
-        rects = [word["bounding_rect"] for word in line.get("words", [])]
-        if not rects:
-            continue
-        x1 = min(r["x"] for r in rects)
-        y1 = min(r["y"] for r in rects)
-        x2 = max(r["x"] + r["width"] for r in rects)
-        y2 = max(r["y"] + r["height"] for r in rects)
-        out.append((line["text"], OCR_CONFIDENCE, (float(x1), float(y1), float(x2), float(y2))))
-    return out
 
 
 # ------------------------------------------------------------------ SendInput
@@ -427,11 +406,6 @@ def display_scale(image: Image.Image) -> float:
     """Per-monitor DPI awareness keeps every coordinate in physical pixels, so a screen point
     already is a capture pixel; unlike macOS, there is no separate points-vs-pixels scale."""
     return 1.0
-
-
-def recognize_text(image: Image.Image) -> list[tuple[str, float, tuple[float, float, float, float]]]:
-    """Windows.Media.Ocr lines as text, confidence, and a box in the image's own pixels."""
-    return ocr_lines(winocr.recognize_pil_sync(image, OCR_LANGUAGE))
 
 
 def _pattern(element, pattern_id):

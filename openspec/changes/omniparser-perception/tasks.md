@@ -54,10 +54,10 @@
 
 ## 7. 删除旧管线（单独提交）
 
-- [ ] 7.1 从 `Desktop` 协议删除 `recognize_text`；`macos.py` 删 `ocrmac` 与 `OCR_LANGUAGES`，`windows.py` 删 `winocr`；更新 `tests/test_platform_adapter.py`
-- [ ] 7.2 删除 `osworld/ocr.py`；`osworld.desktop.Desktop` 不再接收 `recognize_text`；`JevAgent`、`run_multienv_jev.py`、`scripts/osworld run-jev` 删 `--ocr`（传入时报错并说明已删除）；`run.json` 记录管线版本与权重提交哈希；更新 OSWorld 相关测试
-- [ ] 7.3 从 `pyproject.toml` 删除 `ocrmac`、`winocr` 与 `rapidocr` 可选依赖组；删除 `ocr_rapid.py`；从 `tests/conftest.py` 删去它们的替身；更新 `uv.lock`
-- [ ] 7.4 确认 `browser/` 没有引用任何新模块，浏览器路径测试全部通过
+- [x] 7.1 从 `Desktop` 协议删除 `recognize_text`；`macos.py` 删 `ocrmac` 与 `OCR_LANGUAGES`，`windows.py` 删 `winocr`；更新 `tests/test_platform_adapter.py`
+- [x] 7.2 删除 `osworld/ocr.py`；`osworld.desktop.Desktop` 不再接收 `recognize_text`；`JevAgent`、`run_multienv_jev.py`、`scripts/osworld run-jev` 删 `--ocr`（传入时报错并说明已删除）；`run.json` 记录管线版本与权重提交哈希；更新 OSWorld 相关测试
+- [x] 7.3 从 `pyproject.toml` 删除 `ocrmac`、`winocr` 与 `rapidocr` 可选依赖组；删除 `ocr_rapid.py`；从 `tests/conftest.py` 删去它们的替身；更新 `uv.lock`
+- [x] 7.4 确认 `browser/` 没有引用任何新模块，浏览器路径测试全部通过
 
 ## 8. 文档
 

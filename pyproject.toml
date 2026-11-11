@@ -26,13 +26,11 @@ dependencies = [
     "pillow>=11.0,<13",
     "typesafe-sdk==0.6.0",
     "websocket-client==1.9.0",
-    "ocrmac==1.0.1; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices==12.2.2; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz==12.2.2; sys_platform == 'darwin'",
     "psutil==7.2.2; sys_platform == 'win32'",
     "pywin32==312; sys_platform == 'win32'",
     "uiautomation==2.0.29; sys_platform == 'win32'",
-    "winocr==0.0.15; sys_platform == 'win32'",
     # The desktop perception: text, the icon detector, and the icon captioner. Neither PyTorch nor ONNX
     # Runtime ships a wheel for an Intel Mac, so none of these installs there: jev still imports and its
     # tests still run, but the desktop path does not.
@@ -44,10 +42,6 @@ dependencies = [
     "huggingface-hub==2.4.0",
     "numpy==2.5.3",
 ]
-
-[project.optional-dependencies]
-# Kept for `uv sync --extra rapidocr` in existing setups; RapidOCR is now a dependency of every install.
-rapidocr = []
 
 [tool.uv.sources]
 # Linux runs the OSWorld host and the sandbox, neither with a GPU: the CPU build spares a few GB of CUDA.

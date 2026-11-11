@@ -1,6 +1,6 @@
 """macOS adapter: synthetic input, app control, screen capture, and the focused accessibility element.
 
-This is the only module that touches Quartz, ApplicationServices, AppleScript, or Vision OCR.
+This is the only module that touches Quartz, ApplicationServices, or AppleScript.
 windows.py provides the same functions for Windows; platform_adapter.py picks one. The bounded tree
 walk itself lives in ax_walk.py, shared by both.
 """
@@ -16,7 +16,6 @@ from pathlib import Path
 
 import ApplicationServices as AS
 import Quartz
-from ocrmac import ocrmac
 from PIL import Image
 
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
@@ -213,17 +212,6 @@ def screenshot() -> Image.Image:
 def display_scale(image: Image.Image) -> float:
     points_wide = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID()).size.width
     return image.width / points_wide
-
-
-# Vision's default follows the process locale. A shell whose locale is C is not a recognition
-# language, so it falls back to English and reads a Chinese screen as Latin and Cyrillic.
-# Simplified Chinese comes first; English stays so a mixed screen is still readable.
-OCR_LANGUAGES = ["zh-Hans", "en-US"]
-
-
-def recognize_text(image: Image.Image) -> list[tuple[str, float, tuple[float, float, float, float]]]:
-    """Vision OCR lines as text, confidence, and a box in the image's own pixels."""
-    return ocrmac.OCR(image, recognition_level="accurate", language_preference=OCR_LANGUAGES).recognize(px=True)
 
 
 def _ax_attr(element, name: str):

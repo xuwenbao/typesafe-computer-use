@@ -10,7 +10,6 @@ from __future__ import annotations
 import ast
 import json
 import platform
-import sys
 import threading
 from io import BytesIO
 from pathlib import Path
@@ -22,7 +21,8 @@ from world import FakeTypeSafe, FakeWriter, scripted
 
 from typesafe_computer_use import runner
 from typesafe_computer_use.decide import Decision
-from typesafe_computer_use.osworld import ocr, tree
+from typesafe_computer_use.osworld import agent as agent_module
+from typesafe_computer_use.osworld import tree
 from typesafe_computer_use.osworld.agent import SAVE_A11Y, JevAgent, describe
 from typesafe_computer_use.osworld.desktop import APP_PID, OSWorldDesktop
 from typesafe_computer_use.parse import detect as parse_detect
@@ -79,11 +79,10 @@ def jev(monkeypatch, tmp_path):
     def make(policy, *, lines=(), **kwargs) -> JevAgent:
         fake = FakeTypeSafe(policy)
         monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)
-        monkeypatch.setitem(ocr.BACKENDS, "fake", lambda: lambda image: list(lines))
         monkeypatch.setattr(parse_ocr, "recognize_text", lambda image: list(lines))
         monkeypatch.setattr(parse_detect, "detect", lambda image, *args, **kwargs: [])
         kwargs.setdefault("writer", None)
-        agent = JevAgent("fake", out_root=tmp_path, step_seconds=STEP_SECONDS, **kwargs)
+        agent = JevAgent(out_root=tmp_path, step_seconds=STEP_SECONDS, **kwargs)
         made.append(agent)
         return agent
 
@@ -121,7 +120,7 @@ def test_a_click_decision_becomes_one_pyautogui_click(jev, tmp_path):
     summary = run_json(tmp_path)
     assert summary["outcome"] == "done"
     assert summary["history"][0].startswith("clicked 'Gmail'")
-    assert summary["osworld"] == {"ocr": "fake", "provider": "docker", "architecture": platform.machine(), "tree": "osworld"}
+    assert summary["osworld"] == {"provider": "docker", "architecture": platform.machine(), "tree": "osworld"}
     assert (tmp_path / "jev" / "step-001-raw.png").exists(), "jev's usual run folder, so a step replays"
 
 
@@ -154,7 +153,7 @@ def test_a_missing_tree_saves_nothing_but_still_counts(tmp_path):
         handed.append(actions)
         return obs()
 
-    desktop = OSWorldDesktop(obs(None), lambda image: [], next_obs, save_a11y=tmp_path)
+    desktop = OSWorldDesktop(obs(None), next_obs, save_a11y=tmp_path)
     desktop.click_at((1.0, 2.0))
     desktop.screenshot()
     assert sorted(path.name for path in tmp_path.iterdir()) == ["obs-001-a11y.xml"]
@@ -259,7 +258,8 @@ def test_an_exception_in_the_loop_is_raised_from_predict(jev, tmp_path):
         agent.predict(GOAL, obs())
     summary = run_json(tmp_path)
     assert summary["outcome"] == "crashed"
-    assert summary["osworld"]["ocr"] == "fake"
+    assert summary["osworld"]["provider"] is None
+    assert summary["perception"]["pipeline"] == "omniparser-1"
     assert agent.predict(GOAL, obs())[1] == ["DONE"]
 
 
@@ -423,29 +423,24 @@ def test_reset_stops_a_waiting_worker_and_the_next_task_starts_clean(jev, tmp_pa
     assert (tmp_path / "task-2" / "jev" / "run.log").exists()
 
 
-# ----- construction and OCR backends ----------------------------------------------------------
+# ----- construction ----------------------------------------------------------------------------
 
 
-def test_jev_agent_needs_a_known_ocr_backend_before_any_run(tmp_path):
+def test_jev_agent_names_no_ocr_backend(tmp_path):
     with pytest.raises(TypeError):
-        JevAgent()  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match=r"unknown OCR backend 'tesseract'; known backends: .*vision"):
-        JevAgent("tesseract", out_root=tmp_path, writer=None)
+        JevAgent(ocr="rapidocr", out_root=tmp_path, writer=None)  # type: ignore[call-arg]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_machine_that_cannot_run_the_perception_fails_before_any_run(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_module, "unsupported", lambda: "the desktop perception needs torch")
+    with pytest.raises(RuntimeError, match="needs torch"):
+        JevAgent(out_root=tmp_path, writer=None)
     assert list(tmp_path.iterdir()) == []
 
 
 def test_the_writer_comes_from_the_environment_by_default(clean_env):
-    clean_env.setitem(ocr.BACKENDS, "fake", lambda: lambda image: [])
-    assert JevAgent("fake").writer is None
-
-
-def test_vision_is_the_hosts_ocr_and_only_on_macos(monkeypatch):
-    assert set(ocr.backends()) >= {"vision"}
-    monkeypatch.setattr(sys, "platform", "darwin")
-    assert ocr.backend("vision") == host.recognize_text
-    monkeypatch.setattr(sys, "platform", "linux")
-    with pytest.raises(ocr.Unavailable, match="macOS's Vision OCR, and this machine runs linux"):
-        ocr.backend("vision")
+    assert JevAgent().writer is None
 
 
 def test_describe_names_the_target_of_each_kind_of_decision():
@@ -474,7 +469,7 @@ def over(observation: dict, handed: list | None = None, then: dict | None = None
         handed.append(actions)
         return then
 
-    return OSWorldDesktop(observation, lambda image: [("text", 1.0, (0.0, 0.0, 1.0, 1.0))], next_obs)
+    return OSWorldDesktop(observation, next_obs)
 
 
 def test_reads_before_input_use_the_obs_in_hand_and_the_first_read_after_input_ends_the_step():
@@ -624,7 +619,7 @@ def test_input_after_the_browsers_code_runs_whichever_way_it_branched():
     assert in_fake_vm(code, window=False) == [raise_it, ("Popen", ["google-chrome"], DETACHED), ("press", "esc")]
 
 
-def test_with_no_tree_nothing_is_known_but_the_screenshot_and_ocr():
+def test_with_no_tree_nothing_is_known_but_the_screenshot():
     desktop = over(obs(tree=None))
     assert desktop.frontmost_app_and_pid() == ("", APP_PID)
     assert desktop.frontmost_window_bounds() is None
@@ -634,7 +629,6 @@ def test_with_no_tree_nothing_is_known_but_the_screenshot_and_ocr():
     image = desktop.screenshot()
     assert image.size == DISPLAY and image.mode == "RGB"
     assert desktop.display_scale(image) == 1.0
-    assert desktop.recognize_text(image) == [("text", 1.0, (0.0, 0.0, 1.0, 1.0))]
     desktop.scroll(5)
     assert desktop.actions == ["pyautogui.scroll(5)"]
 
