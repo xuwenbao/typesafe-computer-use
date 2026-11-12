@@ -1,16 +1,7 @@
 # Known limits
 
-- An icon the app does not label is named by the captioner, in a few English words about how
-  it looks ("a gear", "a magnifying glass"), whatever the app's language. It says what an
-  icon looks like, not what it does, and a small or unusual one can come out wrong.
-- Every step sends TypeSafe a picture of the frontmost window. Anything visible there leaves
-  the machine, including text typed into a field; nothing is blanked out. The browser backend
-  sends no picture.
-- The picture travels as a TypeSafe image asset, behind the `TypeSafe-Danger-Zone-Images`
-  header: an interface TypeSafe calls Dreamer-ready, whose format and accuracy may still
-  change. When System One refuses the picture, the step goes on without it.
-- The desktop perception needs PyTorch, which ships no build for an Intel Mac; there only the
-  browser backend runs.
+- OCR only sees text, and the accessibility tree only covers apps that publish one.
+  In a terminal, a canvas, or Spotify, an icon-only button reaches neither source.
 - Two identical labels in one row, or in no row at all, get only a coarse region hint and
   split the vote. Ones in different rows are told apart by the text beside them.
 - Only the main display is captured.

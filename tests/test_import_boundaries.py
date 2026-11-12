@@ -13,8 +13,6 @@ import pytest
 
 PACKAGE = Path(__file__).resolve().parent.parent / "typesafe_computer_use"
 PLATFORM = {"platform_adapter", "macos", "windows", "perception"}
-# The desktop perception's models: the browser path reads the DOM and must not pull in PyTorch.
-MODELS = {"parse.ocr", "parse.detect", "parse.caption", "parse.fuse", "parse.marks", "parse.weights", "parse.runtime"}
 
 
 def module_level(tree: ast.AST):
@@ -64,4 +62,3 @@ def test_never_reaches_the_desktop_adapter(start):
             todo.extend(f"{name}.{p.stem}" for p in path.parent.glob("*.py") if p.stem != "__init__")
         todo.extend(imports_of(path))
     assert not {name.split(".")[-1] for name in seen} & PLATFORM, sorted(seen)
-    assert not seen & MODELS, sorted(seen)

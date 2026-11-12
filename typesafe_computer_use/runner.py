@@ -14,8 +14,7 @@ from .calls import Calls, MeteredClassifier, MeteredWriter
 from .config import DEFAULT_DELAY, DEFAULT_HANDOFFS, DEFAULT_MIN_CONFIDENCE, DEFAULT_STEPS, MAX_OPTIONS
 from .decide import Decision, decide, offscreen_records
 from .models import Abort, Guidance, Item, Screen, Signature, same_screen, signature
-from .parse.marks import marks
-from .perception import ParseCache, capture, ocr_region, perceive, pipeline_record
+from .perception import OcrCache, capture, perceive
 from .platform_adapter import desktop
 from .report import Log, annotate, ax_count, render_payload, top
 from .timing import format_timing, phase, summarize
@@ -28,8 +27,6 @@ MAX_REPEATS = 2  # consecutive actions already taken on the same screen earlier 
 MAX_STALLS = 3  # stalls with no new page between them; the last is final, since two focuses from the writer did not free the run
 EARLIER_LINES = 600  # lines of text from the screens before the last one that the answer may also be read from
 MAX_QUESTIONS = 3  # questions the writer may put to the user in one run; an empty reply ends the asking sooner
-LEAD = 2.0  # a choice under the floor still counts when it is at least this many times the runner-up
-FLOOR_FRACTION = 0.75  # and still at least this much of the floor; a thin vote is not a decision
 
 # The outcomes the writer is handed, each in words it can pass on. A dry run took no action and
 # an abort is the user's own stop, so neither has anything to report.
@@ -59,7 +56,7 @@ class RunConfig:
     app: str | None = None  # frontmost app to report during replay
     url: str | None = None  # browser URL to report during replay
     # Start each capture's OCR on a thread of its own while the capture asks for the app, window,
-    # field, and URL (see `ParseCache.read_ahead`). Worth it where those questions are slow, as over an
+    # field, and URL (see `OcrCache.read_ahead`). Worth it where those questions are slow, as over an
     # OSWorld VM; off for this machine, whose own are quick.
     read_ahead: bool = False
 
@@ -91,13 +88,12 @@ class RunState:
         default_factory=list
     )  # every screen acted on, with the action; None for a wait
     outcome: str = "crashed"  # every way out of the loop names its own; only an exception leaves this
-    parse_cache: ParseCache = field(default_factory=ParseCache)  # carries one step's reading into the next
+    ocr_cache: OcrCache = field(default_factory=OcrCache)  # carries one step's OCR into the next
     view: tuple[Screen, list[Item]] | None = None  # the latest capture, until an action makes it stale
     answer: Answer | None = None  # the writer's latest; the last one is the run's answer
     guidance: Guidance = field(default_factory=Guidance)  # the writer's focus and the user's replies, as they stand
     handoffs: list[Handoff] = field(default_factory=list)
     calls: Calls = field(default_factory=Calls)  # requests to each model, over the whole run
-    image_refusals: list[dict] = field(default_factory=list)  # steps asked again without their picture, and why
 
 
 def run(cfg: RunConfig, ctx_factory) -> RunState:
@@ -140,8 +136,6 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "handoffs": [asdict(h) for h in state.handoffs],
             "questions": [asdict(e) for e in state.guidance.exchanges],
             "timing": summarize(state.timings),
-            "perception": pipeline_record(),
-            "image_refusals": state.image_refusals,
             "history": state.history,
             "config": {k: str(v) for k, v in asdict(cfg).items()},
         }
@@ -291,7 +285,7 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     desktop.check_abort()
     timing: dict[str, float] = {}
     started = time.perf_counter()
-    cache = None if cfg.replay else state.parse_cache
+    cache = None if cfg.replay else state.ocr_cache
     with phase(timing, "capture"):
         screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser, timing, ahead=cache if cfg.read_ahead else None)
     items = perceive(screen, MAX_OPTIONS, cfg.goal, timing, cache)
@@ -301,21 +295,12 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     tried = tried_here(state)
     prefix = cfg.out / f"step-{step:03d}"  # three digits, so a run of 100 steps still lists in order
     screen.image.save(prefix.with_name(prefix.name + "-raw.png"))
-    picture = marks(screen.image, items, ocr_region(screen))
-    sent = prefix.with_name(prefix.name + "-sent.png")
-    sent.write_bytes(picture.png)
     prefix.with_name(prefix.name + "-payload.txt").write_text(
-        render_payload(cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance, picture, sent.name),
-        encoding="utf-8",
+        render_payload(cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance), encoding="utf-8"
     )
 
     with phase(timing, "decide"):
-        decision = decide(
-            ctx.typesafe, cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance, picture
-        )
-    if decision.image_refused is not None:
-        log(f"  the screen picture was refused, and the step asked again without it: {decision.image_refused}")
-        state.image_refusals.append({"step": step, "reason": decision.image_refused})
+        decision = decide(ctx.typesafe, cfg.goal, screen, items, state.history, ctx.browser, ctx.email, tried, ctx.guidance)
     by_index = {str(it.index): it for it in items}
     annotate(screen, items, decision.chosen, prefix.with_suffix(".png"))
 
@@ -344,35 +329,12 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     prefix.with_name(prefix.name + "-answers.json").write_text(
         json.dumps(answers(decision, screen, items, timing, tried, state), indent=2), encoding="utf-8"
     )
-    log(
-        f"  files: {prefix.name}-raw.png, {prefix.name}.png, {prefix.name}-sent.png, {prefix.name}-payload.txt, "
-        f"{prefix.name}-answers.json"
-    )
+    log(f"  files: {prefix.name}-raw.png, {prefix.name}.png, {prefix.name}-payload.txt, {prefix.name}-answers.json")
     log(format_timing(timing))
 
     if state.view is None:  # an action ran: let the screen settle before the next step, or the answer, reads it
         desktop.sleep_watching(cfg.delay)
     return keep_going
-
-
-def _lead_covers(decision: Decision, floor: float) -> bool:
-    """Whether a below-floor choice is still a decision, because it leads its runner-up.
-
-    Only the answer that names a target may be excused this way, and only when the kind of action
-    itself already clears the floor. A click the model is unsure it should make at all still stops.
-    """
-    if decision.clicking:
-        return decision.kind.confidence >= floor and _leads(decision.item, floor)
-    if decision.pressing_offscreen:
-        return decision.kind.confidence >= floor and _leads(decision.offscreen, floor)
-    return _leads(decision.kind, floor)
-
-
-def _leads(answer, floor: float) -> bool:
-    ranked = sorted((getattr(answer, "probabilities", None) or {}).values(), reverse=True)
-    if len(ranked) < 2 or ranked[1] <= 0:
-        return False
-    return ranked[0] >= floor * FLOOR_FRACTION and ranked[0] >= ranked[1] * LEAD
 
 
 def resolve(
@@ -391,14 +353,9 @@ def resolve(
         state.outcome = "done" if decision.kind.choice == "done" else "nothing helps"
         return False
     if decision.confidence < cfg.min_confidence:
-        # A crowded screen spreads one click across a hundred rows, so a sure target can sit just
-        # under the floor while still leading the next row by a wide margin. A near tie stays a
-        # stop: two rows that both look right are what the floor is there for.
-        if not _lead_covers(decision, cfg.min_confidence):
-            log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}; stopping")
-            state.outcome = "low confidence"
-            return False
-        log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}, but it leads the next option; continuing")
+        log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}; stopping")
+        state.outcome = "low confidence"
+        return False
     if not cfg.act or cfg.replay:
         log(f"  would do: {decision.chosen}. dry run (pass --act without --image to drive the machine)")
         state.outcome = "dry run"

@@ -422,7 +422,7 @@ def test_osworlds_fetch_that_never_answers_leaves_the_step_without_a_tree_in_tim
 def test_with_both_hung_a_read_of_the_tree_waits_no_longer_than_both_deadlines(hung):
     controller = hung(light=True, full=True)
     fetch = partial(tree.fetch, controller, timeout=0.2, full_timeout=0.3)
-    desktop = OSWorldDesktop(observation(), lambda actions: observation(), fetch_tree=fetch)
+    desktop = OSWorldDesktop(observation(), lambda image: [], lambda actions: observation(), fetch_tree=fetch)
     started = time.perf_counter()
     assert desktop.frontmost_app_and_pid() == ("", 1), "no tree: the app is unknown, and OCR still reads the screen"
     assert desktop.focused_field() is None and desktop.actionable_elements(1, 1920, 1080) == ([], [], False)
@@ -498,7 +498,7 @@ class Gated:
 
 def test_only_a_read_of_the_tree_waits_for_the_fetch_and_the_screenshot_does_not():
     fetch = Gated([])
-    desktop = OSWorldDesktop(observation(), lambda actions: observation(), fetch_tree=fetch)
+    desktop = OSWorldDesktop(observation(), lambda image: [], lambda actions: observation(), fetch_tree=fetch)
     assert fetch.started.wait(WAIT), "the observation's fetch starts as it arrives"
     assert desktop.screenshot().size == (1920, 1080), "the screenshot is there while the tree is not"
     found = []
@@ -520,7 +520,7 @@ def test_the_actions_go_to_osworld_only_once_the_fetch_before_them_is_over():
         events.append(("step", actions))
         return observation()
 
-    desktop = OSWorldDesktop(observation(), next_obs, fetch_tree=fetch)
+    desktop = OSWorldDesktop(observation(), lambda image: [], next_obs, fetch_tree=fetch)
     desktop.click_at((10.0, 20.0))
     stepping = threading.Thread(target=desktop.screenshot, daemon=True)
     stepping.start()
@@ -535,7 +535,9 @@ def test_the_actions_go_to_osworld_only_once_the_fetch_before_them_is_over():
 
 def test_each_fetched_tree_is_saved_with_osworlds_beside_it_in_a_check(tmp_path):
     checked = tree.fetch(FakeController(ok(), ok()), check=True)
-    desktop = OSWorldDesktop(observation(), lambda actions: observation(), fetch_tree=lambda: checked, save_a11y=tmp_path)
+    desktop = OSWorldDesktop(
+        observation(), lambda image: [], lambda actions: observation(), fetch_tree=lambda: checked, save_a11y=tmp_path
+    )
     desktop.focused_field()
     assert sorted(p.name for p in tmp_path.iterdir()) == ["obs-000-a11y-full.xml", "obs-000-a11y.xml"]
     assert (tmp_path / "obs-000-a11y.xml").read_text(encoding="utf-8") == LIGHT_XML
@@ -546,7 +548,7 @@ def test_a_fetch_that_raises_raises_in_the_read_that_waits_for_it():
     def broken() -> tree.Fetched:
         raise RuntimeError("a bug in the fetch")
 
-    desktop = OSWorldDesktop(observation(), lambda actions: observation(), fetch_tree=broken)
+    desktop = OSWorldDesktop(observation(), lambda image: [], lambda actions: observation(), fetch_tree=broken)
     with pytest.raises(RuntimeError, match="a bug in the fetch"):
         desktop.focused_field()
 
@@ -554,5 +556,5 @@ def test_a_fetch_that_raises_raises_in_the_read_that_waits_for_it():
 def test_osworlds_own_tree_needs_no_fetch():
     full = copy.deepcopy(observation())
     full["accessibility_tree"] = FULL_XML
-    desktop = OSWorldDesktop(full, lambda actions: observation())
+    desktop = OSWorldDesktop(full, lambda image: [], lambda actions: observation())
     assert desktop.frontmost_app_and_pid() == ("Google Chrome", 1) and desktop.fetched == []

@@ -1,13 +1,15 @@
-"""Text on a capture: RapidOCR on ONNX Runtime, the one OCR engine of the desktop perception.
+"""RapidOCR on ONNX Runtime: OCR that runs anywhere, for machines without macOS Vision.
 
-`recognize_text` returns text, confidence, and a box in the image's own pixels, top to bottom and
-left to right. The engine loads its models once, on the first call, since that load is the slow
-part; importing this module loads nothing and imports no RapidOCR, so it imports on an Intel Mac.
+It needs the `rapidocr` extra (`uv sync --extra rapidocr`). The OSWorld benchmark runs on Linux,
+so it reads the VM's screen with this backend (`--ocr rapidocr`). `recognize_text` returns what
+`Desktop.recognize_text` returns: text, confidence, and a box in the image's own pixels, top to
+bottom and left to right. The engine loads its models once, on the first call, since that load is
+the slow part; importing this module loads nothing.
 
 Each box is shrunk to the ink inside it. RapidOCR's detector pads every line by about half its
-height. Padded, the entries of a settings sidebar, 40 pixels apart, read as one paragraph, and a
-click on it landed between them; the fusion with icon boxes needs tight boxes too, or a word beside
-an icon reads as inside it.
+height, while macOS Vision's boxes hug the glyphs, and jev's geometry (which lines join into a
+block, which share a row) was tuned on Vision's. Padded, the entries of a settings sidebar, 40
+pixels apart, read as one paragraph, and a click on it landed between them.
 """
 
 from __future__ import annotations
@@ -19,17 +21,14 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from PIL import Image
+from rapidocr import RapidOCR
 
-from .runtime import INFERENCE
-
-OcrLine = tuple[str, float, tuple[float, float, float, float]]
+from .platform_adapter import OcrLine
 
 
 @functools.cache
-def _engine():
+def _engine() -> RapidOCR:
     """The one engine this process uses. It logs errors only, so a run's output stays jev's own."""
-    from rapidocr import RapidOCR
-
     return RapidOCR(params={"Global.log_level": "error"})
 
 
@@ -100,7 +99,4 @@ def recognize_text(image: Image.Image) -> list[OcrLine]:
     """RapidOCR lines as text, confidence, and a box around their ink in the image's own pixels."""
     rgb = image.convert("RGB")
     gray = rgb.convert("L")
-    engine = _engine()
-    with INFERENCE:
-        output = engine(rgb)
-    return reading_order([(text, score, hug_ink(gray, box)) for text, score, box in lines_of(output)])
+    return reading_order([(text, score, hug_ink(gray, box)) for text, score, box in lines_of(_engine()(rgb))])

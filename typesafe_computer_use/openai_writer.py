@@ -17,10 +17,9 @@ class OpenAIWriter:
 
     writer.py builds each request as an Anthropic Messages call and reads text blocks back, so this
     translates both ways, and nothing else in the package knows which API is on the other end.
-    `thinking` is the switch an endpoint such as DeepSeek uses to think by default, out of the same
-    max_tokens, and then answer with an empty `content`. It goes out through `extra_body`, and it is
-    dropped for the rest of the run by an endpoint that refuses it. `reasoning` is the effort an
-    OpenAI reasoning model is asked for, dropped the same way.
+    `thinking` is accepted and dropped: Chat Completions has no such switch. `reasoning` is the
+    effort an OpenAI reasoning model is asked for, and it is dropped for the rest of the run by an
+    endpoint that refuses it.
     """
 
     def __init__(self, base_url: str, api_key: str):
@@ -30,7 +29,6 @@ class OpenAIWriter:
         self._formats = list(RESPONSE_FORMATS)  # those this endpoint has not refused yet
         self._token_limit = "max_tokens"  # OpenAI's newer models take max_completion_tokens instead
         self._reasoning = True  # until the endpoint refuses reasoning_effort
-        self._thinking = True  # until the endpoint refuses the thinking switch
 
     def _create(
         self,
@@ -53,7 +51,6 @@ class OpenAIWriter:
                     **{self._token_limit: max_tokens},
                     **_response_format(self._formats[0], schema),
                     **({"reasoning_effort": reasoning} if reasoning and self._reasoning else {}),
-                    **({"extra_body": {"thinking": thinking}} if thinking and self._thinking else {}),
                 )
             except openai.BadRequestError as e:
                 said = str(e).lower()
@@ -63,30 +60,13 @@ class OpenAIWriter:
                 if reasoning and self._reasoning and "reasoning_effort" in said:
                     self._reasoning = False
                     continue
-                if thinking and self._thinking and "thinking" in said:
-                    self._thinking = False
-                    continue
                 if len(self._formats) > 1 and any(word in said for word in FORMAT_WORDS):
                     self._formats.pop(0)
                     continue
                 raise
-            message = reply.choices[0].message if reply.choices else None
+            text = reply.choices[0].message.content if reply.choices else None
             usage = _usage(getattr(reply, "usage", None))
-            return SimpleNamespace(content=[SimpleNamespace(type="text", text=_message_text(message))], usage=usage)
-
-
-def _message_text(message) -> str:
-    """The reply text. DeepSeek can leave `content` empty and put the JSON in `reasoning_content`."""
-    if message is None:
-        return ""
-    content = getattr(message, "content", None) or ""
-    if content.strip():
-        return content
-    extra = getattr(message, "__pydantic_extra__", None) or {}
-    reasoning = extra.get("reasoning_content") if isinstance(extra, dict) else None
-    if not reasoning:
-        reasoning = getattr(message, "reasoning_content", None)
-    return reasoning or ""
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=text or "")], usage=usage)
 
 
 def _usage(usage) -> SimpleNamespace | None:

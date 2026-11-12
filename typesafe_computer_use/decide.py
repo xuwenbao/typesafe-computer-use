@@ -2,26 +2,16 @@
 
 from __future__ import annotations
 
-import base64
-import logging
 from collections import Counter
 from dataclasses import dataclass
 
-from typesafe_sdk import Choice, ChoiceAnswer, Noul, TypeSafeAPIError, TypeSafeClient
+from typesafe_sdk import Choice, ChoiceAnswer, Noul, TypeSafeClient
 
 from .config import SITES
 from .dates import date_hints, now_context
 from .models import AxNode, Field, Guidance, Item, Screen
-from .parse.marks import Marked
-
-log = logging.getLogger(__name__)
 
 STOP_KINDS = ("done", "none")
-SCREEN_IMAGE = "screen_image"  # the state key that refers to the picture in the request's assets
-IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
-# What in a 400's message says the picture, or images at all, were the trouble. A 413 always is:
-# the picture is most of the request.
-IMAGE_WORDS = ("image", "asset", "danger-zone", "danger_zone", SCREEN_IMAGE, "png", "base64")
 OFFSCREEN_PREFIX = "offscreen:"
 PRESS_OFFSCREEN = (
     "Activate a labelled control that the app exposes but that is not currently visible on screen "
@@ -99,14 +89,13 @@ def row_mates(items: list[Item], limit: int | None = ROW_MATES) -> dict[int, lis
 
 
 def item_criteria(screen: Screen, items: list[Item]) -> dict[str, str]:
-    """Each item as one line. A role prefix marks the ones the app itself declared, and "icon"
-    an icon named by what an image model saw in it rather than by text on the screen. A
+    """Each item as one line. A role prefix marks the ones the app itself declared, a
     duplicated label carries its row, and one under a popup says which."""
     hints = date_hints(items, screen)
     mates = row_mates(items)
     return {
         str(it.index): (
-            f"{it.role + ' ' if it.role and (it.from_ax or it.source == 'icon') else ''}{it.text!r} "
+            f"{it.role + ' ' if it.from_ax and it.role else ''}{it.text!r} "
             f"({screen.region(it)}"
             f"{'; ' + hints[it.index] if it.index in hints else ''}"
             f"{'; in the row of ' + ', '.join(repr(t) for t in mates[it.index]) if it.index in mates else ''}"
@@ -179,7 +168,6 @@ class Decision:
     item: ChoiceAnswer | None
     site: ChoiceAnswer
     offscreen: ChoiceAnswer | None = None
-    image_refused: str | None = None  # why System One refused the picture, when the step was asked again without it
 
     @property
     def clicking(self) -> bool:
@@ -224,11 +212,7 @@ def decide(
     email: str | None,
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
-    picture: Marked | None = None,
 ) -> Decision:
-    """One step's decision. With a `picture`, the state refers to it as `screen_image` and the
-    request carries it as an asset; when System One refuses the picture, the step is asked once
-    more without it, and the decision says why (see `refuses_the_picture`)."""
     questions = {
         "kind": Choice(
             instructions=(
@@ -250,7 +234,15 @@ def decide(
         ),
     }
     if items:
-        questions["item"] = item_question(screen, items, pictured=picture is not None)
+        questions["item"] = Choice(
+            instructions=(
+                "If clicking an on-screen item is the right move, which item? Items marked with a "
+                "role come from the app's accessibility tree and are real controls; plain items are "
+                "text read from the screen. Never pick an item that an action listed as already tried "
+                "on this screen clicked or pressed: each of those led straight back here."
+            ),
+            criteria=item_criteria(screen, items),
+        )
     if screen.offscreen:
         questions["offscreen"] = Choice(
             instructions=(
@@ -260,61 +252,8 @@ def decide(
             ),
             criteria=offscreen_criteria(screen.offscreen),
         )
-    state = base_state(goal, screen, items, history, tried, guidance)
-    refused = None
-    if picture is None:
-        answers = client.system_one(state=state, questions=questions).answers
-    else:
-        ref = picture.ref
-        try:
-            answers = client.system_one(
-                state={**state, SCREEN_IMAGE: ref},
-                questions=questions,
-                extra_headers={IMAGES_HEADER: "true"},
-                extra_body={"assets": {ref: image_asset(picture)}},
-            ).answers
-        except TypeSafeAPIError as e:
-            if not refuses_the_picture(e):
-                raise
-            refused = str(e)
-            log.warning("System One refused the screen picture, asking again without it: %s", refused)
-            if items:
-                questions["item"] = item_question(screen, items, pictured=False)
-            answers = client.system_one(state=state, questions=questions).answers
-    return Decision(
-        kind=answers["kind"],
-        item=answers.get("item"),
-        site=answers["site"],
-        offscreen=answers.get("offscreen"),
-        image_refused=refused,
-    )
-
-
-def item_question(screen: Screen, items: list[Item], pictured: bool) -> Choice:
-    return Choice(
-        instructions=(
-            ("Each item's number is drawn beside its box in the screen_image. " if pictured else "")
-            + "If clicking an on-screen item is the right move, which item? Items marked with a "
-            "role come from the app's accessibility tree and are real controls; items marked "
-            "'icon' are icons without text, named by a short English description of how they "
-            "look; plain items are text read from the screen. Never pick an item that an action "
-            "listed as already tried on this screen clicked or pressed: each of those led "
-            "straight back here."
-        ),
-        criteria=item_criteria(screen, items),
-    )
-
-
-def image_asset(picture: Marked) -> dict:
-    return {"type": "image", "format": "png", "data_base64": base64.b64encode(picture.png).decode("ascii")}
-
-
-def refuses_the_picture(error: TypeSafeAPIError) -> bool:
-    """Whether System One turned the request down for its picture: a 413, or a 400 whose message
-    names images. Anything else, an expired key or a malformed question, is no reason to drop it."""
-    if error.status == 413:
-        return True
-    return error.status == 400 and any(word in str(error).lower() for word in IMAGE_WORDS)
+    answers = client.system_one(state=base_state(goal, screen, items, history, tried, guidance), questions=questions).answers
+    return Decision(kind=answers["kind"], item=answers.get("item"), site=answers["site"], offscreen=answers.get("offscreen"))
 
 
 def verify_typed(client: TypeSafeClient, goal: str, field_before: Field, typed: str, field_after: Field | None) -> float:

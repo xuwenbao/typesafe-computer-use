@@ -34,10 +34,10 @@ from .. import config, runner
 from ..actions import Context
 from ..decide import Decision
 from ..models import Abort
-from ..parse.runtime import unsupported
 from ..platform_adapter import using
 from ..runner import RunConfig
 from ..writer import Writer, make_writer
+from . import ocr as ocr_backends
 from . import tree
 from .desktop import OSWorldDesktop
 
@@ -61,8 +61,8 @@ FROM_ENV = _FromEnv()  # the writer the environment configures, as `clicker` bui
 class JevAgent:
     """jev behind OSWorld's agent interface.
 
-    The screen is read by the desktop perception, the same on every machine; a machine that cannot
-    run its models fails here, before any VM starts. The run folder is `<out_root>/jev`; point `out_root` at the task's result folder
+    `ocr` names the OCR backend (see `ocr.py`) and is resolved here, so a bad name fails before any
+    VM starts. The run folder is `<out_root>/jev`; point `out_root` at the task's result folder
     before each task. `provider` names OSWorld's VM provider, for the record. `writer` is the
     Anthropic-style client for free text and answers: by default whatever the environment
     configures, as `clicker` builds it, and None runs without one. `controller` returns OSWorld's
@@ -72,6 +72,7 @@ class JevAgent:
 
     def __init__(
         self,
+        ocr: str,
         max_steps: int = 50,
         out_root: Path = Path("jev-runs"),
         *,
@@ -82,9 +83,8 @@ class JevAgent:
     ) -> None:
         if max_steps < 1:
             raise ValueError(f"max_steps must be at least 1, not {max_steps}")
-        reason = unsupported()
-        if reason is not None:
-            raise RuntimeError(reason)
+        self.recognize_text = ocr_backends.backend(ocr)
+        self.ocr = ocr
         self.max_steps = max_steps
         self.out_root = Path(out_root)
         self.provider = provider
@@ -202,7 +202,9 @@ class _Run:
                 check = tree.checking()
                 fetch = partial(tree.fetch, self.agent.controller(), check=check)
                 self.tree = tree.LIGHT_CHECKED if check else tree.LIGHT
-            adapter = self.adapter = OSWorldDesktop(obs, self._next_obs, fetch_tree=fetch, save_a11y=save)
+            adapter = self.adapter = OSWorldDesktop(
+                obs, self.agent.recognize_text, self._next_obs, fetch_tree=fetch, save_a11y=save
+            )
             with using(adapter):
                 state = runner.run(self.cfg, self._context)
             answer = f"; answer: {state.answer.text}" if state.answer is not None else ""
@@ -247,7 +249,7 @@ class _Run:
         return obs
 
     def _record(self) -> None:
-        """Add what the run ran on to jev's run.json: OSWorld's provider, the
+        """Add what the run ran on to jev's run.json: the OCR backend, OSWorld's provider, the
         machine's architecture, and where the tree came from, so results from different setups are
         never compared by accident. A run that fetched its own trees adds what they cost and how many
         fell back to OSWorld's fetch (see `tree.summary`)."""
@@ -257,6 +259,7 @@ class _Run:
         summary = json.loads(path.read_text(encoding="utf-8"))
         fetched = list(self.adapter.fetched) if self.adapter is not None else []
         summary["osworld"] = {
+            "ocr": self.agent.ocr,
             "provider": self.agent.provider,
             "architecture": platform.machine(),
             "tree": self.tree,

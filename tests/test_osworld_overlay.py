@@ -65,17 +65,17 @@ def calls(module: ast.Module, name: str) -> list[ast.Call]:
     ]
 
 
-def test_the_runner_builds_jev_agent_and_refuses_the_removed_ocr():
+def test_the_runner_builds_jev_agent_with_the_required_ocr():
     module = tree(RUNNER)
     (agent,) = calls(module, "JevAgent")
     assert {kw.arg: ast.unparse(kw.value) for kw in agent.keywords} == {
+        "ocr": "args.ocr",
         "max_steps": "args.max_steps",
         "provider": "args.provider_name",
         "controller": "lambda: env.controller",  # read at each task: OSWorld makes a new one when it reverts the VM
     }
     (ocr,) = [call for call in calls(module, "add_argument") if ast.literal_eval(call.args[0]) == "--ocr"]
-    assert {kw.arg: ast.unparse(kw.value) for kw in ocr.keywords}["default"] == "None"
-    assert "--ocr was removed" in RUNNER.read_text(encoding="utf-8")
+    assert {kw.arg: ast.unparse(kw.value) for kw in ocr.keywords}["required"] == "True"
     assert "PromptAgent" not in RUNNER.read_text(encoding="utf-8")
 
 
@@ -181,19 +181,19 @@ def script(tmp_path: Path, processes):
 def test_no_command_prints_the_usage(script):
     result = script()
     assert result.returncode == 2
-    assert "run-jev TASK..." in result.stdout and "--ocr" not in result.stdout
+    assert "run-jev TASK... --ocr OCR" in result.stdout
 
 
-@pytest.mark.parametrize("flag", [("--ocr", "rapidocr"), ("--ocr=vision",)])
-def test_run_jev_says_the_ocr_flag_is_gone(script, flag):
-    result = script("run-jev", "chrome/some-task", *flag)
+def test_run_jev_refuses_to_start_without_ocr(script):
+    result = script("run-jev", "chrome/some-task")
     assert result.returncode == 2
-    assert "--ocr was removed" in result.stderr
+    assert "run-jev needs --ocr" in result.stderr
+    assert "Backends:" in result.stderr
 
 
 @pytest.mark.parametrize("task", ["chrome", "../chrome/x", "chrome/x/y", "chrome/.."])
 def test_a_task_is_one_domain_and_one_id(script, task):
-    result = script("run-jev", task)
+    result = script("run-jev", task, "--ocr", "rapidocr")
     assert result.returncode == 2
     assert "a task is DOMAIN/ID" in result.stderr
 
@@ -206,7 +206,7 @@ def test_a_run_needs_setup_first(script):
 
 @pytest.mark.parametrize("args", [("--envs", "3"), ("--envs=2",)])
 def test_either_run_takes_a_number_of_side_by_side_vms(script, args):
-    for command in (("run-jev", "chrome/some-task"), ("run-luna", "chrome/some-task")):
+    for command in (("run-jev", "chrome/some-task", "--ocr", "rapidocr"), ("run-luna", "chrome/some-task")):
         result = script(*command, *args)
         assert "run scripts/osworld setup first" in result.stderr, "the option is taken, and the run goes on to its setup check"
 

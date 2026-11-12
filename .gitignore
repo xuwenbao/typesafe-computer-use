@@ -5,7 +5,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
-.env.*
 dist/
 bench/results-*.json
 .osworld/

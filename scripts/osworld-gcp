@@ -3,7 +3,7 @@
 # a run starts it when stopped, and it stops itself when idle and every night.
 #
 #   scripts/osworld-gcp up                           create or update the machine (terraform apply)
-#   scripts/osworld-gcp run-jev TASK...              start it, sync this copy, run jev on the tasks
+#   scripts/osworld-gcp run-jev TASK... --ocr OCR    start it, sync this copy, run jev on the tasks
 #                                                    (DOMAIN/ID each), copy the results back into results/
 #   scripts/osworld-gcp run-luna TASK...             the same with OSWorld's GPT agent on gpt-6-luna
 #   scripts/osworld-gcp attach                       follow the newest run again, then copy its results back
@@ -280,12 +280,12 @@ run_task() {
     if [[ $arg =~ $TASK_PATTERN ]]; then tasks+=("$arg"); fi
   done
   if [[ ${#tasks[@]} -eq 0 ]]; then
-    if [[ $command == run-jev ]]; then die "usage: scripts/osworld-gcp run-jev DOMAIN/ID..."; fi
+    if [[ $command == run-jev ]]; then die "usage: scripts/osworld-gcp run-jev DOMAIN/ID... --ocr OCR"; fi
     die "usage: scripts/osworld-gcp run-luna DOMAIN/ID..."
   fi
-  for arg in "$@"; do
-    if [[ $arg == --ocr || $arg == --ocr=* ]]; then die "--ocr was removed: jev reads every screen with one perception, RapidOCR with OmniParser's icon detector and captioner; drop the flag"; fi
-  done
+  if [[ $command == run-jev && " $* " != *" --ocr "* && " $* " != *" --ocr="* ]]; then
+    die "run-jev needs --ocr: rapidocr on this Linux machine (vision is the macOS backend)"
+  fi
   for arg in "$@"; do args+=" $(quote "$arg")"; done
 
   load
@@ -467,7 +467,7 @@ case "${1:-}" in
     run "${TF[@]}" init -input=false
     run "${TF[@]}" apply "$@"
     write_cache
-    say "the machine sets itself up on its first boot; scripts/osworld-gcp run-jev DOMAIN/ID waits for that"
+    say "the machine sets itself up on its first boot; scripts/osworld-gcp run-jev DOMAIN/ID --ocr rapidocr waits for that"
     ;;
   down)
     shift

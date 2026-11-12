@@ -4,10 +4,7 @@ A step reads the screen, adds the facts code can decide, asks TypeSafe one quest
 parts, and acts. This page follows it from the capture to the stop that ends a run.
 
 ```
-screencapture ─► RapidOCR lines + YOLOv9 icon boxes, over the frontmost window
-                 ─► fuse: text inside an icon names it, an icon inside text goes
-                 ─► merge the remaining lines into blocks ─► drop lines echoing the goal
-                 ─► Florence-2 describes each icon left without text, in English
+screencapture ─► Vision OCR ─► merge lines into blocks ─► drop lines echoing the goal
 accessibility ─► actionable elements (role, label, frame), pruned to the display,
                  the labelled pressable ones it pruned kept as off-screen controls
                      │
@@ -22,8 +19,7 @@ layout        ─► "in the row of ..." on any label that appears more than onc
 runner.py     ─► the actions already tried on this same screen, each of which led back here
                      │
                      ▼
-        one TypeSafe request, three Choices, four with off-screen controls,
-        with the window as a picture, every item boxed and numbered
+        one TypeSafe request, three Choices, four with off-screen controls
         ┌────────────────────────────────────────────────────────────┐
         │ kind      : click_item | use_browser | type_text | scroll… │
         │ item      : which item (used only for click_item)          │
@@ -35,14 +31,11 @@ runner.py     ─► the actions already tried on this same screen, each of whic
         deterministic action ─► wait ─► next step
 ```
 
-Items carry where they came from: `ocr` for a text block, `icon` for an icon the detector
-found and the captioner described, `icon+ocr` for an icon with text inside it, `ax` for a
-control the app declared, `ax+ocr` when the tree and the text found the same thing, and
-`ax+icon` when a control and a detected icon share a box. A control the app left unlabeled
-takes the icon's description as its name, and one with neither a label nor an icon under it
-is no item. Either way one thing on screen is one option: two options for one click would only
-split the vote. An `ax` item reads as `button 'Share' (top-right)` in the criteria, an `icon`
-item as `icon 'a magnifying glass' (top-left)`, so the classifier can tell a real control
+Items carry where they came from: `ocr` for a text block, `ax` for a control the app
+declared, `ax+ocr` when both found the same thing. A symbol OCR reads off a button or
+link, `←` on Back or `☆` on the bookmark star, is that control's icon, and the control
+stands for it: two options for one click would only split the vote. An `ax` item reads as
+`button 'Share' (top-right)` in the criteria, so the classifier can tell a real control
 from a line of text. A label that appears more than once carries its row as well:
 `'Buy' (middle-right; in the row of 'Coldplay', 'Oct 2')`, since the label says nothing
 about which and the layout does. Text read inside the focused one-line field is not an
@@ -64,11 +57,10 @@ choice. Every stall found while building this came from two options that meant t
 same thing. Confidence measures concentration, so overlapping options always read as
 doubt. Keep the action set mutually exclusive.
 
-## Perception cost
+## OCR cost
 
-Three models run on the machine, one at a time under one lock. RapidOCR charges by the amount
-of text, the detector by the region it looks at, and the captioner by the number of icons left
-without text, so the savings are reading less of the screen and reading it less often.
+Vision is about two thirds of a step, and it charges by the amount of text rather than
+the number of pixels, so the only real saving is reading less of the screen.
 
 - **Crop.** Each step reads the frontmost window with an 8 pt margin, plus the menu bar
   strip over the same columns, clamped to the display. Text on the desktop and in
@@ -85,37 +77,14 @@ without text, so the savings are reading less of the screen and reading it less 
   Past 60% changed tiles, past 60% of the region in summed rectangle area, or on an app
   switch or a window move, the whole region is read instead.
 
-- **Icons.** The detector looks at the same region as a whole. When no tile changed, the
-  previous step's boxes stand; otherwise it runs again over the region, since an icon box
-  does not split into tiles the way a line of text does.
-- **Captions.** The captioner decodes greedily, so the same pixels always get the same words.
-  Each icon crop is hashed and its caption kept for the run, so a toolbar that stays on screen
-  is described once. An icon box whose gray levels barely vary is a patch of background the
-  detector guessed at, and is never captioned. The model loads on the first icon it meets,
-  which takes several seconds; `clicker-models fetch` keeps that from also waiting on a
-  download.
-
 The timing line says how much was read, and in how many pieces: `ocr 0.31s (22% of screen,
-2 rects)  detect 0.40s  caption 0.12s`. A replay (`--image`) always reads the whole image and
-never reuses, so an offline repro matches the original run.
-
-## The picture
-
-The classifier also sees the window. The region the models read is cropped from the capture,
-fitted to System One's limits (no side over 1568 pixels; a side under 280 is padded), and
-every item is boxed and numbered on it, with the same numbers as the item list: orange for
-the app's controls, blue for text, magenta for icons. The number tags stand at least 14 pixels
-tall after scaling. The request names the picture by a fresh reference in its `state`
-(`screen_image`) and carries the PNG as an asset beside it. If System One refuses it, with a
-413 or a 400 about images, the step is asked once more without it, and the run log and
-`run.json` say so. The typing check and the browser backend send no picture.
-
-The picture is `step-NNN-sent.png` in the [run folder](run-folder.md).
+2 rects)`. A replay (`--image`) always reads the whole image and never reuses, so an offline
+repro matches the original run.
 
 ## Accessibility tree
 
-OCR cannot read an icon, and a caption only says what it looks like. The accessibility tree
-knows what it is called, so each step also walks the frontmost process for on-screen controls. Coverage is uneven, measured on ten apps on one
+OCR cannot see an icon. The accessibility tree can, so each step also walks the frontmost
+process for labelled, on-screen controls. Coverage is uneven, measured on ten apps on one
 Mac: Finder 100% of on-screen controls labelled, Chrome 88%, Slack 85%, Notion 68%,
 Spotify 0 (its CEF shell exposes three window buttons and nothing else). Terminals expose
 the grid as one text area. So AX is a bonus source, never a replacement.

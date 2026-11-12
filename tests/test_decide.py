@@ -13,7 +13,6 @@ from typesafe_computer_use.decide import (
     site_criteria,
 )
 from typesafe_computer_use.models import AxNode, Guidance
-from typesafe_computer_use.runner import RunConfig, RunState, resolve
 
 
 def answer(choice, confidence, probabilities=None):
@@ -167,51 +166,3 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
     for key in ("kind", "item"):
         assert "already tried on this screen" in questions[key].instructions
         assert "led straight back here" in questions[key].instructions
-
-
-def _stopped(tmp_path, screen, decision) -> str:
-    state = RunState()
-    resolve(
-        RunConfig(goal="open the chat", out=tmp_path),
-        None,
-        state,
-        screen,
-        [],
-        decision,
-        {},
-        lambda _message: None,
-    )
-    return state.outcome
-
-
-def test_a_clear_lead_just_under_the_floor_is_still_a_click(tmp_path, screen):
-    """A hundred similar rows spread one sure click thin. 0.35 against 0.15 is that click, not a split."""
-    decision = Decision(
-        kind=answer("click_item", 0.45, {"click_item": 0.50, "scroll_up": 0.22}),
-        item=answer("23", 0.34, {"23": 0.35, "20": 0.15, "31": 0.11}),
-        site=answer("none", 1.0),
-    )
-    assert _stopped(tmp_path, screen, decision) == "dry run"
-
-
-def test_a_near_tie_under_the_floor_still_stops(tmp_path, screen):
-    decision = Decision(
-        kind=answer("click_item", 0.45, {"click_item": 0.50, "scroll_up": 0.22}),
-        item=answer("23", 0.34, {"23": 0.35, "20": 0.28}),
-        site=answer("none", 1.0),
-    )
-    assert _stopped(tmp_path, screen, decision) == "low confidence"
-
-
-def test_a_thin_vote_stops_even_when_it_leads(tmp_path, screen):
-    decision = Decision(
-        kind=answer("click_item", 0.9, {"click_item": 0.9, "none": 0.1}),
-        item=answer("23", 0.18, {"23": 0.18, "20": 0.05}),
-        site=answer("none", 1.0),
-    )
-    assert _stopped(tmp_path, screen, decision) == "low confidence"
-
-
-def test_a_lone_probability_under_the_floor_is_not_treated_as_a_lead(tmp_path, screen):
-    decision = Decision(kind=answer("click_item", 0.9), item=answer("0", 0.38), site=answer("none", 1.0))
-    assert _stopped(tmp_path, screen, decision) == "low confidence"

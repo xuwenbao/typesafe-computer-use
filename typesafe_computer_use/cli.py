@@ -10,21 +10,14 @@ from pathlib import Path
 
 from . import config
 from .actions import Context
-from .parse.runtime import unsupported
 from .perception import capture, perceive
 from .platform_adapter import desktop
-from .report import annotate, ax_count, icon_count, render_payload
+from .report import annotate, ax_count, render_payload
 from .runner import RunConfig, run
 from .timing import format_timing
 from .writer import make_writer, provider
 
 DOTENV = Path.cwd() / ".env"
-
-
-def _require_perception() -> None:
-    reason = unsupported()
-    if reason:
-        sys.exit(reason)
 
 
 def _prepare() -> None:
@@ -66,7 +59,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--url", help="browser URL to report during replay")
     args = parser.parse_args(argv)
 
-    _require_perception()
     _prepare()
     if args.act and not desktop.accessibility_trusted():
         sys.exit("this terminal lacks Accessibility permission; grant it in System Settings > Privacy & Security")
@@ -121,7 +113,6 @@ def inspect(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-open", action="store_true", help="write files without opening them")
     parser.add_argument("--out", type=Path, default=Path("inspections") / time.strftime("%Y%m%d-%H%M%S"))
     args = parser.parse_args(argv)
-    _require_perception()
     config.load_dotenv(DOTENV)
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -141,7 +132,7 @@ def inspect(argv: list[str] | None = None) -> None:
     text.write_text(render_payload(args.goal, screen, items, [], browser, config.email()), encoding="utf-8")
 
     print(
-        f"app={screen.app!r} url={screen.url!r} items={len(items)} ax={ax_count(items)} icons={icon_count(items)} "
+        f"app={screen.app!r} url={screen.url!r} items={len(items)} ax={ax_count(items)} "
         f"offscreen={len(screen.offscreen)} field={screen.field.role if screen.field else None}"
     )
     print(format_timing(timing))

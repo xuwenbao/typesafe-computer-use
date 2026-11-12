@@ -1,6 +1,6 @@
 # OSWorld's generic runner with jev as the agent. A copy of OSWorld-V2's
 # scripts/python/run_multienv.py at commit 3d778a3c9a34a079316f70df023b166700445792 (tag
-# osworld-v2.1), changed only to build JevAgent (refusing the removed --ocr), to point it at each
+# osworld-v2.1), changed only to build JevAgent (with the required --ocr), to point it at each
 # task's result folder, to read AWS's image map only for the AWS provider, to leave OSWorld's
 # proxy off, since it needs credentials of OSWorld's own that this setup lacks, and to hand jev the
 # VM's controller, so jev fetches each observation's accessibility tree itself and OSWorld's
@@ -74,8 +74,8 @@ def config() -> argparse.Namespace:
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--max_tokens", type=int, default=1500)
     parser.add_argument("--stop_token", type=str, default=None)
-    # jev: --ocr named an OCR backend; there is one perception now, and a run that names one stops
-    parser.add_argument("--ocr", type=str, default=None, help=argparse.SUPPRESS)
+    # jev: the OCR backend is named for every run; there is no default
+    parser.add_argument("--ocr", type=str, required=True, help="jev's OCR backend, such as rapidocr")
 
     # example config
     parser.add_argument("--domain", type=str, default="all")
@@ -133,8 +133,6 @@ def config() -> argparse.Namespace:
         "--screen_height", type=int, default=1080, help="Screen height"
     )
     args = parser.parse_args()
-    if args.ocr is not None:  # jev
-        parser.error("--ocr was removed: jev reads every screen with one perception, RapidOCR with OmniParser's icon detector and captioner; drop the flag")
     return args
 
 args = config()  # Get command line arguments first
@@ -234,7 +232,7 @@ def run_env_tasks(task_queue: Queue, args: argparse.Namespace, shared_scores: li
         )
         active_environments.append(env)
         agent = JevAgent(  # jev: the agent, with the controller it fetches the tree through
-            max_steps=args.max_steps, provider=args.provider_name, controller=lambda: env.controller
+            ocr=args.ocr, max_steps=args.max_steps, provider=args.provider_name, controller=lambda: env.controller
         )
 
         logger.info(f"Process {current_process().name} started.")

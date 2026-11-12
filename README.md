@@ -51,10 +51,6 @@ Measured on the same screenshot and goal, one decision each:
 | model latency | 0.13 to 0.38 s | 5.2 s | 14x to 40x faster |
 | end-to-end step, with capture and OCR | about 1.5 s | about 5.5 s | 3.7x faster |
 
-These were measured with the earlier perception, macOS's Vision OCR and no picture. The current
-one also detects and describes icons and sends System One a marked-up picture of the window, so
-its step time and input tokens are higher; they have not been measured again yet.
-
 The honest caveat: the big model read the event dates off the pixels and compared them
 unaided. The classifier needed the date parsing described in
 [how a step works](docs/how-a-step-works.md). Every piece of reasoning the frontier model
@@ -62,22 +58,15 @@ does for free has to be rebuilt here as deterministic state.
 
 ## Install
 
-macOS 14 or newer on Apple silicon, Python 3.12 or newer, [uv](https://docs.astral.sh/uv/).
-Windows 10 and 11 are experimental; see [Windows](docs/windows.md). An Intel Mac can run only the
-[browser backend](docs/browser-backend.md): the desktop perception needs PyTorch, which ships no
-build for it.
+macOS 14 or newer, Python 3.12 or newer, [uv](https://docs.astral.sh/uv/). Windows 10 and 11
+are experimental; see [Windows](docs/windows.md).
 
 ```
 git clone https://github.com/awlevin/typesafe-computer-use
 cd typesafe-computer-use
 uv sync
-uv run clicker-models fetch   # the perception's model files, about 1.4 GB, once
-cp .env.example .env          # fill in the keys
+cp .env.example .env     # fill in the keys
 ```
-
-PyTorch, transformers, and RapidOCR make the environment about 1.5 GB. The model files are
-OmniParser's icon detector and icon captioner (both MIT), pinned to a commit and checked against
-their SHA-256. Without `clicker-models fetch`, the first run downloads them and waits.
 
 | variable | required | purpose |
 |---|---|---|
@@ -106,10 +95,6 @@ uv run clicker-inspect "any goal"                    # 3-2-1, capture, open the 
 
 Clear the terminal first. It is on screen, so its text is OCR input.
 
-Every step sends TypeSafe a picture of the frontmost window, with each item boxed and numbered.
-Whatever is visible there leaves the machine, including text you typed into a field; jev blanks
-nothing out. The browser backend sends no picture.
-
 To stop a live run, press Ctrl-C in the terminal or slam the mouse into the top-left corner of
 the screen. The loop also stops itself on `done`, low confidence, a stall, or the step limit,
 and the writer then reads the screen and prints the answer. Every run writes
@@ -117,27 +102,24 @@ and the writer then reads the screen and prints the answer. Every run writes
 
 ## How a step works
 
-1. The screen is read on the machine, over the frontmost window: RapidOCR reads the text,
-   OmniParser's detector finds the icons, and its captioner describes the ones that carry no
-   text in a few English words. The accessibility tree adds the app's own controls, and names an
-   icon whenever the app labels it.
+1. The screen is read deterministically: Vision OCR on a crop of the frontmost window, plus the
+   labelled controls from the accessibility tree, which sees the icons OCR cannot.
 2. Code adds the facts: the date on any block and how far off it is, the row of a repeated
    label, the focused field, the app and URL, and the actions already tried on this screen.
 3. One TypeSafe request answers three `Choice`s: which kind of action, which item, which site.
-   It carries the items as text and the window as a picture with the same numbers drawn on it.
 4. The action runs deterministically, the loop waits, and the next capture is the only witness
    of what it did.
 5. When the classifier stops, the writer reads the screen and answers, or hands the run back
    with a focus (one move) or a question for you. It never picks an action.
 
-The full walk, with the perception's cost, the tree walk, the action space, and the stop rules, is in
+The full walk, with the OCR cost, the tree walk, the action space, and the stop rules, is in
 [how a step works](docs/how-a-step-works.md).
 
 ## Benchmark
 
 jev runs as an agent in [OSWorld](https://github.com/xlang-ai/OSWorld-V2), a benchmark of real
 desktop tasks, beside OSWorld's own GPT agent on the same task. `scripts/osworld setup` fetches
-OSWorld and installs jev beside it; `scripts/osworld run-jev chrome/<task id>`
+OSWorld and installs jev beside it; `scripts/osworld run-jev chrome/<task id> --ocr rapidocr`
 runs one task. It needs a Linux host with KVM; see [OSWorld](docs/osworld.md) for that and for
 a one-command machine in Google Cloud.
 

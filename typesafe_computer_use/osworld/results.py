@@ -52,7 +52,7 @@ class Jev:
 
     outcome: str | None
     seconds: float | None
-    perception: str | None  # the pipeline that read the screen; a run from before it names its OCR backend
+    ocr: str | None
     provider: str | None
     architecture: str | None
     usage: dict[str, Usage] = field(default_factory=dict)
@@ -151,27 +151,20 @@ def _trajectory(path: Path) -> tuple[int, int, float | None, list[str]]:
     return steps, actions, seconds, errors
 
 
-def _perception(summary: dict, osworld: dict) -> str | None:
-    pipeline = (summary.get("perception") or {}).get("pipeline")
-    if pipeline is not None:
-        return pipeline
-    return f"ocr {osworld['ocr']}" if osworld.get("ocr") else None
-
-
 def _jev(path: Path) -> Jev | None:
     if not path.is_file():
         return None
     try:
         summary = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return Jev(outcome="run.json is not valid JSON", seconds=None, perception=None, provider=None, architecture=None)
+        return Jev(outcome="run.json is not valid JSON", seconds=None, ocr=None, provider=None, architecture=None)
     osworld = summary.get("osworld") or {}
     usage = _usage(summary)
     fallbacks = osworld.get("tree_fallbacks")
     return Jev(
         outcome=summary.get("outcome"),
         seconds=summary.get("seconds"),
-        perception=_perception(summary, osworld),
+        ocr=osworld.get("ocr"),
         provider=osworld.get("provider"),
         architecture=osworld.get("architecture"),
         usage=usage,
@@ -232,7 +225,7 @@ def describe(result: TaskResult) -> list[str]:
             tree = f", tree {jev.tree}"
             if jev.tree_fallbacks:
                 tree += f" ({jev.tree_fallbacks} fell back to OSWorld's fetch)"
-        row("jev", f"{ended}; perception {jev.perception}, provider {jev.provider}, architecture {jev.architecture}{tree}")
+        row("jev", f"{ended}; ocr {jev.ocr}, provider {jev.provider}, architecture {jev.architecture}{tree}")
     agent = [f"{name} {value}" for name, value in sorted(result.settings.items())]
     if result.model_seconds is not None:
         agent.insert(0, f"{duration(result.model_seconds)} of model time")

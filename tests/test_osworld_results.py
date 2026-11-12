@@ -35,8 +35,7 @@ def jev_run(folder: Path) -> None:
             "typesafe-classifier": {"requests": 7, "input_tokens": 21000, "cached_input_tokens": 0, "output_tokens": 70},
             "claude-haiku-4-5": {"requests": 1, "input_tokens": 900, "cached_input_tokens": 300, "output_tokens": 40},
         },
-        "perception": {"pipeline": "omniparser-1", "weights": {}},
-        "osworld": {"provider": "docker", "architecture": "x86_64"},
+        "osworld": {"ocr": "rapidocr", "provider": "docker", "architecture": "x86_64"},
     }
     (folder / "jev" / "run.json").write_text(json.dumps(summary), encoding="utf-8")
 
@@ -63,27 +62,16 @@ def test_a_jev_task_reads_score_steps_time_and_tokens(tmp_path):
     assert result.score == "1.0"
     assert (result.steps, result.actions, result.seconds) == (2, 3, 72.0)
     assert result.jev is not None
-    assert (result.jev.perception, result.jev.provider, result.jev.architecture) == ("omniparser-1", "docker", "x86_64")
+    assert (result.jev.ocr, result.jev.provider, result.jev.architecture) == ("rapidocr", "docker", "x86_64")
     assert result.jev.usage["claude-haiku-4-5"] == results.Usage(1, 900, 300, 40)
 
     text = "\n".join(results.describe(result))
     assert "score        1.0" in text
     assert "observation  screenshot_a11y_tree" in text
     assert "2 (3 actions), 1m 12s from the first action to the last" in text
-    assert "done after 1m 24s; perception omniparser-1, provider docker, architecture x86_64" in text
+    assert "done after 1m 24s; ocr rapidocr, provider docker, architecture x86_64" in text
     assert "claude-haiku-4-5: 1 request, 900 in, 300 cached in, 40 out" in text
     assert "typesafe-classifier: 7 requests, 21,000 in, 0 cached in, 70 out" in text
-
-
-def test_a_run_from_before_the_perception_names_its_ocr_backend(tmp_path):
-    folder = task_folder(tmp_path, "jev", "screenshot_a11y_tree")
-    (folder / "jev").mkdir()
-    summary = {"outcome": "done", "osworld": {"ocr": "rapidocr", "provider": "docker", "architecture": "x86_64"}}
-    (folder / "jev" / "run.json").write_text(json.dumps(summary), encoding="utf-8")
-
-    (result,) = results.read(tmp_path)
-
-    assert result.jev is not None and result.jev.perception == "ocr rapidocr"
 
 
 def test_a_jev_run_says_where_its_trees_came_from_and_how_many_fell_back(tmp_path):
