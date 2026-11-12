@@ -7,8 +7,9 @@ from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
 
-from .decide import base_state, item_criteria, kind_criteria, offscreen_criteria, site_criteria
+from .decide import SCREEN_IMAGE, base_state, item_criteria, kind_criteria, offscreen_criteria, site_criteria
 from .models import Guidance, Item, Screen
+from .parse.marks import Marked, color_of
 
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 RULE = "=" * 78
@@ -36,6 +37,10 @@ def ax_count(items: list[Item]) -> int:
     return sum(1 for it in items if it.from_ax)
 
 
+def icon_count(items: list[Item]) -> int:
+    return sum(1 for it in items if "icon" in it.source)
+
+
 def render_payload(
     goal: str,
     screen: Screen,
@@ -45,14 +50,30 @@ def render_payload(
     email: str | None,
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
+    picture: Marked | None = None,
+    sent_png: str = "",
 ) -> str:
-    """Exactly what goes to TypeSafe for this screen, plus a table of every item."""
+    """Exactly what goes to TypeSafe for this screen, plus a table of every item. The picture is
+    named by its reference and size; its bytes are in the run folder, never in this text."""
+    state = base_state(goal, screen, items, history, tried, guidance)
+    if picture is not None:
+        state[SCREEN_IMAGE] = picture.ref
     parts = [
         RULE,
         "STATE  (sent as `state`)",
         RULE,
-        json.dumps(base_state(goal, screen, items, history, tried, guidance), indent=2),
+        json.dumps(state, indent=2),
         "",
+    ]
+    if picture is not None:
+        parts += [
+            RULE,
+            f"IMAGE  {SCREEN_IMAGE}={picture.ref}  {picture.width}x{picture.height} PNG, {len(picture.png)} bytes"
+            + (f"  ({sent_png})" if sent_png else ""),
+            RULE,
+            "",
+        ]
+    parts += [
         RULE,
         "QUESTION kind  (Choice criteria)",
         RULE,
@@ -79,14 +100,15 @@ def render_payload(
         ]
     parts += [
         RULE,
-        f"ITEMS  ({len(items)} after merge/filter, {ax_count(items)} from the accessibility tree; "
+        f"ITEMS  ({len(items)} after merge/filter, {ax_count(items)} from the accessibility tree, "
+        f"{icon_count(items)} detected icons; "
         f"pixel boxes on the {screen.image.width}x{screen.image.height} capture, scale {screen.scale:g})",
         RULE,
     ]
     for it in items:
         cx, cy = screen.to_points(it)
         parts.append(
-            f"[{it.index:3d}] src={it.source:6} role={it.role or '-':8} conf={it.ocr_confidence:.2f} "
+            f"[{it.index:3d}] src={it.source:8} role={it.role or '-':8} conf={it.ocr_confidence:.2f} "
             f"box=({it.x1:.0f},{it.y1:.0f})-({it.x2:.0f},{it.y2:.0f}) "
             f"click_pt=({cx:.0f},{cy:.0f}) {screen.region(it):13} {it.text!r}"
         )
@@ -105,7 +127,8 @@ def render_payload(
 
 
 def annotate(screen: Screen, items: list[Item], chosen: str, out: Path) -> None:
-    """Blue boxes for OCR blocks, orange for accessibility controls, red for the chosen one, green for the focused field."""
+    """Boxes in the colors of the picture sent (see `parse.marks`): blue for text, magenta for
+    icons, orange for accessibility controls; red for the chosen one, green for the focused field."""
     image = screen.image.copy()
     draw = ImageDraw.Draw(image)
     try:
@@ -114,7 +137,7 @@ def annotate(screen: Screen, items: list[Item], chosen: str, out: Path) -> None:
         font = ImageFont.load_default()
     for it in items:
         hit = str(it.index) == chosen
-        color = (255, 0, 0) if hit else (255, 140, 0) if it.from_ax else (0, 160, 255)
+        color = (255, 0, 0) if hit else color_of(it)
         draw.rectangle((it.x1, it.y1, it.x2, it.y2), outline=color, width=3 if hit else 1)
         draw.text((it.x1, max(0, it.y1 - 12 * screen.scale)), str(it.index), fill=color, font=font)
     f = screen.field

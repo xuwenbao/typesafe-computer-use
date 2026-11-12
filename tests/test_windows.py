@@ -14,7 +14,6 @@ from typesafe_computer_use.windows import (
     display_name,
     key_events,
     landed,
-    ocr_lines,
     pressable,
     role_for,
     unicode_events,
@@ -168,24 +167,3 @@ def test_a_click_that_landed_presses_and_releases(monkeypatch):
     monkeypatch.setattr(windows, "_send", sent.append)
     windows.click_at((640.4, 479.6))
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_LEFTDOWN, windows.MOUSEEVENTF_LEFTUP]
-
-
-# ------------------------------------------------------------------ OCR
-
-
-def test_ocr_lines_box_the_words_and_report_full_confidence():
-    result = {
-        "text": "Sign in",
-        "lines": [
-            {
-                "text": "Sign in",
-                "words": [
-                    {"text": "Sign", "bounding_rect": {"x": 10, "y": 20, "width": 30, "height": 12}},
-                    {"text": "in", "bounding_rect": {"x": 45, "y": 18, "width": 12, "height": 16}},
-                ],
-            },
-            {"text": "", "words": []},
-        ],
-    }
-    assert ocr_lines(result) == [("Sign in", windows.OCR_CONFIDENCE, (10.0, 18.0, 57.0, 34.0))]
-    assert windows.OCR_CONFIDENCE == 1.0  # Windows.Media.Ocr reports none

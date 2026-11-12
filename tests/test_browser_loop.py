@@ -392,3 +392,17 @@ def test_the_page_script_never_collects_what_was_typed_or_drafted():
     assert "p.isContentEditable || p.closest(SKIP)" in js
     # Still exactly one `.value` read in the whole script: a button input's own label.
     assert re.findall(r"\.value\b", js) == [".value"]
+
+
+def test_the_browser_path_sends_no_picture(tmp_path):
+    """The browser decides from the DOM alone: no request carries a picture or the images header."""
+
+    class Strict(FakeTypeSafe):
+        def system_one(self, **request):
+            assert set(request) <= {"state", "questions", "model"}
+            assert not any("image" in key for key in request["state"])
+            return super().system_one(**request)
+
+    client = Strict(("type_text", "0"), ("click", "1"))
+    run(FakeBrowser(login_page()), client, tmp_path)
+    assert client.requests

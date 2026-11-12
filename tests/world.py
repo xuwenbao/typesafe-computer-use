@@ -386,6 +386,7 @@ class FakeTypeSafe:
         self.noul = noul
         self.states: list[dict] = []
         self.asked: list[dict] = []  # the questions each decision was asked, so a test can read the criteria offered
+        self.extras: list[dict] = []  # the headers and body each decision carried besides state and questions
 
     def __enter__(self) -> FakeTypeSafe:
         return self
@@ -393,10 +394,12 @@ class FakeTypeSafe:
     def __exit__(self, *exc: object) -> bool:
         return False
 
-    def system_one(self, state: dict, questions: dict) -> SimpleNamespace:
+    def system_one(self, state: dict, questions: dict, **extra: dict) -> SimpleNamespace:
         if any(isinstance(q, Noul) for q in questions.values()):
+            assert not extra, "a question other than the step's decision went with the screen picture"
             return SimpleNamespace(answers={name: SimpleNamespace(noul=self.noul) for name in questions})
         self.states.append(state)
+        self.extras.append(extra)
         self.asked.append(questions)
         step = self.policy(state, questions)
         kind, target = step[0], step[1]

@@ -38,7 +38,8 @@ def test_each_adapter_provides_the_desktop_surface(adapter, name):
 
 
 def test_the_surface_covers_what_the_callers_use():
-    assert len(SURFACE) >= 20 and {"click_at", "recognize_text", "actionable_elements"} <= set(SURFACE)
+    assert len(SURFACE) >= 20 and {"click_at", "screenshot", "actionable_elements"} <= set(SURFACE)
+    assert "recognize_text" not in SURFACE
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows picks windows.py")

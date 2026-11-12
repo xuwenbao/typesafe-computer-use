@@ -106,10 +106,67 @@ def test_merge_consumes_each_ocr_block_at_most_once():
     assert sorted(it.source for it in merged) == ["ax", "ax+ocr"]
 
 
-def test_merge_lets_a_button_or_link_stand_for_the_symbol_read_off_its_icon():
-    blocks = [ocr_item(0, "\u00d7", 1893, 43, 1901, 51), ocr_item(1, "▶", 1305, 458, 1309, 466)]
-    controls = [ax_item(0, "Close", 1882, 27, 1920, 62), ax_item(1, "Security", 1291, 446, 1323, 479, role="link")]
-    assert [(it.text, it.source) for it in merge_sources(blocks, controls)] == [("Close", "ax"), ("Security", "ax")]
+def icon_item(index, text, x1, y1, x2, y2, score=0.6, source="icon"):
+    role = "icon" if source == "icon" else ""
+    return Item(index, text, score, float(x1), float(y1), float(x2), float(y2), role=role, source=source)
+
+
+def test_a_control_on_an_icon_becomes_one_item_named_by_the_control():
+    found = [icon_item(0, "gear, settings", 1880, 30, 1916, 60), icon_item(1, "\u00d7", 1290, 446, 1320, 476, source="icon+ocr")]
+    controls = [ax_item(0, "设置", 1882, 27, 1920, 62), ax_item(1, "Close", 1291, 446, 1323, 479)]
+    merged = merge_sources(found, controls)
+    assert sorted((it.text, it.source, it.role) for it in merged) == [
+        ("Close", "ax+icon", "button"),
+        ("设置", "ax+icon", "button"),
+    ]
+    assert (merged[0].x1, merged[0].y1) in {(1880.0, 30.0), (1290.0, 446.0)}, "the icon's box, where the pixels are"
+
+
+def test_a_menu_row_over_another_control_keeps_the_words_read_on_it():
+    """Explorer's New menu is a popup the tree does not list: its Folder row sits over the
+    navigation pane's WPS cloud entry, which must not lend the row its name or its press."""
+    found = [icon_item(0, "文件夹", 317, 232, 532, 263, score=0.99, source="icon+ocr")]
+    controls = [ax_item(0, "WPS云盘", 320, 236, 520, 260, role="cell")]
+    assert sorted((it.text, it.source) for it in merge_sources(found, controls)) == [("WPS云盘", "ax"), ("文件夹", "icon+ocr")]
+
+
+def test_an_icon_whose_words_match_the_control_still_pairs_with_it():
+    found = [icon_item(0, "新建", 313, 184, 403, 219, source="icon+ocr")]
+    controls = [ax_item(0, "新建", 312, 184, 403, 218)]
+    assert [(it.text, it.source) for it in merge_sources(found, controls)] == [("新建", "ax+icon")]
+
+
+def test_a_control_without_a_label_takes_its_icons_caption():
+    found = [icon_item(0, "back arrow", 10, 10, 40, 40)]
+    controls = [ax_item(0, "", 8, 8, 42, 42)]
+    assert [(it.text, it.source) for it in merge_sources(found, controls)] == [("back arrow", "ax+icon")]
+
+
+def test_a_control_without_a_label_or_an_icon_names_nothing_and_goes():
+    controls = [ax_item(0, "", 8, 8, 42, 42), ax_item(1, "Send", 100, 8, 160, 42)]
+    assert [it.text for it in merge_sources([], controls)] == ["Send"]
+
+
+def test_a_control_on_its_named_text_pairs_with_the_text_before_any_icon():
+    found = [ocr_item(0, "Save", 105, 12, 150, 30), icon_item(1, "floppy disk", 100, 10, 120, 32)]
+    controls = [ax_item(0, "Save", 100, 8, 155, 34)]
+    assert sorted((it.text, it.source) for it in merge_sources(found, controls)) == [("Save", "ax+ocr"), ("floppy disk", "icon")]
+
+
+def test_an_icon_far_from_every_control_stays_an_icon():
+    found = [icon_item(0, "magnifier", 500, 500, 530, 530)]
+    controls = [ax_item(0, "Send", 100, 8, 160, 42)]
+    assert sorted((it.text, it.source) for it in merge_sources(found, controls)) == [("Send", "ax"), ("magnifier", "icon")]
+
+
+def test_budget_drops_faint_text_then_unsure_icons_and_never_a_control():
+    found = [ocr_item(i, f"text {i}", 100, 100 + 40 * i, 200, 130 + 40 * i, conf=0.5 + 0.1 * i) for i in range(3)]
+    found += [icon_item(3 + i, f"icon {i}", 400, 100 + 40 * i, 430, 130 + 40 * i, score=0.1 + 0.1 * i) for i in range(2)]
+    controls = [ax_item(0, f"control {i}", 800, 100 + 40 * i, 900, 130 + 40 * i) for i in range(2)]
+    kept = {it.text for it in merge_sources(found, controls, budget=4)}
+    assert kept == {"control 0", "control 1", "icon 1", "icon 0"}
+    kept = {it.text for it in merge_sources(found, controls, budget=5)}
+    assert kept == {"control 0", "control 1", "icon 1", "icon 0", "text 2"}
 
 
 def test_merge_keeps_a_symbol_on_a_tab_or_a_row_and_any_read_with_a_letter_or_digit():
@@ -236,24 +293,25 @@ SEARCH = Field(role="AXTextField", label="Search settings", placeholder="", valu
 
 
 def settings_search(monkeypatch, field: Field | None) -> list[str]:
-    blocks = [
-        ocr_item(0, "Settings", 138, 170, 221, 192, conf=1.0),
-        ocr_item(1, "O、 Do Not Track", 654, 163, 753, 186, conf=0.91),
-        ocr_item(2, "+", 1312, 161, 1338, 196, conf=0.85),
-        ocr_item(3, "Restore pages?", 1620, 170, 1747, 187, conf=1.0),
+    lines = [
+        line("Settings", 138, 170, 221, 192, conf=1.0),
+        line("O、 Do Not Track", 654, 163, 753, 186, conf=0.91),
+        line("+", 1312, 161, 1338, 196, conf=0.85),
+        line("Restore pages?", 1620, 170, 1747, 187, conf=1.0),
     ]
+    icons = [((1309.0, 159.0, 1340.0, 198.0), 0.8)]  # the detector's box around the 'Clear search' button
     nodes = [
         AxNode(role="AXTextField", label="Search settings", x=683, y=167, w=624, h=24, pressable=False),
         AxNode(role="AXButton", label="Clear search", x=1307, y=165, w=28, h=28, pressable=False),
     ]
     monkeypatch.setattr(desktop, "actionable_elements", lambda pid, w, h: (nodes, [], False))
-    monkeypatch.setattr(perception, "ocr", lambda *args: blocks)
+    monkeypatch.setattr(perception, "read_screen", lambda *args: perception.Reading(lines, icons, 100.0, 0, True))
     screen = Screen(image=busy_page((1920, 1080)), scale=1.0, app="Google Chrome", field=field, url=None, pid=7)
     return [it.text for it in perception.perceive(screen, 255, "turn on Do Not Track")]
 
 
 def test_the_text_in_the_focused_field_is_the_field_and_not_an_item_of_its_own(monkeypatch):
-    # '+' goes too, as the icon OCR read off the 'Clear search' button, which stands for it.
+    # '+' goes too: it fuses into the detected icon, which the 'Clear search' button stands on.
     assert sorted(settings_search(monkeypatch, SEARCH)) == ["Clear search", "Restore pages?", "Search settings", "Settings"]
 
 
@@ -264,3 +322,98 @@ def test_the_text_in_the_focused_field_is_the_field_and_not_an_item_of_its_own(m
 )
 def test_the_same_text_stays_when_that_field_is_not_a_focused_one_line_field(monkeypatch, field):
     assert "O、 Do Not Track" in settings_search(monkeypatch, field)
+
+
+# ------------------------------------------------------------------ text and icons on one capture
+
+
+def toolbar_page() -> Image.Image:
+    """A white page with a dark ring at (300..340, 20..60) and nothing else drawn."""
+    image = Image.new("RGB", (800, 400), "white")
+    ImageDraw.Draw(image).ellipse((300, 20, 340, 60), outline="black", width=4)
+    return image
+
+
+def page_screen(image=None, field=None) -> Screen:
+    return Screen(image=image or toolbar_page(), scale=1.0, app="Finder", field=field, url=None)
+
+
+def found(screen, cache=None, goal="") -> list[tuple[str, str]]:
+    return sorted((it.text, it.source) for it in perception.ocr(screen, 255, goal, cache))
+
+
+def test_the_text_inside_a_button_joins_the_button(fake_models):
+    fake_models.lines = [line("保存", 112, 18, 140, 34)]
+    fake_models.icons = [((100.0, 10.0, 160.0, 42.0), 0.8)]
+    assert found(page_screen()) == [("保存", "icon+ocr")]
+    assert fake_models.calls["caption"] == 0, "an icon with text is never captioned"
+
+
+def test_an_icon_inside_a_line_of_text_goes(fake_models):
+    fake_models.lines = [line("Downloads folder", 100, 100, 300, 120)]
+    fake_models.icons = [((110.0, 102.0, 124.0, 118.0), 0.4)]
+    assert found(page_screen()) == [("Downloads folder", "ocr")]
+
+
+def test_an_icon_beside_a_paragraph_stays_and_the_paragraph_still_joins(fake_models):
+    fake_models.lines = [line("first line of a note", 350, 20, 600, 40), line("and its second line", 350, 44, 590, 64)]
+    fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
+    fake_models.captions = lambda icon: "ring"
+    assert found(page_screen()) == [("first line of a note and its second line", "ocr"), ("ring", "icon")]
+
+
+def test_an_icon_without_text_is_captioned_and_marked_as_an_icon(fake_models):
+    fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
+    fake_models.captions = lambda icon: "gear, settings"
+    (item,) = perception.ocr(page_screen(), 255, "")
+    assert (item.text, item.source, item.role, item.ocr_confidence) == ("gear, settings", "icon", "icon", 0.6)
+
+
+def test_a_flat_box_is_never_captioned(fake_models):
+    fake_models.icons = [((500.0, 200.0, 540.0, 240.0), 0.3)]  # white on white
+    assert found(page_screen()) == [] and fake_models.calls["caption"] == 0
+
+
+def test_an_empty_caption_is_no_item(fake_models):
+    fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
+    fake_models.captions = lambda icon: ""
+    assert found(page_screen()) == []
+
+
+def test_a_faint_line_takes_no_part_in_the_fusion(fake_models):
+    fake_models.lines = [line("ghost", 305, 30, 335, 50, conf=0.1)]
+    fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
+    fake_models.captions = lambda icon: "ring"
+    assert found(page_screen()) == [("ring", "icon")]
+
+
+def test_the_same_icon_on_the_next_step_is_not_captioned_again(fake_models):
+    fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
+    fake_models.captions = lambda icon: "ring"
+    cache = perception.ParseCache()
+    first = found(page_screen(), cache)
+    moved = toolbar_page()
+    ImageDraw.Draw(moved).rectangle((600, 300, 700, 380), fill="black")  # a change elsewhere: the icons are detected again
+    second = found(page_screen(moved), cache)
+    assert first == second == [("ring", "icon")]
+    assert fake_models.calls["detect"] == 2 and fake_models.calls["caption"] == 1
+
+
+def test_an_unchanged_screen_is_neither_read_nor_detected_again(fake_models):
+    fake_models.lines = [line("Open", 10, 10, 50, 30)]
+    fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
+    cache = perception.ParseCache()
+    first = perception.ocr(page_screen(), 255, "", cache)
+    second = perception.ocr(page_screen(), 255, "", cache)
+    assert first == second
+    assert fake_models.calls == {"ocr": 1, "detect": 1, "caption": 1}
+
+
+def test_the_item_criteria_name_an_icon_as_one(fake_models):
+    from typesafe_computer_use.decide import item_criteria
+
+    fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
+    fake_models.captions = lambda icon: "gear"
+    screen = page_screen()
+    criteria = item_criteria(screen, perception.ocr(screen, 255, ""))
+    assert criteria["0"].startswith("icon 'gear' (")

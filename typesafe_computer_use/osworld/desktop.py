@@ -40,7 +40,6 @@ from pathlib import Path
 from PIL import Image
 
 from ..models import AxNode, Field
-from ..platform_adapter import OcrLine
 from . import a11y
 from .tree import Fetched, Later
 
@@ -64,7 +63,6 @@ class OSWorldDesktop:
     def __init__(
         self,
         obs: dict,
-        recognize_text: Callable[[Image.Image], list[OcrLine]],
         next_obs: NextObs,
         *,
         fetch_tree: FetchTree | None = None,
@@ -75,7 +73,6 @@ class OSWorldDesktop:
         tree, as `obs-NNN-a11y.xml` (NNN counts observations from 000, the task's first), and OSWorld's
         full tree beside it as `obs-NNN-a11y-full.xml` when a check fetched one. OSWorld keeps none,
         and the raw tree is what a mismatch in `a11y` is diagnosed from. None saves nothing."""
-        self._recognize = recognize_text
         self._next_obs = next_obs
         self._fetch_tree = fetch_tree
         self._save_a11y = save_a11y
@@ -215,7 +212,7 @@ class OSWorldDesktop:
     def frontmost_window_bounds(self, pid: int | None = None) -> tuple[float, float, float, float] | None:
         return a11y.frame(a11y.active_window(self._now()))
 
-    # ----- capture, OCR, and accessibility ---------------------------------------------------
+    # ----- capture and accessibility ---------------------------------------------------------
 
     def screenshot(self) -> Image.Image:
         self._step()  # and not the tree: the capture's OCR reads the screenshot while it comes
@@ -228,9 +225,6 @@ class OSWorldDesktop:
 
     def display_scale(self, image: Image.Image) -> float:
         return 1.0
-
-    def recognize_text(self, image: Image.Image) -> list[OcrLine]:
-        return self._recognize(image)
 
     def focused_field(self) -> Field | None:
         return a11y.focused_field(self._now())

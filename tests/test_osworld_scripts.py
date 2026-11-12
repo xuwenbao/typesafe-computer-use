@@ -95,12 +95,12 @@ def dry_run(tmp_path: Path, *args: str) -> str:
 
 
 def test_the_cloud_run_passes_every_task_to_the_machine(tmp_path):
-    printed = dry_run(tmp_path, "run-jev", "chrome/a", "chrome/b", "--ocr", "rapidocr")
-    assert "osworld-exec scripts/osworld run-jev chrome/a chrome/b --ocr rapidocr" in printed
+    printed = dry_run(tmp_path, "run-jev", "chrome/a", "chrome/b")
+    assert "osworld-exec scripts/osworld run-jev chrome/a chrome/b" in printed
 
 
 def test_the_cloud_run_lives_on_the_machine_not_in_the_connection(tmp_path):
-    printed = dry_run(tmp_path, "run-jev", "chrome/a", "--ocr", "rapidocr")
+    printed = dry_run(tmp_path, "run-jev", "chrome/a")
     assert "setsid nohup bash -c" in printed, "the run is its own session on the machine"
     assert ".osworld/runs/" in printed and ".status" in printed, "its log and exit status stay on the machine"
     assert re.search(r"tail -n \+1 -F --pid=4242 /opt/typesafe-computer-use/\.osworld/runs/\d{8}T\d{6}Z\.log", printed), (
@@ -146,10 +146,10 @@ def test_the_detached_start_returns_at_once_and_leaves_its_pid_log_and_status(tm
 
 
 def test_the_cloud_run_records_its_rows_with_the_git_state_it_synced(tmp_path):
-    printed = dry_run(tmp_path, "run-jev", "chrome/a", "--ocr", "rapidocr")
+    printed = dry_run(tmp_path, "run-jev", "chrome/a")
     (line,) = [line for line in printed.splitlines() if "typesafe_computer_use.osworld.record" in line]
     assert "benchmarks/osworld/" in line and " results jev " in line and line.endswith(" chrome/a")
-    assert '"git_commit"' in line and '"git_dirty"' in line and '"command": "run-jev chrome/a --ocr rapidocr"' in line
+    assert '"git_commit"' in line and '"git_dirty"' in line and '"command": "run-jev chrome/a"' in line
 
 
 def provenance(repo: Path) -> dict:
@@ -198,15 +198,21 @@ def test_attach_follows_the_newest_run_and_cancel_stops_its_whole_session(tmp_pa
 def test_the_cloud_run_moves_aside_the_local_copy_of_each_task(tmp_path):
     for task in ("chrome/a", "chrome/b"):
         (tmp_path / "results" / "pyautogui" / "screenshot" / "jev" / task).mkdir(parents=True)
-    printed = dry_run(tmp_path, "run-jev", "chrome/a", "chrome/b", "--ocr", "rapidocr")
+    printed = dry_run(tmp_path, "run-jev", "chrome/a", "chrome/b")
     moved = [line for line in printed.splitlines() if line.startswith("+ mv ")]
     assert len(moved) == 2 and all("results/archive/" in line for line in moved)
 
 
 def test_the_cloud_run_needs_a_task(tmp_path):
     with pytest.raises(subprocess.CalledProcessError) as failed:
-        dry_run(tmp_path, "run-jev", "--ocr", "rapidocr")
-    assert "usage: scripts/osworld-gcp run-jev DOMAIN/ID... --ocr OCR" in failed.value.stderr
+        dry_run(tmp_path, "run-jev")
+    assert "usage: scripts/osworld-gcp run-jev DOMAIN/ID..." in failed.value.stderr
+
+
+def test_the_cloud_run_says_the_ocr_flag_is_gone(tmp_path):
+    with pytest.raises(subprocess.CalledProcessError) as failed:
+        dry_run(tmp_path, "run-jev", "chrome/a", "--ocr", "rapidocr")
+    assert "--ocr was removed" in failed.value.stderr
 
 
 def one_line(script: Path, name: str) -> str:
@@ -333,7 +339,7 @@ def test_a_run_whose_results_did_not_come_back_records_no_rows(tmp_path):
             "bash",
             "-c",
             f"set -euo pipefail; DRY_RUN=false; TASK_PATTERN='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'\n{source}\n{stubs}"
-            'status=0; run_task run-jev chrome/a --ocr rapidocr || status=$?; echo "run_task returned $status"',
+            'status=0; run_task run-jev chrome/a || status=$?; echo "run_task returned $status"',
         ],
         capture_output=True,
         text=True,

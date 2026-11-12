@@ -240,7 +240,7 @@ log "repo at $(repo_git rev-parse --short HEAD)"
 [[ -x $REPO_DIR/scripts/osworld ]] || fail "$REPO_DIR/scripts/osworld is missing: repo-ref $REPO_REF is older than it"
 log "scripts/osworld setup"
 # shellcheck disable=SC2016 # $1 expands in the inner shell
-as_user env OSWORLD_PROVIDER=docker OSWORLD_OCR=rapidocr \
+as_user env OSWORLD_PROVIDER=docker \
   sh -c 'cd "$1" && exec scripts/osworld setup' sh "$REPO_DIR"
 
 touch "$READY"

@@ -28,9 +28,7 @@ from typing import Protocol
 
 from PIL import Image
 
-from .models import AxNode, Box, Field
-
-OcrLine = tuple[str, float, Box]  # text, confidence, box in the image's own pixels
+from .models import AxNode, Field
 
 
 class Desktop(Protocol):
@@ -55,10 +53,9 @@ class Desktop(Protocol):
     def open_path(self, path: Path, as_text: bool = False) -> None: ...
     def frontmost_window_bounds(self, pid: int | None = None) -> tuple[float, float, float, float] | None: ...
 
-    # capture, OCR, and accessibility
+    # capture and accessibility
     def screenshot(self) -> Image.Image: ...
     def display_scale(self, image: Image.Image) -> float: ...
-    def recognize_text(self, image: Image.Image) -> list[OcrLine]: ...
     def focused_field(self) -> Field | None: ...
     def actionable_elements(
         self, pid: int, display_w_pt: float, display_h_pt: float
