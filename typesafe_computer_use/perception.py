@@ -742,9 +742,12 @@ def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MA
     """The merge, each item paired with the position of the control it came from, or None.
 
     A control pairs first with the text block it overlaps that names it ("ax+ocr"), and failing
-    that with the icon it overlaps most ("ax+icon"), whatever the icon says: a caption is English
-    and a label may not be, and a label may be empty, when the icon's text or caption names the
-    item instead. A control with no label and no icon under it names nothing, and goes.
+    that with the icon it overlaps most ("ax+icon"), whatever a caption or a symbol says: a caption
+    is English and a label may not be, and a label may be empty, when the icon's text or caption
+    names the item instead. An icon that holds words read off the screen pairs only with a control
+    that has no label or one those words match: a popup menu the tree does not list sits over
+    other controls, and its row must keep its own name. A control with no label and no icon under
+    it names nothing, and goes.
 
     The pairing survives the budget cut and the renumbering, which is the only way back from a
     final item to the accessibility element behind it.
@@ -758,7 +761,7 @@ def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MA
             text = control.text if len(control.text) >= len(found[block].text) else found[block].text
             merged.append((replace(found[block], text=text, role=control.role, source="ax+ocr"), origin))
             continue
-        icon = _best(control, found, taken, ICON_SOURCES, named=False)
+        icon = _best_icon(control, found, taken)
         if icon is not None and (control.text or found[icon].text):
             taken.add(icon)
             merged.append(
@@ -783,6 +786,23 @@ def _best(control: Item, found: list[Item], taken: set[int], sources: tuple[str,
         if overlap >= best_overlap and (not named or texts_match(control.text, it.text)):
             best, best_overlap = i, overlap
     return best
+
+
+def _best_icon(control: Item, found: list[Item], taken: set[int]) -> int | None:
+    """The icon `_best` pairs with `control`, passing over one whose words name something else."""
+    skip = set(taken)
+    if control.text:
+        skip.update(
+            i
+            for i, it in enumerate(found)
+            if it.source == "icon+ocr" and worded(it.text) and not texts_match(control.text, it.text)
+        )
+    return _best(control, found, skip, ICON_SOURCES, named=False)
+
+
+def worded(text: str) -> bool:
+    """Whether OCR read a letter or a digit here, as opposed to a glyph such as a close box."""
+    return any(ch.isalnum() for ch in text)
 
 
 def box_overlap(a: Item, b: Item) -> float:

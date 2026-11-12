@@ -122,6 +122,20 @@ def test_a_control_on_an_icon_becomes_one_item_named_by_the_control():
     assert (merged[0].x1, merged[0].y1) in {(1880.0, 30.0), (1290.0, 446.0)}, "the icon's box, where the pixels are"
 
 
+def test_a_menu_row_over_another_control_keeps_the_words_read_on_it():
+    """Explorer's New menu is a popup the tree does not list: its Folder row sits over the
+    navigation pane's WPS cloud entry, which must not lend the row its name or its press."""
+    found = [icon_item(0, "文件夹", 317, 232, 532, 263, score=0.99, source="icon+ocr")]
+    controls = [ax_item(0, "WPS云盘", 320, 236, 520, 260, role="cell")]
+    assert sorted((it.text, it.source) for it in merge_sources(found, controls)) == [("WPS云盘", "ax"), ("文件夹", "icon+ocr")]
+
+
+def test_an_icon_whose_words_match_the_control_still_pairs_with_it():
+    found = [icon_item(0, "新建", 313, 184, 403, 219, source="icon+ocr")]
+    controls = [ax_item(0, "新建", 312, 184, 403, 218)]
+    assert [(it.text, it.source) for it in merge_sources(found, controls)] == [("新建", "ax+icon")]
+
+
 def test_a_control_without_a_label_takes_its_icons_caption():
     found = [icon_item(0, "back arrow", 10, 10, 40, 40)]
     controls = [ax_item(0, "", 8, 8, 42, 42)]
