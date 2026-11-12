@@ -39,9 +39,7 @@ uv run pytest -q
 ```
 
 CI runs the same on macOS, and the tests again on Linux: they are pure logic, and
-`tests/conftest.py` stands in for the platform modules where they cannot be installed. A third job
-checks `infra/gcp` (format, validation, and `terraform test` against mock providers) and
-`scripts/osworld-gcp`, with no cloud credentials.
+`tests/conftest.py` stands in for the platform modules where they cannot be installed.
 
 Add a replay-based note to the PR when a change alters what the model sees:
 which run folder, which step, what the decision was before and after.

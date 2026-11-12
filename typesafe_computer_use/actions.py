@@ -174,7 +174,7 @@ def _type_text(decision, screen: Screen, items, ctx: Context) -> str:
 
     Text the writer submits is not checked: Return usually takes the field away (a dialog closes, a
     search runs), so a read after it no longer shows the field, and a read before it would split
-    the keystrokes and the Return into two OSWorld steps. The next screen says whether it took.
+    the keystrokes and the Return into two steps. The next screen says whether it took.
     """
     if not (screen.field and screen.field.is_text):
         return "type_text refused: no text field is focused"

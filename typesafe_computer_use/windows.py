@@ -32,6 +32,8 @@ from PIL import Image, ImageGrab
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
 from .config import ABORT_CORNER_PX
 from .models import Abort, AxNode, Field, Missed
+from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
+from .uia_roles import pressable, role_for
 
 with suppress(AttributeError, OSError):  # pre-8.1 Windows without shcore, or awareness set by the host process
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
@@ -42,25 +44,8 @@ CLICK_TOLERANCE_PX = 1  # how far the cursor may land from its target before a c
 WHEEL_DELTA = 120  # one notch of the wheel
 LINES_PER_NOTCH = 3  # the Windows default; the actions ask for lines, as on macOS
 
-# UI Automation's ControlTypeName mapped onto the "AX*" role vocabulary ax_walk.py, models.ROLE_WORDS,
-# and models.TEXT_ROLES already speak, so none of that shared logic needs a Windows-specific branch.
-CONTROL_TYPE_TO_ROLE = {
-    "ButtonControl": "AXButton",
-    "CheckBoxControl": "AXCheckBox",
-    "ComboBoxControl": "AXComboBox",
-    "DataItemControl": "AXCell",
-    "EditControl": "AXTextField",
-    "GroupControl": "AXGroup",
-    "HyperlinkControl": "AXLink",
-    "ImageControl": "AXImage",
-    "ListItemControl": "AXRow",
-    "MenuItemControl": "AXMenuBarItem",
-    "RadioButtonControl": "AXRadioButton",
-    "SliderControl": "AXSlider",
-    "SpinnerControl": "AXIncrementor",
-    "TabItemControl": "AXTab",
-    "TextControl": "AXStaticText",
-}
+# The role table itself lives in uia_roles.py, shared with the WAA VM walk. The names below are
+# re-exported so this module still answers `role_for` and `pressable`.
 
 # The browsers the site catalog can open, by the name CLICKER_BROWSER gives and their executable.
 # The frontmost app is reported by the same name, so the classifier sees one browser, not two.
@@ -85,17 +70,6 @@ MOUSEEVENTF_WHEEL = 0x0800
 
 
 # ------------------------------------------------------------------ pure rules
-
-
-def role_for(control_type_name: str) -> str:
-    """The AX role a UI Automation control type stands for, or "" for one the walk ignores."""
-    return CONTROL_TYPE_TO_ROLE.get(control_type_name, "")
-
-
-def pressable(has_invoke: bool, default_action: str) -> bool:
-    """Whether an element accepts a press. Almost every element carries the LegacyIAccessible
-    pattern, so that pattern alone says nothing; only a named default action makes it a control."""
-    return has_invoke or bool(default_action.strip())
 
 
 def exe_stem(name: str) -> str:

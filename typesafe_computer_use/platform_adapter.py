@@ -5,7 +5,7 @@ itself. `host` is the adapter for the OS this process runs on, chosen once at im
 windows.py. Every other OS gets macos.py, the default: on macOS it is the real adapter, and on the
 Linux test runner tests/conftest.py stands in for the modules it imports, so the suite runs there
 unchanged. Only the Windows path imports a Windows-only package. Where macos.py cannot load off
-macOS, such as a Linux machine that drives an OSWorld VM, `host` is a `NoDesktop`: the package
+macOS, such as the WAA client container, `host` is a `NoDesktop`: the package
 still imports, and any call on the host says there is none.
 
 `desktop` is not an adapter itself. It forwards every attribute read, write, and delete to the

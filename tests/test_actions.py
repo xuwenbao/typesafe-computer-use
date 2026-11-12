@@ -96,7 +96,7 @@ def test_perform_routes_an_offscreen_key_to_the_press(screen, calls, monkeypatch
     assert pressed == [ref]
 
 
-# Chrome's "Restore pages?" bubble on OSWorld's chrome/2ad9387a, in screen points, over the bookmark
+# Chrome's "Restore pages?" bubble on chrome/2ad9387a, in screen points, over the bookmark
 # manager's Organise button, whose center is under the bubble's Close button.
 CLOSE = AxNode(role="AXButton", label="Close", x=1879.0, y=128.0, w=24.0, h=22.0, pressable=False)
 BUBBLE = Popup("Restore pages?", 1592.0, 103.0, 334.0, 260.0, close=CLOSE)

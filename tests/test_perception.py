@@ -211,7 +211,7 @@ def test_order_items_renumbers_rows_then_columns():
 
 # ----- a control the capture does not show ---------------------------------------------------
 
-FIXTURES = Path(__file__).parent / "fixtures" / "osworld"
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def control(x: float, y: float, w: float, h: float, label: str = "Agency") -> AxNode:
@@ -253,7 +253,7 @@ def test_the_scale_maps_points_to_capture_pixels():
 
 
 def test_chosens_closed_dropdown_shows_its_trigger_and_hides_its_search_box():
-    """A crop of justice.gov's Forms page in OSWorld, at (780, 560) on the screen, with the frames
+    """A crop of justice.gov's Forms page, at (780, 560) on the screen, with the frames
     Chrome reported for the Agency filter: Chosen's trigger, and the search box of its closed panel."""
     image = Image.open(FIXTURES / "chosen-dropdown-closed.png").convert("RGB")
     assert drawn(image, control(837 - 780, 668 - 560, 405, 32, "-Any-"), 1.0)

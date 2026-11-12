@@ -44,7 +44,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-# Linux runs the OSWorld host and the sandbox, neither with a GPU: the CPU build spares a few GB of CUDA.
+# Linux runs the WAA client container and the sandbox, neither with a GPU: the CPU build spares a few GB of CUDA.
 torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
@@ -80,22 +80,22 @@ target-version = "py312"
 extend-exclude = [".agents", ".claude", ".private"]  # local agent folders: worktrees with their own venvs, links that may dangle
 
 [tool.ruff.format]
-# Copies of OSWorld's runners, kept line for line with upstream so that taking an OSWorld update
-# is a re-copy: formatting them would bury the few jev changes in a diff of the whole file.
-exclude = ["osworld_overlay/scripts/python/run_multienv_jev.py", "osworld_overlay/scripts/python/run_multienv_luna.py"]
+# The copy of WindowsAgentArena's runner, kept line for line with upstream so that taking an update
+# is a re-copy: formatting it would bury the few jev changes in a diff of the whole file.
+exclude = ["waa_overlay/run.py", "waa_overlay/upstream/run.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-# Only what OSWorld's own code in that copy trips at the pinned commit; every other rule still
-# checks the jev changes. An OSWorld update may add a code here, and nothing else.
-"osworld_overlay/scripts/python/run_multienv_jev.py" = [
-    "E722", "F541", "F821", "I001", "SIM102", "SIM115", "UP006", "UP015", "UP032", "UP035",
+# Only what WindowsAgentArena's own code in that copy trips at the pinned commit; every other rule
+# still checks the jev changes. A WAA update may add a code here, and nothing else.
+"waa_overlay/run.py" = [
+    "E722", "F401", "F541", "I001", "RUF059", "SIM102", "SIM108", "SIM115", "UP015", "UP031", "UP032",
 ]
-"osworld_overlay/scripts/python/run_multienv_luna.py" = [
-    "B009", "E402", "E722", "F541", "I001", "SIM102", "SIM115", "UP006", "UP015", "UP032", "UP035",
+"waa_overlay/upstream/run.py" = [
+    "E722", "F401", "F541", "I001", "RUF059", "SIM102", "SIM108", "SIM115", "UP015", "UP031", "UP032",
 ]
 
 [tool.pytest.ini_options]

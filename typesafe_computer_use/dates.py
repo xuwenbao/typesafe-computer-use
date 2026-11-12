@@ -68,7 +68,7 @@ def date_hints(items: list[Item], screen: Screen, today: date | None = None) -> 
     """Item index -> 'dated ...' for items containing a date, or 'near a line dated ...' for close neighbours.
 
     The menu bar strip takes no part. Its clock is a date, and it would date every tab and button
-    under it as near a line dated today: noise, and in OSWorld's Chrome tasks 7% of every request.
+    under it as near a line dated today: noise, and on the Chrome tasks this was measured against, 7% of every request.
     """
     items = [it for it in items if not screen.in_menu_bar(it)]
     dated = {it.index: d for it in items if (d := first_date(it.text, today)) is not None}

@@ -34,11 +34,11 @@ typesafe_computer_use/
   report.py       logging, annotated screenshots, payload dump
   timing.py       phase stopwatches, the timing line, run summary
   cli.py          `clicker` and `clicker-inspect`
-  osworld/        jev as an OSWorld agent (see [OSWorld](osworld.md))
-    agent.py      `JevAgent`: OSWorld's reset() and predict(), jev's loop on a worker thread
-    desktop.py    the adapter over OSWorld's observation: screenshots in, pyautogui code out
-    a11y.py       the Ubuntu accessibility tree OSWorld returns, in AX terms
-    results.py    each task's score, steps, time, and tokens, for `scripts/osworld results`
+  waa/            jev as a WindowsAgentArena agent (see [WindowsAgentArena](waa.md))
+    agent.py      `JevAgent`: WAA's reset() and predict(), jev's loop on a worker thread
+    desktop.py    the adapter over WAA's observation: screenshots in, pyautogui code out
+    tree.py       the foreground UIA tree, fetched from the VM and read with ax_walk
+    results.py    each task's score, steps, time, and tokens, for `scripts/waa results`
   browser/        the browser backend (see [browser backend](browser-backend.md)), opt-in and independent of macos.py
     cdp.py        the only module that touches the browser        (platform adapter)
     perceive.py   DOM collection: ordered elements, click points, occlusion
@@ -55,9 +55,9 @@ tests/            pure logic: dates, merging, reading order, echo filter, config
   test_scenarios.py
                   tasks of increasing difficulty on that computer, L1 upward; a failure
                   here says the architecture cannot do that task
-osworld_overlay/  what `scripts/osworld setup` copies into OSWorld: the agent module and
-                  the runner that builds it
-scripts/          `sandbox` and `osworld`
+waa_overlay/      what `scripts/waa setup` copies into WindowsAgentArena: the agent module
+                  and the runner that builds it
+scripts/          `sandbox` and `waa`
 ```
 
 A Linux port adds a third adapter over xdotool and AT-SPI, and one line in

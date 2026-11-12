@@ -40,7 +40,7 @@ def test_a_clock_or_a_ticker_does_not_make_a_new_screen():
 
 
 def test_a_tabs_memory_figure_does_not_make_a_new_screen(screen, make_item):
-    """OSWorld's Chrome names each tab with the memory it uses, and the figure drifts from one capture
+    """Chrome names each tab with the memory it uses, and the figure drifts from one capture
     to the next. With the clock that was two changed lines, and a click that did nothing looked like one
     that did."""
 

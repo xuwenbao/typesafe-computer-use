@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# Run WindowsAgentArena tasks with jev, on one local VM.
+#
+#   scripts/waa setup                         clone the pinned commit into .waa/, build jev-winarena, check imports
+#   scripts/waa prepare-image [--iso PATH]    make the golden image in .waa/storage from the evaluation ISO
+#   scripts/waa run DOMAIN/ID...              run those tasks, one after another, in one VM
+#   scripts/waa results [FOLDER]              each task's score, steps, time and tokens, then the means
+#
+# A task is DOMAIN/ID, a file under the checkout's evaluation_examples_windows/examples/.
+# Needs Docker and /dev/kvm. TYPESAFE_API_KEY is read from the environment or .env and passed
+# through without being printed. WAA_RAM_SIZE (default 8G) and WAA_CPU_CORES (default 8) size the VM.
+# Results land in results/pyautogui/screenshot/jev/0/<domain>/<id>/. Rerunning a task moves its
+# earlier result to results/archive/ first.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# WindowsAgentArena at the commit the overlay was copied from, and the windowsarena/winarena-base
+# digest that commit's image is built on. To take an update, change these, re-copy waa_overlay/run.py
+# and waa_overlay/start_client.sh from that commit (see their headers), and run `scripts/waa setup`.
+WAA_COMMIT=eb220c4dcf64babefc1bfc287edda91ab04132ed
+WAA_IMAGE_DIGEST=sha256:5f503d0bdb1b09bdfffebdc7337c237af4d6bd08d046a18c97e1c244c0e1a028
+WAA_URL=https://github.com/microsoft/WindowsAgentArena
+
+REPO=$(pwd)
+CHECKOUT="$REPO/.waa/WindowsAgentArena"
+CLIENT="$CHECKOUT/src/win-arena-container/client"
+STORAGE="$REPO/.waa/storage"
+RESULTS="$REPO/results"
+IMAGE=jev-winarena
+MODEL=jev
+ISO_PAGE=https://info.microsoft.com/ww-landing-windows-11-enterprise.html
+
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+
+die() {
+  echo "scripts/waa: $*" >&2
+  exit 2
+}
+
+# Print a command, then run it. Secrets are never arguments, so the printed line has none.
+run() {
+  local line="+" arg
+  for arg in "$@"; do line+=" $(printf '%q' "$arg")"; done
+  echo "$line"
+  "$@"
+}
+
+load_env() {
+  if [[ -f "$REPO/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$REPO/.env"
+    set +a
+  fi
+}
+
+need_checkout() {
+  [[ -f "$CLIENT/run.py" ]] || die "run scripts/waa setup first"
+}
+
+need_kvm() {
+  local device=${WAA_KVM_DEVICE:-/dev/kvm}
+  [[ -e "$device" ]] ||
+    die "this machine has no /dev/kvm. WindowsAgentArena runs its VM under QEMU, which needs KVM (a Linux host, including WSL2)."
+}
+
+need_key() {
+  [[ -n "${TYPESAFE_API_KEY:-}" ]] || die "TYPESAFE_API_KEY is not set (export it or put it in .env)"
+}
+
+need_image() {
+  [[ -d "$STORAGE" && -n "$(ls -A "$STORAGE" 2>/dev/null || true)" ]] ||
+    die "no golden image. Run scripts/waa prepare-image first"
+}
+
+# The checkout at the pinned commit. A later run copies the overlay again and does not fetch.
+ensure_checkout() {
+  if [[ -f "$CLIENT/run.py" ]]; then
+    return
+  fi
+  run mkdir -p "$CHECKOUT"
+  run git -C "$CHECKOUT" init
+  git -C "$CHECKOUT" remote remove origin >/dev/null 2>&1 || true
+  run git -C "$CHECKOUT" remote add origin "$WAA_URL"
+  run git -C "$CHECKOUT" fetch --depth 1 origin "$WAA_COMMIT"
+  run git -C "$CHECKOUT" checkout --detach FETCH_HEAD
+}
+
+copy_overlay() {
+  run mkdir -p "$CLIENT/mm_agents/jev"
+  run cp "$REPO/waa_overlay/run.py" "$CLIENT/run.py"
+  run cp "$REPO/waa_overlay/mm_agents/jev/__init__.py" "$CLIENT/mm_agents/jev/__init__.py"
+  run cp "$REPO/waa_overlay/mm_agents/jev/agent.py" "$CLIENT/mm_agents/jev/agent.py"
+  run cp "$REPO/waa_overlay/start_client.sh" "$CHECKOUT/src/win-arena-container/start_client.sh"
+}
+
+# ----- setup ---------------------------------------------------------------------------------
+
+setup() {
+  [[ $# -eq 0 ]] || die "setup takes no arguments"
+  ensure_checkout
+  copy_overlay
+  # The checkout's .dockerignore keeps only src/win-arena-container, so the lock has to live there.
+  run cp "$REPO/waa_overlay/requirements.txt" "$CHECKOUT/src/win-arena-container/waa-requirements.txt"
+  run cp "$REPO/waa_overlay/Dockerfile" "$CHECKOUT/Dockerfile-jev"
+  run docker build --platform linux/amd64 \
+    --build-arg "BASE_IMAGE=windowsarena/winarena-base@$WAA_IMAGE_DIGEST" \
+    -f "$CHECKOUT/Dockerfile-jev" -t "$IMAGE" "$CHECKOUT"
+  # The import check does not start the VM. PYTHONPATH sees the mounted checkout and this repo.
+  run docker run --rm --platform linux/amd64 \
+    --entrypoint /opt/waa/bin/python \
+    -v "$REPO:/jev" \
+    -v "$CLIENT:/client" \
+    -e PYTHONPATH=/client:/jev \
+    "$IMAGE" -c "import desktop_env.evaluators, typesafe_computer_use.waa.agent"
+}
+
+# ----- prepare-image -------------------------------------------------------------------------
+
+prepare_image() {
+  local iso=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --iso)
+        [[ $# -gt 1 ]] || die "--iso needs a path"
+        iso=$2
+        shift
+        ;;
+      --iso=*) iso=${1#--iso=} ;;
+      *) die "prepare-image takes [--iso PATH], not $1" ;;
+    esac
+    shift
+  done
+  need_checkout
+  iso=${iso:-$CHECKOUT/src/win-arena-container/vm/image/setup.iso}
+  if [[ ! -f "$iso" ]]; then
+    die "no Windows 11 ISO. Download the Windows 11 Enterprise Evaluation (90-day, English, United States) from $ISO_PAGE and place it at $iso, or pass --iso PATH"
+  fi
+  need_kvm
+  run mkdir -p "$STORAGE"
+  run docker run --rm --platform linux/amd64 \
+    --device=/dev/kvm --cap-add NET_ADMIN --stop-timeout 120 \
+    -p 8006:8006 -p 3390:3389 \
+    -e "RAM_SIZE=${WAA_RAM_SIZE:-8G}" -e "CPU_CORES=${WAA_CPU_CORES:-8}" \
+    --mount "type=bind,source=${iso},target=/custom.iso" \
+    -v "$STORAGE:/storage" \
+    --entrypoint /bin/bash \
+    "$IMAGE" -c "./entry.sh --prepare-image true --start-client false"
+}
+
+# ----- run -----------------------------------------------------------------------------------
+
+check_task() {
+  local task=$1 domain id path
+  [[ "$task" == */* && "$task" != */*/* && "$task" != *..* && "$task" != /* && "$task" != .* ]] ||
+    die "a task is DOMAIN/ID"
+  domain=${task%%/*}
+  id=${task#*/}
+  [[ -n "$domain" && -n "$id" ]] || die "a task is DOMAIN/ID"
+  path="$CLIENT/evaluation_examples_windows/examples/$domain/$id.json"
+  [[ -f "$path" ]] || die "no such task: $task"
+}
+
+task_meta() {
+  local name meta json="" domains=() domain task ids
+  if [[ $# -eq 1 ]]; then
+    name="${1%%/*}__${1#*/}"
+  else
+    name="list-$(printf '%s\n' "$@" | cksum | cut -d' ' -f1)"
+  fi
+  for task in "$@"; do
+    [[ " ${domains[*]-} " == *" ${task%%/*} "* ]] || domains+=("${task%%/*}")
+  done
+  for domain in "${domains[@]}"; do
+    ids=""
+    for task in "$@"; do
+      [[ "${task%%/*}" == "$domain" ]] && ids+="${ids:+, }\"${task#*/}\""
+    done
+    json+="${json:+, }\"$domain\": [$ids]"
+  done
+  meta="$REPO/.waa/tasks/$name.json"
+  echo "+ writing the task list $meta" >&2
+  mkdir -p "$(dirname "$meta")"
+  printf '{%s}\n' "$json" >"$meta"
+  echo "$meta"
+}
+
+# WAA deletes a task directory that has no result.txt, and skips one that has one. Move both out
+# of the way first, so a rerun starts clean and the previous jev/ folder is kept.
+archive_earlier() {
+  local stamp=$1 dir rel dest task domain_id wanted
+  shift
+  shopt -s nullglob
+  for dir in "$RESULTS"/*/*/"$MODEL"/*/*/*; do
+    [[ -d "$dir" ]] || continue
+    rel=${dir#"$RESULTS"/}
+    [[ "$rel" == archive/* ]] && continue
+    domain_id=${rel#*/*/*/*/}
+    wanted=false
+    for task in "$@"; do
+      [[ "$domain_id" == "$task" ]] && wanted=true
+    done
+    if $wanted; then
+      dest="$RESULTS/archive/$stamp/$rel"
+      run mkdir -p "$(dirname "$dest")"
+      run mv "$dir" "$dest"
+    fi
+  done
+  shopt -u nullglob
+}
+
+add_secrets() {
+  local name
+  while IFS= read -r name; do
+    case "$name" in
+      CLICKER_*) printf '%s\n' "$name" ;;
+    esac
+  done < <(compgen -e || true)
+}
+
+run_tasks() {
+  local tasks=() task meta stamp name
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ocr | --ocr=* | --envs | --envs=* | --num-workers | --num-workers=* | --diff-lvl | --diff-lvl=* | --som-origin | --som-origin=* | --a11y-backend | --a11y-backend=*)
+        die "scripts/waa run does not take $1"
+        ;;
+      -*) die "unknown option: $1" ;;
+      *) tasks+=("$1") ;;
+    esac
+    shift
+  done
+  [[ ${#tasks[@]} -gt 0 ]] || die "run needs a task: scripts/waa run DOMAIN/ID..."
+  need_checkout
+  for task in "${tasks[@]}"; do
+    check_task "$task"
+  done
+  need_kvm
+  need_key
+  need_image
+  copy_overlay
+  meta=$(task_meta "${tasks[@]}")
+  stamp=$(date +%Y%m%d-%H%M%S)
+  archive_earlier "$stamp" "${tasks[@]}"
+
+  local -a cmd=(
+    docker run --rm --platform linux/amd64
+    --device=/dev/kvm --cap-add NET_ADMIN --stop-timeout 120
+    -p 8006:8006 -p 3390:3389
+    -e "RAM_SIZE=${WAA_RAM_SIZE:-8G}" -e "CPU_CORES=${WAA_CPU_CORES:-8}"
+    -e "WAA_COMMIT=$WAA_COMMIT" -e "WAA_IMAGE_DIGEST=$WAA_IMAGE_DIGEST"
+    -e TYPESAFE_API_KEY
+  )
+  if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    cmd+=(-e OPENAI_API_KEY)
+  fi
+  while IFS= read -r name; do
+    cmd+=(-e "$name")
+  done < <(add_secrets)
+  cmd+=(
+    -v "$STORAGE:/storage"
+    -v "$CLIENT:/client"
+    -v "$REPO:/jev"
+    -v "$RESULTS:/client/results"
+    -v "$meta:/tasks/list.json:ro"
+    -v "$REPO/waa_overlay/start_client.sh:/start_client.sh:ro"
+    --entrypoint /bin/bash
+    "$IMAGE"
+    -c "export PYTHONPATH=/jev:/client; exec ./entry.sh --prepare-image false --start-client true --agent jev --model jev --json-name /tasks/list.json --clean-results false"
+  )
+  run "${cmd[@]}"
+}
+
+# ----- results -------------------------------------------------------------------------------
+
+results() {
+  [[ $# -le 1 ]] || die "results reads one folder"
+  run uv run --frozen --quiet python -m typesafe_computer_use.waa.results "${1:-$RESULTS}"
+}
+
+load_env
+case "${1:-}" in
+  setup)
+    shift
+    setup "$@"
+    ;;
+  prepare-image)
+    shift
+    prepare_image "$@"
+    ;;
+  run)
+    shift
+    run_tasks "$@"
+    ;;
+  results)
+    shift
+    results "$@"
+    ;;
+  "" | -h | --help | help)
+    usage
+    [[ -n "${1:-}" ]] || exit 2
+    ;;
+  *) die "unknown command: $1" ;;
+esac

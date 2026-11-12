@@ -62,7 +62,7 @@ def test_labels_without_a_capture_are_an_error(tmp_path):
 
 
 def test_missing_coverage_lists_the_kinds_no_capture_is_tagged_with():
-    samples = [pe.Sample("a", None, [], tags=["zh", "linux"]), pe.Sample("b", None, [], tags=["windows"])]
+    samples = [pe.Sample("a", None, [], tags=["zh", "waa"]), pe.Sample("b", None, [], tags=["windows"])]
     assert pe.missing_coverage(samples) == ["retina-small-text", "icon-toolbar"]
 
 
@@ -164,7 +164,7 @@ def test_check_reports_coverage_without_reading_images(tmp_path, capsys):
     write_sample(tmp_path, "s", {"tags": ["zh"], "targets": []})
     assert pe.main(["check", str(tmp_path)]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out == {"captures": 1, "missing_coverage": ["retina-small-text", "icon-toolbar", "linux", "windows"]}
+    assert out == {"captures": 1, "missing_coverage": ["retina-small-text", "icon-toolbar", "waa", "windows"]}
 
 
 def test_a_bad_labels_file_exits_with_its_name_and_no_report(tmp_path, capsys):

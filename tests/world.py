@@ -228,7 +228,7 @@ class World:
         """The rows as items, filling `screen.ax_refs` for the ones the app declared, and
         `screen.covered` for the ones under the page's popup.
 
-        A control under a popup is found in the tree but not pressed through it, as in an OSWorld VM:
+        A control under a popup is found in the tree but not pressed through it, as in a WAA VM:
         a press would reach it through the popup and leave nothing for the loop to get around.
         """
         screen.ax_refs.clear()

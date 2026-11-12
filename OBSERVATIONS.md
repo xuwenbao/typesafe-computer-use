@@ -12,13 +12,6 @@ longer into separate bullets. Keep the whole page short.
 - The classifier's input is now most of jev's cost, and a fuller tree makes it larger.
 - The classifier picks the same item for the same request only about 95% of the time.
 
-## OSWorld
-
-- The fixed 2 s wait after each action charges per step, so it penalizes an agent that takes more, cheaper steps.
-- OSWorld's tree fetch walks the whole desktop (about 2,500 nodes, 2.4 s), but jev needs only the front app's.
-- OSWorld's tree request has no timeout, and one hung a run for 9.5 hours.
-- OSWorld records video in H.264 4:4:4, which QuickTime cannot play.
-
 ## Chrome
 
 - Chrome builds its accessibility tree only after a client asks the app or its window for attributes.

@@ -29,12 +29,13 @@ own computer, which never touches this machine's screen, input, or apps), and or
 commands such as `gh` or read-only `gcloud` queries. Commands that create or delete cloud
 resources, or spend money, still get a yes first.
 
-## OSWorld
+## WindowsAgentArena
 
-`scripts/osworld setup` fetches OSWorld and installs it and jev into `.osworld/`, and
-`scripts/osworld results` reads result files. Neither needs approval. `scripts/osworld run-jev`,
-`run-luna`, and anything else that starts an OSWorld VM, here or in the cloud, need approval for
-each command.
+`scripts/waa setup` fetches WindowsAgentArena and builds the client image. The import check it
+runs is inside that container, so it needs approval, once, for that command. `scripts/waa results`
+reads result files and needs none. `scripts/waa prepare-image` and `scripts/waa run` each start
+the container, and each command needs approval of its own. A WSL2 machine with KVM is a machine
+this runs on.
 
 ## Tests stay off the machine
 

@@ -8,7 +8,7 @@ __pycache__/
 .env.*
 dist/
 bench/results-*.json
-.osworld/
+.waa/
 infra/gcp/.terraform/
 infra/gcp/terraform.tfvars
 infra/gcp/*.tfstate*

@@ -206,7 +206,14 @@ def test_a_writer_that_fails_costs_the_answer_and_not_the_run(tmp_path, screen):
 
 
 def decision(kind: str, confidence: float = 0.9) -> SimpleNamespace:
-    return SimpleNamespace(kind=SimpleNamespace(choice=kind), stops=kind in ("done", "none"), confidence=confidence, chosen=kind)
+    return SimpleNamespace(
+        kind=SimpleNamespace(choice=kind),
+        stops=kind in ("done", "none"),
+        confidence=confidence,
+        chosen=kind,
+        clicking=False,
+        pressing_offscreen=False,
+    )
 
 
 @pytest.mark.parametrize(

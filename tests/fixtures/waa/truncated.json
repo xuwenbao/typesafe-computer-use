@@ -1,0 +1,18 @@
+{
+  "app": "chrome.exe",
+  "pid": 9,
+  "window": {"name": "Chrome", "x": 0, "y": 0, "w": 800, "h": 600},
+  "truncated": true,
+  "reason": "truncated",
+  "nodes": [
+    {
+      "role": "AXButton",
+      "name": "保存",
+      "rect": [10, 10, 40, 20],
+      "focused": false,
+      "value": "",
+      "pressable": true,
+      "children": []
+    }
+  ]
+}

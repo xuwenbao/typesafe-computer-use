@@ -1,12 +1,12 @@
-"""Code that runs where no desktop adapter can load (the Linux sandbox, a server, OSWorld's VM host).
+"""Code that runs where no desktop adapter can load (the Linux sandbox, a server, the WAA client).
 
 Read from the source rather than by importing: every module the browser package reaches must
 stay clear of the platform adapter, or `clicker-bench` needs macOS-only packages to start. The
-same holds for the readers of OSWorld's accessibility tree and of its results, which run beside
-OSWorld on Linux.
+same holds for the readers of a WAA VM's tree and of its results, which run in the client container.
 """
 
 import ast
+import sys
 from pathlib import Path
 
 import pytest
@@ -49,7 +49,21 @@ def module_file(name: str) -> Path | None:
     return None
 
 
-@pytest.mark.parametrize("start", ["browser", "osworld.a11y", "osworld.results"])
+def test_uia_roles_imports_nothing_but_the_standard_library():
+    """The VM walk concatenates this file into a script that cannot import jev or anything installed."""
+    tree = ast.parse((PACKAGE / "uia_roles.py").read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0, "uia_roles imports another module of jev"
+            if node.module:
+                imported.add(node.module.split(".")[0])
+    assert imported <= sys.stdlib_module_names
+
+
+@pytest.mark.parametrize("start", ["browser", "waa.tree", "waa.results"])
 def test_never_reaches_the_desktop_adapter(start):
     seen, todo = set(), [start]
     while todo:

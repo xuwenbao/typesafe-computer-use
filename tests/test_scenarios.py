@@ -1721,7 +1721,7 @@ def test_l53_unverified_keystrokes_stay_when_the_field_will_not_take_a_value(mon
 
 
 def test_l54_a_run_stuck_three_times_on_the_same_page_ends_with_the_writers_answer(monkeypatch, tmp_path):
-    """OSWorld's chrome/9f935cce: the classifier clicked the label beside a dropdown, which does nothing,
+    """chrome/9f935cce: the classifier clicked the label beside a dropdown, which does nothing,
     under every focus the writer gave, for ten hand-offs and three minutes. The third stall ends it."""
     forms = "https://example.com/forms"
     world = World(
@@ -1778,7 +1778,7 @@ def test_l55_a_new_page_starts_the_count_of_stalls_again(monkeypatch, tmp_path):
 
 
 def test_l56_a_name_the_writer_submits_is_typed_and_saved_in_one_step(monkeypatch, tmp_path):
-    """OSWorld's chrome/2ad9387a typed a new bookmark folder's name in one step and clicked Save in the
+    """chrome/2ad9387a typed a new bookmark folder's name in one step and clicked Save in the
     next, and chrome/2ae9ba84 typed a profile name and never saved it. Return right after the text does
     both at once. Nothing checks the field after it: the dialog is gone, and the next screen says
     whether the name took."""
@@ -1813,7 +1813,7 @@ def test_l56_a_name_the_writer_submits_is_typed_and_saved_in_one_step(monkeypatc
 
 
 def test_l57_an_item_under_a_popup_is_reached_by_closing_the_popup_in_the_same_step(monkeypatch, tmp_path):
-    """OSWorld's chrome/2ad9387a: Chrome's "Restore pages?" bubble sat over the bookmark manager's
+    """chrome/2ad9387a: Chrome's "Restore pages?" bubble sat over the bookmark manager's
     Organise button. The click meant for Organise closed the bubble, the loop saw no menu, and two
     steps went to finding out. Now the bubble is closed first, by its Close button, and Organise is
     clicked in the same step. Its Restore button, which reopens the last session, is never pressed."""

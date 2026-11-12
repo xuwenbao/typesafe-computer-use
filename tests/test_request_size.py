@@ -1,4 +1,4 @@
-"""The classifier's request on a real OSWorld step: what it sent, and what it sends now.
+"""The classifier's request on a captured step: what it sent, and what it sends now.
 
 TypeSafe bills every input token and caches none, so the request's size is the step's cost. The
 fixture is Chrome's settings page as one step's payload file recorded it: the state and the item
@@ -16,7 +16,7 @@ from PIL import Image
 from typesafe_computer_use.decide import base_state, item_criteria
 from typesafe_computer_use.models import Item, Screen
 
-FIXTURE = Path(__file__).parent / "fixtures" / "osworld" / "chrome-settings-step.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "chrome-settings-step.json"
 
 
 def wire(value) -> int:

@@ -255,7 +255,7 @@ class ParseCache:
 
     def read_ahead(self, image: Image.Image, scale: float) -> None:
         """Start reading `image` on a thread of its own, while the capture asks which app and window it
-        shows. Where those queries are slow, as an OSWorld VM's tree is, the read overlaps them.
+        shows. Where those queries are slow, as a WAA VM's tree is, the read overlaps them.
 
         The read is `read_screen` over the previous capture's app and window, into a copy of this
         cache, so it is the very read `read_screen` makes once the capture finds them unchanged, as a

@@ -53,8 +53,8 @@ A control under a popup says which: `button 'Organise' (top-right; under 'Restor
 Chrome draws its bubbles, menus, and dialogs as windows of their own, in front of the page, so a
 click on the page there lands on the popup. Picking such an item closes the popup first, with its
 own close button, or with Escape when it has none, and never with its other buttons ('Restore'
-reopens the last session), then clicks the item, in the same step. Only OSWorld's tree marks
-these. A Mac or Windows item that came from the tree is pressed through it, which reaches the
+reopens the last session), then clicks the item, in the same step. The tree marks
+these when the walk reports a popup over the control. A Mac or Windows item that came from the tree is pressed through it, which reaches the
 control under a popup anyway. "Under", not "covered by": in a replay of 81 captured requests
 from screens with a popup, "covered by" drew the classifier toward Escape and lowered its
 confidence, while "under" left both as they were.
@@ -259,7 +259,7 @@ leaves the answer it came with standing, without a second reading of the same sc
 `--handoffs` (10) bounds the trips, three questions bound the asking, and a stop on
 the last step is final. So is a third stall with no new page since the first: two focuses
 did not free the classifier, so the run ends `stuck`, and the writer's answer says what
-the agent could not do. On OSWorld's Chrome tasks every run that stalled a third time on
+the agent could not do. On the Chrome tasks this cutoff was measured against, every run that stalled a third time on
 the same pages failed anyway, up to 210 s later, and no solved run stalled more than twice.
 A `done` the writer does not see on the screen is sent back like any other stop.
 

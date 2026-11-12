@@ -59,8 +59,8 @@ class RunConfig:
     app: str | None = None  # frontmost app to report during replay
     url: str | None = None  # browser URL to report during replay
     # Start each capture's OCR on a thread of its own while the capture asks for the app, window,
-    # field, and URL (see `ParseCache.read_ahead`). Worth it where those questions are slow, as over an
-    # OSWorld VM; off for this machine, whose own are quick.
+    # field, and URL (see `ParseCache.read_ahead`). Worth it where those questions are slow, as over a
+    # WAA VM; off for this machine, whose own are quick.
     read_ahead: bool = False
 
     @property
@@ -231,8 +231,8 @@ def stuck(state: RunState, log: Log) -> None:
 
     A stall hands the run to the writer like any stop, and its focus usually frees the classifier.
     When the classifier stalls again on the pages it was already on, the focus did not help, and
-    each further round costs a writer call and a few futile actions. On OSWorld's Chrome tasks every
-    run that stalled a third time on the same pages failed all the same, up to 210 s later, and no
+    each further round costs a writer call and a few futile actions. On the Chrome tasks this cutoff
+    was measured against, every run that stalled a third time on the same pages failed all the same, up to 210 s later, and no
     solved run stalled more than twice. A new page is the progress that starts the count again, so
     a long task that stalls now and then on its way is not cut short.
     """

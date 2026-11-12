@@ -38,7 +38,7 @@ from PIL import Image
 from .models import Item
 
 KINDS = ("text", "icon")
-COVERAGE = ("zh", "retina-small-text", "icon-toolbar", "linux", "windows")
+COVERAGE = ("zh", "retina-small-text", "icon-toolbar", "waa", "windows")
 LABELS_SUFFIX = ".labels.json"
 
 Box = tuple[float, float, float, float]

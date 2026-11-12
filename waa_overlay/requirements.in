@@ -1,0 +1,54 @@
+# What desktop_env, lib_run_single.py and run.py import. Not Navi.
+# Packages that jev also depends on are pinned to jev's versions.
+# torch is the CPU build: the client container has no GPU.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+numpy==2.5.3
+pillow>=11.0,<13
+openai==2.54.0
+psutil==7.2.2
+torch==2.15.0+cpu
+torchvision==0.29.1+cpu
+transformers==5.22.2
+# jev itself, so the mounted package imports in this venv.
+anthropic==1.6.0
+huggingface-hub==2.4.0
+onnxruntime==1.30.0
+rapidocr==3.9.2
+typesafe-sdk==0.6.0
+websocket-client==1.9.0
+
+beautifulsoup4
+borb
+cssselect
+easyocr
+fastdtw
+formulas
+gymnasium
+imagehash
+librosa
+lxml
+mutagen
+odfpy
+opencv-python-headless
+openpyxl
+pandas
+pdfplumber
+playwright
+py7zr
+pyacoustid
+pydrive
+pymupdf
+pypdf
+pypdf2
+python-docx
+python-pptx
+pyyaml
+rapidfuzz
+requests
+requests-toolbelt
+scikit-image
+tqdm
+xmltodict
+LnkParse3

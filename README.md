@@ -135,11 +135,10 @@ The full walk, with the perception's cost, the tree walk, the action space, and 
 
 ## Benchmark
 
-jev runs as an agent in [OSWorld](https://github.com/xlang-ai/OSWorld-V2), a benchmark of real
-desktop tasks, beside OSWorld's own GPT agent on the same task. `scripts/osworld setup` fetches
-OSWorld and installs jev beside it; `scripts/osworld run-jev chrome/<task id>`
-runs one task. It needs a Linux host with KVM; see [OSWorld](docs/osworld.md) for that and for
-a one-command machine in Google Cloud.
+jev runs as an agent in [WindowsAgentArena](https://github.com/microsoft/WindowsAgentArena), a
+benchmark of real Windows desktop tasks. `scripts/waa setup` fetches it and builds the client
+image; `scripts/waa run chrome/<task id>` runs one task in one local VM. It needs Docker and
+KVM, including on WSL2; see [WindowsAgentArena](docs/waa.md).
 
 ## Read more
 
@@ -148,7 +147,7 @@ a one-command machine in Google Cloud.
 - [Browser backend](docs/browser-backend.md): DOM perception over Chrome DevTools, no OCR, no screen permission
 - [Writer endpoints](docs/writer-endpoints.md): every writer variable, and other models over the Anthropic or OpenAI API
 - [Windows](docs/windows.md): the experimental adapter and how it differs from macOS
-- [OSWorld](docs/osworld.md): setup, the two run commands, results, and the Google Cloud machine
+- [WindowsAgentArena](docs/waa.md): setup, the golden image, one run command, and results
 - [Layout](docs/layout.md): every module and what it owns
 - [Known limits](docs/known-limits.md)
 - [Sandbox](docs/sandbox.md): a Linux computer in a container, for running the agent on a screen that is not yours

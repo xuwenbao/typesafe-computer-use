@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from typesafe_computer_use import macos, windows
-from typesafe_computer_use.osworld.desktop import OSWorldDesktop
 from typesafe_computer_use.platform_adapter import Desktop, NoDesktop, current, desktop, host, pick_host, using
+from typesafe_computer_use.waa.desktop import WAADesktop
 
 SURFACE = sorted(name for name, value in vars(Desktop).items() if callable(value) and not name.startswith("_"))
 
@@ -24,12 +24,12 @@ def shape(function) -> list[tuple[str, object, object]]:
 # Read at collection, before the conftest guard swaps the machine-touching functions for refusals.
 PROVIDED = {
     (adapter.__name__, name): shape(getattr(adapter, name)) if callable(getattr(adapter, name, None)) else None
-    for adapter in (macos, windows, OSWorldDesktop)
+    for adapter in (macos, windows, WAADesktop)
     for name in SURFACE
 }
 
 
-@pytest.mark.parametrize("adapter", [macos, windows, OSWorldDesktop], ids=["macos", "windows", "osworld"])
+@pytest.mark.parametrize("adapter", [macos, windows, WAADesktop], ids=["macos", "windows", "waa"])
 @pytest.mark.parametrize("name", SURFACE)
 def test_each_adapter_provides_the_desktop_surface(adapter, name):
     provided = PROVIDED[(adapter.__name__, name)]

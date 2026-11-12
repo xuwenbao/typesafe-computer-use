@@ -1,0 +1,36 @@
+{
+  "app": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "pid": 4212,
+  "window": {"name": "Edge", "x": 0, "y": 0, "w": 1440, "h": 900},
+  "truncated": false,
+  "reason": null,
+  "nodes": [
+    {
+      "role": "AXButton",
+      "name": "保存",
+      "rect": [10, 10, 40, 20],
+      "focused": false,
+      "value": "",
+      "pressable": true,
+      "children": []
+    },
+    {
+      "role": "AXTextField",
+      "name": "Address and search bar",
+      "rect": [80, 10, 600, 24],
+      "focused": false,
+      "value": "example.com/a",
+      "pressable": false,
+      "children": []
+    },
+    {
+      "role": "AXTextField",
+      "name": "Name",
+      "rect": [10, 80, 200, 24],
+      "focused": true,
+      "value": "abc",
+      "pressable": false,
+      "children": []
+    }
+  ]
+}
