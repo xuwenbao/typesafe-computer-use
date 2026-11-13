@@ -239,6 +239,7 @@ run_tasks() {
   need_key
   need_image
   copy_overlay
+  run mkdir -p "$REPO/.waa/hf"
   meta=$(task_meta "${tasks[@]}")
   stamp=$(date +%Y%m%d-%H%M%S)
   archive_earlier "$stamp" "${tasks[@]}"
@@ -262,8 +263,10 @@ run_tasks() {
     -v "$CLIENT:/client"
     -v "$REPO:/jev"
     -v "$RESULTS:/client/results"
+    -v "$REPO/.waa/hf:/root/.cache/huggingface"
     -v "$meta:/tasks/list.json:ro"
     -v "$REPO/waa_overlay/start_client.sh:/start_client.sh:ro"
+    -v "$REPO/waa_overlay/entry_setup.sh:/entry_setup.sh:ro"
     --entrypoint /bin/bash
     "$IMAGE"
     -c "export PYTHONPATH=/jev:/client; exec ./entry.sh --prepare-image false --start-client true --agent jev --model jev --json-name /tasks/list.json --clean-results false"

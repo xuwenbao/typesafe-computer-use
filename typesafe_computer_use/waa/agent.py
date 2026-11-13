@@ -3,7 +3,7 @@
 WAA's runner calls `predict` once per step and runs the actions it returns. `JevAgent` runs
 `runner.run` on a worker thread, inside `platform_adapter.using(WAADesktop(...))`, and the adapter
 turns the loop's reads and inputs into WAA steps. `predict` returns the four values WAA asks for;
-the log and the computer-update are always empty, since jev does not use them.
+the log is an empty dict and the computer-update is always empty, since jev does not use them.
 
 The worker never blocks forever. Once it has handed out `max_steps` action lists, the next wait
 raises `Abort("WAA step limit")`, and `reset()` makes a stale worker's wait raise `Abort("reset")`.
@@ -120,13 +120,13 @@ class JevAgent:
             self._stale = thread if thread is not None and thread.is_alive() else None
             self._run = None
 
-    def predict(self, instruction: str, obs: dict) -> tuple[str, list[str], str, None]:
-        """One WAA step. The last two values are the log and the computer update, both empty."""
+    def predict(self, instruction: str, obs: dict) -> tuple[str, list[str], dict, None]:
+        """One WAA step. The log is an empty dict and the computer update is empty."""
         if self._run is None:
             self._run = _Run(self, instruction, self._stale)
             self._stale = None
         response, actions = self._run.predict(obs)
-        return response, actions, "", None
+        return response, actions, {}, None
 
     @property
     def worker(self) -> threading.Thread | None:
@@ -155,7 +155,7 @@ class _Run:
     def __init__(self, agent: JevAgent, instruction: str, after: threading.Thread | None) -> None:
         self.agent = agent
         self.cfg = RunConfig(
-            goal=instruction, out=agent.out_root / RUN_FOLDER, act=True, steps=agent.max_steps, delay=0, read_ahead=True
+            goal=instruction, out=Path(agent.out_root) / RUN_FOLDER, act=True, steps=agent.max_steps, delay=0, read_ahead=True
         )
         self.after = after
         self.to_worker: queue.Queue = queue.Queue()

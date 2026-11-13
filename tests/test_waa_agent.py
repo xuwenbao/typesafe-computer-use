@@ -44,7 +44,7 @@ def run_json(out_root: Path) -> dict:
 
 def calls(agent: JevAgent, observation: dict) -> tuple[str, list[str]]:
     response, actions, logs, update = agent.predict(GOAL, observation)
-    assert logs == "" and update is None
+    assert logs == {} and update is None
     assert "FAIL" not in actions
     return response, actions
 
