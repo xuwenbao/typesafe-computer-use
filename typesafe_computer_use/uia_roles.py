@@ -29,6 +29,9 @@ _TYPES = (
 CONTROL_TYPE_TO_ROLE = {name: role for name, _, role in _TYPES}
 CONTROL_TYPE_ID_TO_ROLE = {type_id: role for _, type_id, role in _TYPES}
 
+DOCUMENT_ID = 50030  # UIA_DocumentControlTypeId: Notepad's editor, and a browser's page
+STATE_READ_ONLY = 0x40  # STATE_SYSTEM_READONLY, in LegacyIAccessible's state
+
 
 def role_for(control_type_name: str) -> str:
     """The AX role a UI Automation control type stands for, or "" for one the walk ignores."""
@@ -38,6 +41,11 @@ def role_for(control_type_name: str) -> str:
 def role_for_id(control_type_id: int) -> str:
     """The same role, from UI Automation's numeric control type."""
     return CONTROL_TYPE_ID_TO_ROLE.get(control_type_id, "")
+
+
+def document_role(legacy_state: int) -> str:
+    """A document you can type into is a text area. A read-only one, like a web page, is ignored."""
+    return "" if legacy_state & STATE_READ_ONLY else "AXTextArea"
 
 
 def pressable(has_invoke: bool, default_action: str) -> bool:

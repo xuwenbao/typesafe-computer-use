@@ -45,7 +45,7 @@ def test_the_copies_name_the_pinned_commit_and_mark_every_change():
         assert unmarked == [], unmarked
 
 
-def test_the_runner_builds_only_jev_and_does_not_ask_waa_for_a_tree():
+def test_the_runner_builds_only_jev_hands_it_the_controller_and_does_not_ask_waa_for_a_tree():
     module = ast.parse((OVERLAY / "run.py").read_text(encoding="utf-8"))
     agents = [
         node
@@ -53,6 +53,8 @@ def test_the_runner_builds_only_jev_and_does_not_ask_waa_for_a_tree():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "JevAgent"
     ]
     assert len(agents) == 1
+    controller = {kw.arg: ast.unparse(kw.value) for kw in agents[0].keywords}.get("controller")
+    assert controller == "lambda: env.controller"
     assert "NaviAgent" not in (OVERLAY / "run.py").read_text(encoding="utf-8")
     (env,) = [
         node

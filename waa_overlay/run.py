@@ -165,7 +165,7 @@ def test(
 
     if cfg_args["agent_name"] != "jev":  # jev:
         raise ValueError(f"Unknown agent name: {cfg_args['agent_name']}")  # jev:
-    agent = JevAgent(max_steps=args.max_steps)  # jev:
+    agent = JevAgent(max_steps=args.max_steps, controller=lambda: env.controller)  # jev: env is made below; jev fetches the UIA tree through it
     
     env = DesktopEnv(
         action_space="pyautogui",  # jev: JevAgent has no action_space attribute

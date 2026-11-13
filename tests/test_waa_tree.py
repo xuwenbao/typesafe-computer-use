@@ -153,6 +153,17 @@ def test_a_comtypes_stand_in_is_walked_the_same_way():
     assert LEGACY  # the legacy pattern id the live walk asks for
 
 
+def test_an_editable_document_is_a_text_area_and_a_web_page_is_not():
+    editor = _Raw("Text editor", 50030, _Box(0, 80, 800, 600), {LEGACY: _Pattern(CurrentState=0x100004)}, focus=True)
+    page = _Raw("Example", 50030, _Box(0, 80, 800, 600), {LEGACY: _Pattern(CurrentState=0x100044)})
+    bare = _Raw("No pattern", 50030, _Box(0, 0, 10, 10))
+    window = _Raw("Notepad", 50032, _Box(0, 0, 800, 600))
+    got = walk(LiveElement(window, _Walker({id(window): [editor, page, bare]})), clock=lambda: 0)
+    assert [node["role"] for node in got["nodes"]] == ["AXTextArea", "", ""]
+    focused = tree.read({"app": "notepad.exe", "pid": 1, "window": None, "nodes": got["nodes"]}, *DISPLAY).focused
+    assert focused is not None and focused.is_text and focused.label == "Text editor"
+
+
 def test_the_script_embeds_the_one_role_table_and_fits_a_windows_command():
     source = tree.script()
     assert (tree.PACKAGE / "uia_roles.py").read_text(encoding="utf-8") in source
@@ -235,3 +246,12 @@ def test_a_failed_fetch_reads_as_nothing_and_is_counted(tmp_path):
     tree.save(tmp_path, 0, {"nodes": []})
     tree.save(tmp_path, 1, {"nodes": []})
     assert sorted(path.name for path in tmp_path.iterdir()) == ["obs-000-uia.json", "obs-001-uia.json"]
+
+
+def test_the_vm_script_imports_each_ctypes_submodule_it_uses():
+    import re
+
+    text = tree.script()
+    used = set(re.findall(r"\bctypes\.(wintypes|util)\b", text))
+    imported = set(re.findall(r"^\s*import ctypes\.(\w+)", text, re.MULTILINE))
+    assert used and used <= imported

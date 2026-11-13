@@ -9,6 +9,7 @@ The walk stops at a depth, a width, a node count, and 8 seconds, and says so in 
 """
 
 import ctypes
+import ctypes.wintypes
 import json
 import sys
 import time
@@ -20,16 +21,24 @@ SECONDS = 8.0
 INVOKE = 10000  # UIA_InvokePatternId
 VALUE = 10002  # UIA_ValuePatternId
 LEGACY = 10018  # UIA_LegacyIAccessiblePatternId
+READ_ONLY = 0x40  # STATE_SYSTEM_READONLY
 
 
 def _rules():
     """The role table. The import works in jev; the names work in the concatenated VM script."""
     try:
-        from typesafe_computer_use.uia_roles import pressable, role_for_id
+        from typesafe_computer_use.uia_roles import DOCUMENT_ID, document_role, pressable, role_for_id
     except ImportError:
         pressable = globals()["pressable"]
         role_for_id = globals()["role_for_id"]
-    return role_for_id, pressable
+        document_role = globals()["document_role"]
+        DOCUMENT_ID = globals()["DOCUMENT_ID"]
+
+    def role_of(node):
+        control_type = node.control_type()
+        return document_role(node.legacy_state()) if control_type == DOCUMENT_ID else role_for_id(control_type)
+
+    return role_of, pressable
 
 
 def empty(reason):
@@ -41,7 +50,7 @@ def walk(root, *, clock, seconds=SECONDS, max_depth=MAX_DEPTH, max_width=MAX_WID
     """`root`'s descendants as JSON-ready dicts. `root` itself is the window, recorded apart.
 
     An element answers `name`, `control_type`, `rect`, `focused`, `value`, `has_invoke`,
-    `default_action`, and `children`. Past any limit the walk returns what it has and sets
+    `default_action`, and `children`, and a document also `legacy_state`. Past any limit the walk returns what it has and sets
     `truncated`."""
     role_of, can_press = _rules()
     deadline = clock() + seconds
@@ -71,7 +80,7 @@ def walk(root, *, clock, seconds=SECONDS, max_depth=MAX_DEPTH, max_width=MAX_WID
                     break
         rect = node.rect()
         return {
-            "role": role_of(node.control_type()),
+            "role": role_of(node),
             "name": node.name() or "",
             "rect": list(rect) if rect else None,
             "focused": bool(node.focused()),
@@ -187,6 +196,14 @@ class LiveElement:
             return (pattern.CurrentDefaultAction or "") if pattern is not None else ""
         except Exception:
             return ""
+
+    def legacy_state(self):
+        """LegacyIAccessible's state bits; a missing pattern reads as read-only."""
+        pattern = self._pattern(LEGACY)
+        try:
+            return int(pattern.CurrentState) if pattern is not None else READ_ONLY
+        except Exception:
+            return READ_ONLY
 
     def children(self):
         found = []
