@@ -3,7 +3,7 @@ import time
 from dataclasses import replace
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
 from typesafe_computer_use import perception
 from typesafe_computer_use.parse import detect as parse_detect
@@ -123,6 +123,28 @@ def test_a_whole_new_screen_changes_every_tile():
     before, after = painted((1024, 512)), painted((1024, 512), boxes=[(0, 0, 1024, 512)])
     tiles = tiles_in((0.0, 0.0, 1024.0, 512.0))
     assert len(changed_tiles(thumbnail(after), thumbnail(before), tiles)) == len(tiles)
+
+
+def _pale(box=None) -> Image.Image:
+    image = Image.new("RGB", (256, 256), (245, 245, 245))
+    if box is not None:
+        image.paste((20, 20, 20), box)
+    return image
+
+
+def test_a_small_dark_mark_on_a_pale_tile_counts_as_a_change():
+    """32 px of black on a pale tile: the mean stays under 6, and more than 1% of the pixels move."""
+    before, after = _pale((40, 40, 72, 72)), _pale()
+    tiles = tiles_in((0.0, 0.0, 256.0, 256.0))
+    diff = ImageChops.difference(thumbnail(before), thumbnail(after))
+    assert ImageStat.Stat(diff).mean[0] <= perception.TILE_DIFF
+    assert changed_tiles(thumbnail(after), thumbnail(before), tiles) == [(0.0, 0.0, 256.0, 256.0)]
+
+
+def test_a_pointer_sized_mark_does_not_count_as_a_change():
+    before, after = _pale((40, 40, 56, 60)), _pale()
+    tiles = tiles_in((0.0, 0.0, 256.0, 256.0))
+    assert changed_tiles(thumbnail(after), thumbnail(before), tiles) == []
 
 
 def test_faint_noise_does_not_count_as_a_change():

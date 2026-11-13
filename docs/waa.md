@@ -34,8 +34,10 @@ A task is `DOMAIN/ID`, a file under the checkout's `evaluation_examples_windows/
 `run chrome/<id> msedge/<id>` checks that both files exist, that `/dev/kvm` is there, and that
 `TYPESAFE_API_KEY` is set in the environment or in `.env`. It refuses `--ocr`, `--envs` and
 `--num-workers`. Keys (`TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `CLICKER_*`) are passed into the
-container as environment variables and are never printed. `run` does not revert the VM between
-tasks: WindowsAgentArena closes the apps and leaves the disk as it is.
+container as environment variables and are never printed. `max_steps`, WAA's own default of 15,
+counts the action lists handed to the VM. A decision that hands nothing, a refused type or a stop
+for review, does not spend one of them; those run against jev's usual step limit. `run` does not
+revert the VM between tasks: WindowsAgentArena closes the apps and leaves the disk as it is.
 
 Results land in `results/pyautogui/screenshot/jev/0/<domain>/<id>/`. `result.txt` is the score,
 `traj.jsonl` is one line per action stamped `%Y%m%d@%H%M%S`, and `jev/run.json` is jev's own

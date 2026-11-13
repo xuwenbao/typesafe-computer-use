@@ -77,7 +77,7 @@ def render_payload(
         RULE,
         "QUESTION kind  (Choice criteria)",
         RULE,
-        json.dumps(kind_criteria(browser, email, bool(screen.offscreen)), indent=2),
+        json.dumps(kind_criteria(browser, email, bool(screen.offscreen), bool(screen.field and screen.field.is_text)), indent=2),
         "",
         RULE,
         "QUESTION item  (Choice criteria)",

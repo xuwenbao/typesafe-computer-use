@@ -86,6 +86,31 @@ def test_done_is_a_four_tuple_ending_in_done(jev, tmp_path):
 BUTTON = [("保存", 0.99, (10.0, 10.0, 50.0, 30.0))]
 
 
+def test_a_refused_decision_does_not_spend_a_waa_step(jev, tmp_path, monkeypatch):
+    """Two refusals hand nothing, then two clicks still fit in a budget of two. The screen after the
+    first click is a new one, as a click that lands is, so the refusals do not stall the run."""
+    agent = jev(
+        scripted(("type_text", None), ("type_text", None), ("click_item", "保存"), ("click_item", "保存")),
+        lines=BUTTON,
+        max_steps=2,
+    )
+    moved = [("保存", 0.99, (10.0, 10.0, 50.0, 30.0)), ("已输入", 0.99, (10.0, 50.0, 80.0, 70.0))]
+    landed = busy_page(DISPLAY).copy()
+    landed.paste((20, 20, 20), (0, 0, 400, 400))
+    landed_png = BytesIO()
+    landed.save(landed_png, format="PNG")
+
+    assert calls(agent, obs())[0] == "click_item '保存' (0.90)"
+    monkeypatch.setattr(parse_ocr, "recognize_text", lambda image: list(moved))
+    response, actions = calls(agent, {"screenshot": landed_png.getvalue()})
+
+    assert actions[-1] == "DONE"
+    assert response.startswith("click_item '保存' (0.90); jev ended:")
+    history = run_json(tmp_path)["history"]
+    assert history[:2] == ["type_text refused: no text field is focused"] * 2
+    finish(agent)
+
+
 def test_the_step_budget_hands_out_max_steps_lists_and_ends_in_done(jev, tmp_path):
     agent = jev(always("click_item", "保存"), lines=BUTTON, max_steps=2)
 

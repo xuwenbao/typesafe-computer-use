@@ -7,7 +7,9 @@ the log is an empty dict and the computer-update is always empty, since jev does
 
 The worker never blocks forever. Once it has handed out `max_steps` action lists, the next wait
 raises `Abort("WAA step limit")`, and `reset()` makes a stale worker's wait raise `Abort("reset")`.
-Either way the loop records the outcome. When it ends, `predict` answers `DONE`, never `FAIL`.
+`max_steps` counts lists handed to the VM. A decision that hands nothing, a refusal or a stop for
+review, spends one of the loop's own steps, which run to the usual limit. Either way the loop
+records the outcome. When it ends, `predict` answers `DONE`, never `FAIL`.
 """
 
 from __future__ import annotations
@@ -155,7 +157,12 @@ class _Run:
     def __init__(self, agent: JevAgent, instruction: str, after: threading.Thread | None) -> None:
         self.agent = agent
         self.cfg = RunConfig(
-            goal=instruction, out=Path(agent.out_root) / RUN_FOLDER, act=True, steps=agent.max_steps, delay=0, read_ahead=True
+            goal=instruction,
+            out=Path(agent.out_root) / RUN_FOLDER,
+            act=True,
+            steps=config.DEFAULT_STEPS,
+            delay=0,
+            read_ahead=True,
         )
         self.after = after
         self.to_worker: queue.Queue = queue.Queue()

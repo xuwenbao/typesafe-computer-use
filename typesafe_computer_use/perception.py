@@ -45,6 +45,8 @@ REGION_MARGIN_PT = 8.0  # slack around the window, for the shadow and a clipped 
 THUMB_DIVISOR = 8  # the change detector works on a 1/8 scale grayscale copy
 TILE_PX = 256.0  # tile side in capture pixels
 TILE_DIFF = 6.0  # mean absolute 8-bit difference that counts a tile as changed
+PIXEL_DIFF = 32  # one thumbnail pixel this far off reads as drawn or erased, not as noise
+CHANGED_SHARE = 0.01  # this share of such pixels marks a tile changed even when the mean stays low
 REOCR_FRACTION = 0.6  # above this share of changed tiles, reading the whole region is cheaper
 MAX_REOCR_RECTS = 4  # past this, the per-call overhead outweighs the pixels another rectangle saves
 BLANK_INSET_PX = 4  # how far in from a control's edge its inside is read, past a neighbour's border
@@ -458,12 +460,20 @@ def tile_changed(
     divisor: int = THUMB_DIVISOR,
     threshold: float = TILE_DIFF,
 ) -> bool:
-    """True when the tile's mean absolute pixel difference clears the threshold. A tile whose patch
-    cannot be compared counts as changed, so a doubt is always paid for with a re-read."""
+    """True when the tile's mean absolute difference clears the threshold, or when more than
+    `CHANGED_SHARE` of its pixels differ by more than `PIXEL_DIFF`.
+
+    The mean misses a pale popup that fills little of the tile: the tip is gone and the words stay.
+    A pointer is smaller than that share, so it does not force a re-read. A tile whose patch cannot
+    be compared counts as changed, so a doubt is always paid for with a re-read."""
     a, b = _patch(thumb, tile, divisor), _patch(previous, tile, divisor)
     if a.size != b.size or not a.width or not a.height:
         return True
-    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0] > threshold
+    diff = ImageChops.difference(a, b)
+    if ImageStat.Stat(diff).mean[0] > threshold:
+        return True
+    strong = sum(diff.histogram()[PIXEL_DIFF + 1 :])
+    return strong > CHANGED_SHARE * diff.width * diff.height
 
 
 def _patch(thumb: Image.Image, tile: Box, divisor: int) -> Image.Image:

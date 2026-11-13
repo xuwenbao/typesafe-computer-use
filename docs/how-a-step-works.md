@@ -76,7 +76,10 @@ without text, so the savings are reading less of the screen and reading it less 
   what makes the crop pay on a full-height window. The cost: the clock and the menu extras
   to the right of the window go unread. They stay clickable through the accessibility tree.
 - **Reuse.** The capture is compared with the previous one at 1/8 scale, in 256 px tiles.
-  Unchanged tiles keep the lines they produced last step. The changed tiles are clustered
+  A tile counts as changed when its mean absolute difference clears 6, or when more than 1% of
+  its thumbnail pixels differ by more than 32. The second catches a pale popup that fills little
+  of the tile; a pointer stays under it. Unchanged tiles keep the lines they produced last step.
+  The changed tiles are clustered
   into blobs, sides and corners counting as touching, and each blob becomes a rectangle
   read on its own. Scattered change is the ordinary case, a clock digit plus one repaint,
   and one rectangle around both would span the display. Each rectangle grows until no known

@@ -93,6 +93,13 @@ def test_kind_criteria_offers_email_only_when_set():
     assert "click_item" in kind_criteria("Google Chrome", None)
 
 
+def test_kind_criteria_offers_typing_only_into_a_focused_text_field():
+    assert "type_text" not in kind_criteria("Google Chrome", "user@example.com", typing=False)
+    assert "type_email" not in kind_criteria("Google Chrome", "user@example.com", typing=False)
+    offered = kind_criteria("Google Chrome", "user@example.com", typing=True)
+    assert "type_text" in offered and "type_email" in offered
+
+
 def test_item_criteria_and_state_carry_region_and_dates(screen, make_item):
     items = [make_item(0, "Sale ends Oct 1, 2099", y1=100, y2=130), make_item(1, "Buy", y1=140, y2=170)]
     crit = item_criteria(screen, items)
