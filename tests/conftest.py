@@ -53,7 +53,22 @@ if _absent("Quartz"):
     _stub("Quartz").kCGHIDEventTap = 0
 if not REAL_ACCESSIBILITY:
     _stub("ApplicationServices")
-for _windows_module in ("psutil", "uiautomation", "win32api", "win32con", "win32gui", "win32process"):
+for _windows_module in (
+    "psutil",
+    "uiautomation",
+    "win32api",
+    "win32con",
+    "win32gui",
+    "win32process",
+    # the helper's named pipe
+    "ntsecuritycon",
+    "pywintypes",
+    "win32event",
+    "win32file",
+    "win32pipe",
+    "win32security",
+    "winerror",
+):
     if _absent(_windows_module):
         _stub(_windows_module)
 
@@ -62,6 +77,7 @@ from PIL import Image  # noqa: E402
 
 from typesafe_computer_use import macos, windows  # noqa: E402
 from typesafe_computer_use.browser import cdp  # noqa: E402
+from typesafe_computer_use.helper import desk_lock as helper_desk  # noqa: E402
 from typesafe_computer_use.models import Item, Screen  # noqa: E402
 from typesafe_computer_use.parse import caption as parse_caption  # noqa: E402
 from typesafe_computer_use.parse import detect as parse_detect  # noqa: E402
@@ -107,6 +123,10 @@ def no_real_machine(monkeypatch):
     monkeypatch.setattr(cdp, "_get_json", refuse("the CDP HTTP endpoint"))
     monkeypatch.setattr(cdp.websocket, "create_connection", refuse("a CDP websocket"))
     _loopback_only(monkeypatch, refuse)
+
+    # The desktop mutex: a test that needs one passes its own lock. Creating the real one is
+    # the only call here that would touch Windows.
+    monkeypatch.setattr(helper_desk, "open_mutex", refuse("helper.desk_lock.open_mutex"))
 
     # The perception's models: hundreds of MB each, and no PyTorch at all on an Intel Mac. A test
     # that reads a capture patches the step that would load one, as `fake_models` does.

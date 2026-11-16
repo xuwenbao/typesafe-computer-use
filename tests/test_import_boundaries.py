@@ -63,7 +63,48 @@ def test_uia_roles_imports_nothing_but_the_standard_library():
     assert imported <= sys.stdlib_module_names
 
 
-@pytest.mark.parametrize("start", ["browser", "waa.tree", "waa.results"])
+def test_only_desk_lock_imports_win32event():
+    """The mutex needs pywin32. The gate and the service stay importable without it."""
+    users = set()
+    for path in (PACKAGE / "helper").glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in module_level(tree):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            if any(name.split(".")[0] == "win32event" for name in names):
+                users.add(path.stem)
+    assert users == {"desk_lock"}
+
+
+def function_imports(path: Path, fn_name: str) -> set[str]:
+    """The package modules one function imports, as dotted names relative to the package."""
+    here = path.relative_to(PACKAGE).with_suffix("").parts[:-1]
+    found = set()
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or node.name != fn_name:
+            continue
+        for child in ast.walk(node):
+            if isinstance(child, ast.ImportFrom) and child.level:
+                base = list(here[: len(here) - (child.level - 1)]) if child.level > 1 else list(here)
+                if child.module:
+                    base += child.module.split(".")
+                    found.add(".".join(base))
+                else:
+                    found.update(".".join([*base, alias.name]) for alias in child.names)
+    return found
+
+
+def test_the_mcp_command_imports_only_the_front():
+    assert function_imports(PACKAGE / "helper" / "cli.py", "serve_mcp") == {"helper.front"}
+
+
+@pytest.mark.parametrize("start", ["browser", "waa.tree", "waa.results", "helper.front"])
 def test_never_reaches_the_desktop_adapter(start):
     seen, todo = set(), [start]
     while todo:

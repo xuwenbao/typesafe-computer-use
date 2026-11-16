@@ -11,6 +11,7 @@ import pytest
 from typesafe_computer_use import macos, windows
 from typesafe_computer_use.browser import cdp
 from typesafe_computer_use.browser.cdp import Chrome, Session
+from typesafe_computer_use.helper import desk_lock as helper_desk
 
 
 @pytest.mark.parametrize(
@@ -56,6 +57,17 @@ def test_the_pointer_reads_as_mid_screen_so_no_test_aborts_by_chance():
 def test_an_unpatched_windows_call_refuses_instead_of_reaching_the_machine(touch):
     # Off Windows a stand-in module may refuse first, before the guard is reached.
     with pytest.raises(RuntimeError, match=r"real machine|unavailable on this OS"):
+        touch()
+
+
+@pytest.mark.parametrize(
+    "touch",
+    [
+        lambda: helper_desk.open_mutex(),
+    ],
+)
+def test_the_desktop_mutex_is_not_created_during_tests(touch):
+    with pytest.raises(RuntimeError, match="real machine"):
         touch()
 
 

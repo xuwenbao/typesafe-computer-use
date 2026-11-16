@@ -11,8 +11,8 @@ maintainer's own Mac, often while they are using it.
 The rule is about this machine's screen, input, and apps, not about running commands. Ask first,
 every time, before anything that would use or take them over:
 
-- running the project on this machine: `clicker`, `clicker-inspect`, or any script that imports
-  the platform adapter and calls it
+- running the project on this machine: `clicker`, `clicker-inspect`, `jev mcp`,
+  or any script that imports the platform adapter and calls it
 - anything that moves the mouse, presses keys, clicks, scrolls, or types
 - AppleScript or `osascript`, `open`, or any command that launches, activates, or quits an app
   or opens a URL or file

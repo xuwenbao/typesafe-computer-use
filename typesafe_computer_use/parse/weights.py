@@ -5,6 +5,11 @@ branch or a closed pull request cannot change what jev loads. The two weight fil
 against their SHA-256 once per process. `HF_HUB_OFFLINE=1` keeps every call off the network; a
 file that is not in the cache then fails with the command that fetches it.
 
+A frozen `jev.exe` with a `models` folder beside it reads that folder offline (see
+`packaging/windows/jev_entry.py`, which sets the cache before this module is imported). A file
+missing from that install says to run the installer again. A checkout still says to run
+`clicker-models fetch`.
+
 `icon_detect_v3` is OmniParser's YOLOv9-E detector, MIT licensed. The earlier `icon_detect` is
 Ultralytics-based and AGPL, and jev never reads it. The captioner is OmniParser's fine-tune of
 Florence-2, MIT licensed. Its weights are laid out for Microsoft's remote code, which current
@@ -76,15 +81,20 @@ FLORENCE = Weights(
 ALL = (DETECTOR, CAPTIONER, FLORENCE)
 
 
+def _missing(repo: str, filename: str) -> str:
+    """What to tell the user when a pinned file is not available."""
+    name = f"{repo}/{filename}"
+    if getattr(sys, "frozen", False):
+        return f"{name} is not in this install; the install is incomplete, run the installer again"
+    return f"{name} is not in the local cache and the hub cannot be reached; run `{FETCH_COMMAND}` once while online"
+
+
 def path(weights: Weights, filename: str) -> Path:
     """The local path of one pinned file, downloading it into the hub cache if it is not there yet."""
     try:
         local = Path(hf_hub_download(weights.repo, filename, revision=weights.revision))
     except LocalEntryNotFoundError as exc:
-        raise WeightsError(
-            f"{weights.repo}/{filename} is not in the local cache and the hub cannot be reached; "
-            f"run `{FETCH_COMMAND}` once while online"
-        ) from exc
+        raise WeightsError(_missing(weights.repo, filename)) from exc
     expected = weights.sha256.get(filename)
     if expected is not None:
         verify(local, expected, f"{weights.repo}/{filename}")

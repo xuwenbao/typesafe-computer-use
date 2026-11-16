@@ -20,3 +20,7 @@ No permission prompt is needed. What differs from macOS:
 - Only the primary monitor is captured. Command-[ (back) is Alt-Left.
 - When a policy blocks the installed `clicker.exe`, run `uv run python -m typesafe_computer_use`
   with the same arguments, or `... typesafe_computer_use inspect` for `clicker-inspect`.
+
+Other agents can use jev on Windows as MCP tools through the installed `jev.exe` (`jev mcp`).
+`jev-setup` carries the model files, so that install does not run `clicker-models fetch`; see
+[helper and MCP server](helper.md).

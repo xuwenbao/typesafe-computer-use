@@ -60,7 +60,15 @@ def test_a_file_with_another_digest_names_itself(tmp_path, monkeypatch):
 
 def test_a_file_missing_offline_says_how_to_fetch_it(tmp_path, monkeypatch):
     monkeypatch.setattr(weights, "hf_hub_download", hub(tmp_path, {}))
+    monkeypatch.delattr(weights.sys, "frozen", raising=False)
     with pytest.raises(weights.WeightsError, match="clicker-models fetch"):
+        weights.path(weights.DETECTOR, "icon_detect_v3/model.pt")
+
+
+def test_a_frozen_build_missing_a_model_says_to_reinstall(tmp_path, monkeypatch):
+    monkeypatch.setattr(weights, "hf_hub_download", hub(tmp_path, {}))
+    monkeypatch.setattr(weights.sys, "frozen", True, raising=False)
+    with pytest.raises(weights.WeightsError, match="run the installer again"):
         weights.path(weights.DETECTOR, "icon_detect_v3/model.pt")
 
 
