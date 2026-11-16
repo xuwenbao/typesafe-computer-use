@@ -1,11 +1,28 @@
+import json
 import os
+from dataclasses import replace
 from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
 
 from typesafe_computer_use.calls import Calls, MeteredWriter
-from typesafe_computer_use.config import custom_writer_endpoint, load_dotenv, writer_base_url
-from typesafe_computer_use.writer import WriterError, compose_url, make_writer, parse_json, provider, valid_url
+from typesafe_computer_use.config import custom_writer_endpoint, load_dotenv, writer_base_url, writer_timeout
+from typesafe_computer_use.models import AxNode
+from typesafe_computer_use.writer import (
+    ANSWER_SYSTEM,
+    DRIVE_SYSTEM,
+    WriterError,
+    _structured,
+    compose_answer,
+    compose_drive_step,
+    compose_url,
+    make_writer,
+    parse_json,
+    provider,
+    valid_url,
+)
 
 
 def test_dotenv_sets_only_missing_keys(tmp_path, monkeypatch):
@@ -137,6 +154,123 @@ def test_the_writer_reply_is_read_whether_or_not_it_came_plain(reply, expected):
 def test_a_reply_without_any_json_says_so():
     with pytest.raises(WriterError, match="without usable JSON"):
         parse_json("I am not able to help with that.")
+
+
+def test_writer_clients_time_out_and_retry_once(clean_env, monkeypatch):
+    seen: list[dict] = []
+
+    class FakeAnthropic:
+        def __init__(self, **kwargs):
+            seen.append(kwargs)
+            self.api_key = kwargs.get("api_key", "sk-ant-test")
+            self.auth_token = kwargs.get("auth_token")
+            self.base_url = kwargs.get("base_url") or "https://api.anthropic.com"
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            seen.append(kwargs)
+            self.base_url = kwargs["base_url"]
+
+    monkeypatch.setattr("typesafe_computer_use.writer.anthropic.Anthropic", FakeAnthropic)
+    monkeypatch.setattr("typesafe_computer_use.openai_writer.openai.OpenAI", FakeOpenAI)
+
+    clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    assert make_writer() is not None
+    clean_env.setenv("CLICKER_WRITER_BASE_URL", "http://localhost:9")
+    assert make_writer() is not None
+    clean_env.setenv("CLICKER_WRITER_API", "openai")
+    assert make_writer() is not None
+    assert seen == [
+        {"timeout": 120.0, "max_retries": 1},
+        {
+            "base_url": "http://localhost:9",
+            "api_key": "not-needed",
+            "auth_token": "not-needed",
+            "timeout": 120.0,
+            "max_retries": 1,
+        },
+        {"base_url": "http://localhost:9", "api_key": "not-needed", "timeout": 120.0, "max_retries": 1},
+    ]
+
+
+def test_the_writer_timeout_is_configurable(clean_env):
+    assert writer_timeout() == 120.0
+    clean_env.setenv("CLICKER_WRITER_TIMEOUT", "45")
+    assert writer_timeout() == 45.0
+    clean_env.setenv("CLICKER_WRITER_TIMEOUT", "0")
+    with pytest.raises(ValueError, match="greater than zero"):
+        writer_timeout()
+    clean_env.setenv("CLICKER_WRITER_TIMEOUT", "soon")
+    with pytest.raises(ValueError, match="number of seconds"):
+        writer_timeout()
+
+
+def test_a_timed_out_request_is_a_writer_error(clean_env):
+    def create(**kwargs):
+        raise openai.APITimeoutError(httpx.Request("POST", "http://localhost/v1/messages"))
+
+    writer = SimpleNamespace(messages=SimpleNamespace(create=create))
+    with pytest.raises(WriterError, match="the request failed"):
+        _structured(writer, "system", {"goal": "x"}, {"reason": {"type": "string"}}, 20)
+
+
+def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env, monkeypatch):
+    monkeypatch.setattr("typesafe_computer_use.writer.writer_vision", lambda: False)
+    sent: list[int] = []
+    drive = {
+        "reason": "The screen is idle.",
+        "action": "wait",
+        "item": "",
+        "text": "",
+        "key": "",
+        "modifier": "",
+        "achieved": False,
+    }
+    answer = {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
+
+    def create(**kwargs):
+        sent.append(kwargs["max_tokens"])
+        payload = drive if len(sent) == 1 else answer
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+    writer = SimpleNamespace(messages=SimpleNamespace(create=create))
+    compose_drive_step(writer, "save the number", screen, [], [], "stuck", [], [], None, 3, None)
+    compose_answer(writer, "save the number", screen, [], [], "stuck")
+    assert sent == [2048, 2048]
+
+
+def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
+    assert "press escape to close it, then press the shortcut" in DRIVE_SYSTEM
+    assert "press start, type its name into the search box" in DRIVE_SYSTEM
+    assert "Do not give_up while a next step would get closer" in DRIVE_SYSTEM
+    assert "Keep the reason to three sentences." in DRIVE_SYSTEM
+    assert "Do not click Previous or Next once per month." in DRIVE_SYSTEM
+    assert "focus_offscreen" in DRIVE_SYSTEM
+    assert "do not tell it to repeat a click" in ANSWER_SYSTEM
+    assert "click the heading that shows the month and year" in ANSWER_SYSTEM
+    assert "offscreen_controls lists controls on this page" in ANSWER_SYSTEM
+
+
+def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_env, monkeypatch):
+    monkeypatch.setattr("typesafe_computer_use.writer.writer_vision", lambda: False)
+    node = AxNode("AXTextField", "Record directory", 0, 0, 10, 10, True)
+    showing = replace(screen, offscreen=[node])
+    seen: list[dict] = []
+
+    def create(**kwargs):
+        seen.append(json.loads(kwargs["messages"][0]["content"][0]["text"]))
+        payload = (
+            {"reason": "next", "action": "wait", "item": "", "text": "", "key": "", "modifier": "", "achieved": False}
+            if len(seen) == 1
+            else {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
+        )
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+    writer = SimpleNamespace(messages=SimpleNamespace(create=create))
+    compose_drive_step(writer, "set the folder", showing, [], [], "stuck", [], [], None, 3, None)
+    compose_answer(writer, "set the folder", showing, [], [], "stuck")
+    assert seen[0]["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
+    assert seen[1]["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
 
 
 def test_valid_url():

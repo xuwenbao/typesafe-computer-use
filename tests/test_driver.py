@@ -5,11 +5,11 @@ from dataclasses import replace
 import pytest
 
 from typesafe_computer_use import config, macos, windows
-from typesafe_computer_use.driver import DEAD, KEYS, SHORTCUTS, _take, act
-from typesafe_computer_use.models import Field, Item, signature
+from typesafe_computer_use.driver import DEAD, KEYS, SHORTCUTS, _signature, _take, act
+from typesafe_computer_use.models import AxNode, Field, Item, signature
 from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.runner import UNCHANGED, RunState
-from typesafe_computer_use.writer import DriveStep, WriterError, checked
+from typesafe_computer_use.runner import UNCHANGED, RunState, screen_moved
+from typesafe_computer_use.writer import DriveStep, WriterError, _last_action, checked
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def machine(monkeypatch):
     monkeypatch.setattr(desktop, "click_at", click_at)
     monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
     monkeypatch.setattr(desktop, "press", lambda key, command=False: log.append(("press", key, command)))
-    monkeypatch.setattr(desktop, "scroll", lambda lines: log.append(("scroll", lines)))
+    monkeypatch.setattr(desktop, "scroll", lambda lines, at=None: log.append(("scroll", lines, at)))
     monkeypatch.setattr(desktop, "type_text", lambda text: log.append(("type", text)))
     monkeypatch.setattr(desktop, "clear_field", lambda: log.append(("clear",)))
     monkeypatch.setattr(desktop, "ax_focus", lambda ref: True)
@@ -87,14 +87,44 @@ def test_a_click_modifier_the_model_invented_clicks_nothing(screen, machine):
     assert machine == []
 
 
+def test_control_and_shift_are_the_selection_modifiers(screen, machine):
+    assert act(move("click", item="0", modifier="control"), screen, ITEMS) == "clicked 'Archive' with add"
+    assert act(move("click", item="0", modifier="shift"), screen, ITEMS) == "clicked 'Archive' with range"
+    assert _signature(move("click", item="0", modifier="ctrl"), ITEMS) == _signature(
+        move("click", item="0", modifier="add"), ITEMS
+    )
+    assert machine == [
+        ("click", (100.0, 60.0), "left", 1, "add"),
+        ("click", (100.0, 60.0), "left", 1, "range"),
+    ]
+
+
+def test_focus_offscreen_focuses_the_named_control(screen, machine, monkeypatch):
+    node = AxNode("AXTextField", "Record directory", 0, 0, 10, 10, True, ref="the-field")
+    showing = replace(screen, offscreen=[node])
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: machine.append(("focus", ref)) or True)
+    assert act(move("focus_offscreen", item="0"), showing, ITEMS) == "focused 'Record directory' (off-screen control)"
+    assert _signature(move("focus_offscreen", item="0"), ITEMS, showing.offscreen) == "focus_offscreen:Record directory"
+    assert machine == [("focus", "the-field")]
+
+    machine.clear()
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: False)
+    assert act(move("focus_offscreen", item="0"), showing, ITEMS) == (
+        "focus_offscreen refused: 'Record directory' did not take the focus"
+    )
+    assert act(move("focus_offscreen", item="4"), showing, ITEMS).startswith("focus_offscreen refused: there is no")
+    assert machine == []
+
+
 def test_only_listed_keys_are_pressed(screen, machine):
     assert act(move("key", key="tab"), screen, ITEMS) == "pressed tab"
+    assert act(move("key", key="start"), screen, ITEMS) == "pressed start"
     assert act(move("key", key="f4"), screen, ITEMS).startswith("key refused: 'f4'")
-    assert machine == [("press", "tab", False)]
+    assert machine == [("press", "tab", False), ("press", "start", False)]
 
 
 def test_only_listed_shortcuts_are_pressed(screen, machine):
-    assert act(move("shortcut", key="x"), screen, ITEMS) == "pressed command+x"
+    assert act(move("shortcut", key="x"), screen, ITEMS) == "pressed command+x (to the clipboard; the screen need not change)"
     assert act(move("shortcut", key="p"), screen, ITEMS) == "pressed command+p"
     assert act(move("shortcut", key="e"), screen, ITEMS) == "pressed command+e"
     assert act(move("shortcut", key="q"), screen, ITEMS).startswith("shortcut refused: 'q'")  # Quit
@@ -113,6 +143,34 @@ def test_a_missing_achieved_flag_defaults_to_false_and_a_missing_flag_still_fail
         checked({"reason": "because", "action": "wait"}, props)
 
 
+def test_a_cut_is_a_clipboard_shortcut_and_an_unchanged_screen_is_not_idle(screen, machine):
+    assert act(move("shortcut", key="c"), screen, ITEMS).endswith("(to the clipboard; the screen need not change)")
+    seen = signature(screen, ITEMS)
+    line = "driver: pressed command+x (to the clipboard; the screen need not change)"
+    quiet = RunState(last=seen, history=[line], compared=0, markable=False, quiet=True)
+    assert screen_moved(quiet, screen, ITEMS, lambda *_a, **_k: None) is True
+    assert quiet.idle == 0 and quiet.history == [line]
+    loud = RunState(last=seen, history=["driver: pressed tab"], compared=0, markable=True)
+    assert screen_moved(loud, screen, ITEMS, lambda *_a, **_k: None) is True
+    assert loud.idle == 1 and loud.history[0].endswith(UNCHANGED)
+    state = RunState(last=seen, seen=[(seen, "shortcut x")])
+    assert _take(move("shortcut", key="x"), screen, ITEMS, state).startswith("pressed command+x")
+    assert ("press", "x", True) in machine
+
+
+def test_a_scroll_aims_at_the_named_item_and_a_missing_item_scrolls_nothing(screen, machine):
+    assert act(move("scroll_down", item="0"), screen, ITEMS) == "scrolled down over 'Archive'"
+    assert act(move("scroll_up"), screen, ITEMS) == "scrolled up"
+    assert act(move("scroll_down", item="7"), screen, ITEMS) == "scroll_down refused: there is no item '7' on this screen"
+    assert machine == [("scroll", -10, (100.0, 60.0)), ("scroll", 10, None)]
+
+
+def test_the_last_action_says_whether_it_was_refused():
+    assert _last_action([]) == {"did": "", "refused": False}
+    assert _last_action(["driver: pressed command+x"])["refused"] is False
+    assert _last_action(["driver: type refused: no text field is focused"])["refused"] is True
+
+
 def test_an_action_that_already_did_nothing_here_is_not_taken_again(screen, machine):
     seen = signature(screen, ITEMS)
     state = RunState(last=seen, seen=[(seen, f"click 'Archive'{UNCHANGED}")])
@@ -127,7 +185,10 @@ def test_an_action_the_model_made_up_does_nothing(screen, machine):
 
 def test_every_key_the_driver_offers_is_one_both_adapters_press():
     for key in (*KEYS, *SHORTCUTS):
-        assert key in macos.KEYCODES and key in windows.VK
+        assert key in windows.VK
+        # `start` is Command-Space on a Mac, not its own key code.
+        if key != "start":
+            assert key in macos.KEYCODES
 
 
 def test_the_driver_is_off_unless_asked_for(monkeypatch):

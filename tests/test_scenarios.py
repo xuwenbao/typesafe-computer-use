@@ -1930,7 +1930,7 @@ def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of
     assert world.log == ["click:Doc01.docx", "command+x", "click:Archive", "command+v"]
     assert state.history == [
         "clicked 'Doc01.docx'",
-        "driver: pressed command+x",
+        "driver: pressed command+x (to the clipboard; the screen need not change)",
         "driver: clicked 'Archive'",
         "driver: pressed command+v",
     ]
@@ -1939,7 +1939,9 @@ def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of
     assert first["actions_taken"] == ["clicked 'Doc01.docx'"]
     assert first["why_the_classifier_stopped"] == STOPPED["nothing helps"]
     assert first["actions_left"] == 10
-    assert writer.drive_packets[1]["actions_taken"][-1] == "driver: pressed command+x"
+    assert (
+        writer.drive_packets[1]["actions_taken"][-1] == "driver: pressed command+x (to the clipboard; the screen need not change)"
+    )
     assert state.calls.count["driver"] == 4
     assert writer.packets[-1]["why_the_run_stopped"] == driver.STOPPED["driver done"]
     assert (tmp_path / "run" / "step-003-driver.json").is_file()
@@ -2135,3 +2137,73 @@ def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
     assert state.outcome == "driver failed"
     assert world.log == ["click:Doc01.docx"]
     assert state.history[1:] == [f"driver: {driver.UNUSABLE}"] * 2
+
+
+def test_l68_a_cut_that_leaves_the_screen_alone_does_not_stall_the_takeover(monkeypatch, tmp_path):
+    explorer = "File Explorer"
+    world = World(
+        [
+            Page(name="folder", items=["Doc01.docx", "Archive"], app=explorer, on={"click:Doc01.docx": "selected"}),
+            Page(name="selected", items=["Doc01.docx selected", "Archive"], app=explorer, on={"double:Archive": "inside"}),
+            Page(name="inside", items=["This folder is empty."], app=explorer, on={"command+v": "moved"}),
+            Page(name="moved", items=["Doc01.docx"], app=explorer),
+        ]
+    )
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "double_click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world,
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=6,
+    )
+
+    assert state.outcome == "driver done" and world.page.name == "moved"
+    assert world.log == ["click:Doc01.docx", "command+x", "double:Archive", "command+v"]
+    assert UNCHANGED not in state.history[1]
+    assert state.history[1] == "driver: pressed command+x (to the clipboard; the screen need not change)"
+    assert writer.drive_packets[1]["last_action"] == {"did": state.history[1], "refused": False}
+
+
+def test_l69_the_driver_scrolls_the_pane_an_item_is_in_until_the_target_shows(monkeypatch, tmp_path):
+    world = World(
+        [
+            Page(name="top", items=["Input / Codecs"], app="VLC", on={"scroll_down": "bottom"}),
+            Page(name="bottom", items=["Input / Codecs", "Record directory"], app="VLC", on={"click:Record directory": "set"}),
+            Page(name="set", items=["Record directory", "Downloads"], app="VLC"),
+        ]
+    )
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "scroll_down", "item": "Input / Codecs"},
+            {"action": "click", "item": "Record directory"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world,
+        scripted(("none", None)),
+        goal="set the recording folder",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=5,
+    )
+
+    assert state.outcome == "driver done" and world.page.name == "set"
+    assert world.log == ["scroll_down", "click:Record directory"]
+    assert state.history == ["driver: scrolled down over 'Input / Codecs'", "driver: clicked 'Record directory'"]
+    assert world.mouse  # the scroll was aimed at the pane's item, not the window center

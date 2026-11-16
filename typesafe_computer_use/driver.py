@@ -17,7 +17,7 @@ from dataclasses import asdict
 
 from .actions import WAIT_SECONDS, click_item, fill_field
 from .calls import MeteredWriter
-from .models import Item, Missed, Screen, signature
+from .models import AxNode, Item, Missed, Screen, signature
 from .parse.marks import marks
 from .perception import ocr_region
 from .platform_adapter import desktop
@@ -40,10 +40,14 @@ KEYS = (
     "backspace",
     "f2",
     "f5",
+    "start",
 )
 DENIED_SHORTCUTS = ("q", "w", "h", "m")  # quit, close, hide, minimize
+QUIET_SHORTCUTS = ("c", "x")  # copy and cut: the clipboard changes, the screen need not
 SHORTCUTS = tuple(ch for ch in string.ascii_lowercase + string.digits if ch not in DENIED_SHORTCUTS)
 MODIFIERS = ("", "add", "range")  # plain, add to the selection, extend the selection
+# The model names the key it means. Both are the selection modifiers the adapter already presses.
+MODIFIER_ALIASES = {"control": "add", "ctrl": "add", "command": "add", "cmd": "add", "shift": "range"}
 CLICKS = ("click", "double_click", "right_click")
 MAX_TEXT = 2000
 MAX_UNUSABLE = 2  # replies in a row that are not an action; the second ends the takeover
@@ -129,13 +133,16 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
             if move.action == "give_up":
                 state.outcome = "driver gave up"
                 return True
+            state.quiet = False
             what = _take(move, screen, items, state)
             record["did"] = what
+            clipboard = move.action == "shortcut" and move.key in QUIET_SHORTCUTS and what.startswith("pressed ")
             state.view = None
             state.history.append(PREFIX + what)
-            state.markable = move.action not in UNMARKED and not what.startswith("refused:")
+            state.markable = move.action not in UNMARKED and not what.startswith("refused:") and not clipboard
+            state.quiet = clipboard
             log(f"  did: {what}")
-            if _repeat(state, _signature(move, items), move.action == "wait", log):
+            if _repeat(state, _signature(move, items, screen.offscreen), move.action == "wait", log):
                 return True
         finally:
             prefix.with_name(prefix.name + "-driver.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -175,22 +182,37 @@ def _dead(state) -> set[str]:
     return {what.removesuffix(runner.UNCHANGED) for what in runner.tried_here(state) if what.endswith(runner.UNCHANGED)}
 
 
-def _signature(move: DriveStep, items: list[Item]) -> str:
+def _modifier(name: str) -> str:
+    """The selection modifier the adapter presses. A key the model named is read as that modifier."""
+    return MODIFIER_ALIASES.get(name, name)
+
+
+def _signature(move: DriveStep, items: list[Item], offscreen: list[AxNode] | None = None) -> str:
     """The action independent of how the attempt was worded, so a repeat is the same action."""
     if move.action in CLICKS:
         item = next((it for it in items if str(it.index) == move.item), None)
         name = item.text if item is not None else f"#{move.item}"
-        extra = f" {move.modifier}" if move.modifier else ""
+        modifier = _modifier(move.modifier)
+        extra = f" {modifier}" if modifier else ""
         return f"{move.action} {name!r}{extra}"
+    if move.action == "focus_offscreen":
+        nodes = offscreen or []
+        node = nodes[int(move.item)] if move.item.isdigit() and int(move.item) < len(nodes) else None
+        label = node.label if node is not None else f"#{move.item}"
+        return f"focus_offscreen:{label}"
     if move.action in ("key", "shortcut"):
         return f"{move.action} {move.key}"
+    if move.action in ("scroll_down", "scroll_up") and move.item:
+        item = next((it for it in items if str(it.index) == move.item), None)
+        name = item.text if item is not None else f"#{move.item}"
+        return f"{move.action} {name!r}"
     if move.action == "type":
         return f"type {move.text!r}"
     return move.action
 
 
 def _take(move: DriveStep, screen: Screen, items: list[Item], state) -> str:
-    if _signature(move, items) in _dead(state):
+    if _signature(move, items, screen.offscreen) in _dead(state):
         return DEAD
     return act(move, screen, items)
 
@@ -217,9 +239,14 @@ def _repeat(state, sig: str, waiting: bool, log) -> bool:
 
 def _target(move: DriveStep) -> str:
     if move.action in CLICKS:
-        return f"item={move.item}" + (f" modifier={move.modifier}" if move.modifier else "")
+        modifier = _modifier(move.modifier)
+        return f"item={move.item}" + (f" modifier={modifier}" if modifier else "")
+    if move.action == "focus_offscreen":
+        return f"item={move.item}"
     if move.action in ("key", "shortcut"):
         return f"key={move.key}"
+    if move.action in ("scroll_down", "scroll_up") and move.item:
+        return f"item={move.item}"
     if move.action == "type":
         return f"text={move.text!r}"
     return ""
@@ -253,35 +280,63 @@ def act(move: DriveStep, screen: Screen, items: list[Item]) -> str:
         if move.key not in SHORTCUTS:
             return f"shortcut refused: {move.key!r} is not one of {', '.join(SHORTCUTS)}"
         desktop.press(move.key, command=True)
-        return f"pressed command+{move.key}"
-    if move.action == "scroll_down":
-        desktop.scroll(-10)
-        return "scrolled down"
-    if move.action == "scroll_up":
-        desktop.scroll(10)
-        return "scrolled up"
+        line = f"pressed command+{move.key}"
+        if move.key in QUIET_SHORTCUTS:
+            return f"{line} (to the clipboard; the screen need not change)"
+        return line
+    if move.action in ("scroll_down", "scroll_up"):
+        return _scroll(move, screen, items)
+    if move.action == "focus_offscreen":
+        return _focus_offscreen(move, screen)
     if move.action == "wait":
         desktop.sleep_watching(WAIT_SECONDS)
         return "waited"
     return f"refused: {move.action!r} is not an action"
 
 
+def _scroll(move: DriveStep, screen: Screen, items: list[Item]) -> str:
+    """Scroll the pane an item sits in, or the window when the model names no item."""
+    lines = -10 if move.action == "scroll_down" else 10
+    point = None
+    name = ""
+    if move.item:
+        item = next((it for it in items if str(it.index) == move.item), None)
+        if item is None:
+            return f"{move.action} refused: there is no item {move.item!r} on this screen"
+        point = screen.to_points(item)
+        name = f" over {item.text!r}"
+    desktop.scroll(lines, at=point)
+    return f"scrolled {'down' if lines < 0 else 'up'}{name}"
+
+
+def _focus_offscreen(move: DriveStep, screen: Screen) -> str:
+    """Focus a control the app exposes but does not show, so the next capture has it in view."""
+    nodes = screen.offscreen
+    node = nodes[int(move.item)] if move.item.isdigit() and int(move.item) < len(nodes) else None
+    if node is None:
+        return f"focus_offscreen refused: there is no off-screen control {move.item!r}"
+    if desktop.ax_focus(node.ref):
+        return f"focused {node.label!r} (off-screen control)"
+    return f"focus_offscreen refused: {node.label!r} did not take the focus"
+
+
 def _click(move: DriveStep, screen: Screen, items: list[Item]) -> str:
     item = next((it for it in items if str(it.index) == move.item), None)
     if item is None:
         return f"{move.action} refused: there is no item {move.item!r} on this screen"
-    if move.modifier not in MODIFIERS:
+    modifier = _modifier(move.modifier)
+    if modifier not in MODIFIERS:
         return f"click refused: {move.modifier!r} is not a modifier"
     if move.action == "click" and not move.modifier:
         return click_item(item, screen)
     button = "right" if move.action == "right_click" else "left"
     count = 2 if move.action == "double_click" else 1
     try:
-        desktop.click_at(screen.to_points(item), button=button, count=count, modifier=move.modifier or None)
+        desktop.click_at(screen.to_points(item), button=button, count=count, modifier=modifier or None)
     except Missed as e:
         return f"{move.action} refused: {item.text!r} was not clicked, {e}"
     if move.action == "double_click":
         return f"double-clicked {item.text!r}"
     if move.action == "right_click":
         return f"right-clicked {item.text!r}"
-    return f"clicked {item.text!r} with {move.modifier}"
+    return f"clicked {item.text!r} with {modifier}"

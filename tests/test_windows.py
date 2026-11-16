@@ -111,6 +111,10 @@ def test_delete_is_an_extended_key():
     assert key_events("delete") == [(0x2E, KEYEVENTF_EXTENDEDKEY), (0x2E, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
 
 
+def test_start_is_the_windows_key():
+    assert key_events("start") == [(0x5B, KEYEVENTF_EXTENDEDKEY), (0x5B, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
+
+
 def test_text_is_typed_as_unicode_characters_not_keys():
     down, up = KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
     assert unicode_events("aé") == [(ord("a"), down), (ord("a"), up), (0xE9, down), (0xE9, up)]
@@ -185,6 +189,14 @@ def test_a_double_right_click_is_two_presses_of_the_right_button(monkeypatch):
     monkeypatch.setattr(windows, "_send", sent.append)
     windows.click_at((10.0, 10.0), button="right", count=2)
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_RIGHTDOWN, windows.MOUSEEVENTF_RIGHTUP] * 2
+
+
+def test_a_scroll_aimed_at_a_point_parks_the_pointer_there(monkeypatch):
+    moved = []
+    monkeypatch.setattr(windows, "_move", moved.append)
+    monkeypatch.setattr(windows, "_send", lambda event: None)
+    windows.scroll(-10, at=(30.2, 40.8))
+    assert moved == [(30, 41)]
 
 
 def test_a_click_that_landed_presses_and_releases(monkeypatch):

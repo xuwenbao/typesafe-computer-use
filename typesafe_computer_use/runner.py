@@ -96,6 +96,7 @@ class RunState:
     last: Signature | None = None  # the screen the last action was taken on
     compared: int = 0  # how many actions the run had taken when a capture was last compared with `last`
     markable: bool = False  # whether the last action's line may get UNCHANGED (see UNMARKED)
+    quiet: bool = False  # a clipboard shortcut: an unchanged screen is expected, so it is not idle
     seen: list[tuple[Signature, str | None]] = field(
         default_factory=list
     )  # every screen acted on, with the action; None for a wait
@@ -456,6 +457,7 @@ def resolve(
         state.outcome = "dry run"
         return False
 
+    state.quiet = False
     with phase(timing, "act"):
         what = perform(decision, screen, items, ctx)
     state.view = None
@@ -474,7 +476,9 @@ def screen_moved(state: RunState, screen: Screen, items: list[Item], log: Log) -
     been on before starts the count of stalls again (see `stuck`).
 
     The history line of an action that changed nothing says so, since only this capture knows it
-    and the line is all the classifier and the writer see of that action (see UNMARKED).
+    and the line is all the classifier and the writer see of that action (see UNMARKED). A
+    clipboard shortcut is `quiet`: the screen is not expected to show it, so an unchanged screen
+    neither marks the line nor counts as idle.
     """
     now = signature(screen, items)
     if now[:2] not in state.pages:
@@ -484,7 +488,8 @@ def screen_moved(state: RunState, screen: Screen, items: list[Item], log: Log) -
     state.compared = len(state.history)
     if state.last is not None:
         unchanged = same_screen(now, state.last)
-        state.idle = state.idle + 1 if unchanged else 0
+        if not (unchanged and state.quiet):
+            state.idle = state.idle + 1 if unchanged else 0
         if unchanged and acted and state.markable:
             state.history[-1] += UNCHANGED
     state.last = now

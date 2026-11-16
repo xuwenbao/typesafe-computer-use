@@ -78,13 +78,14 @@ VK = {
     "backspace": 0x08,
     "f2": 0x71,
     "f5": 0x74,
+    "start": 0x5B,  # VK_LWIN: the Start menu
     **{ch: ord(ch.upper()) for ch in "bdefghijklmnopqrtuwy"},
     **{d: ord(d) for d in "0123456789"},
 }
 VK_CONTROL = 0x11
 VK_SHIFT = 0x10
 VK_ALT = 0x12
-EXTENDED_KEYS = {0x2E, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28}  # Delete, the page keys, and the arrows
+EXTENDED_KEYS = {0x2E, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x5B}  # Delete, the page keys, the arrows, and Start
 COMMAND_CHORDS = {"[": (VK_ALT, VK["left"])}
 
 INPUT_MOUSE = 0
@@ -295,9 +296,9 @@ def clear_field() -> None:
     press("delete")
 
 
-def scroll(lines: int) -> None:
-    """Scroll events go to the view under the cursor, so park it over the frontmost window first."""
-    center = frontmost_window_center()
+def scroll(lines: int, at: tuple[float, float] | None = None) -> None:
+    """Scroll the view under the cursor. Park it on `at`, or over the frontmost window."""
+    center = at if at is not None else frontmost_window_center()
     if center is not None:
         _move((round(center[0]), round(center[1])))
     _send(_mouse(MOUSEEVENTF_WHEEL, wheel_delta(lines)))

@@ -40,7 +40,7 @@ def test_a_refused_press_falls_back_to_the_mouse(screen, calls, monkeypatch):
     monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
     item = Item(3, "Register Now", 1.0, 100.0, 100.0, 300.0, 140.0, role="link", source="ax")
     live = replace(screen, ax_refs={3: object()})
-    assert click_item(item, live) == "clicked 'Register Now' (accessibility press did not take)"
+    assert click_item(item, live) == "clicked 'Register Now'"
     assert calls == [("click", (100.0, 60.0))]
 
 

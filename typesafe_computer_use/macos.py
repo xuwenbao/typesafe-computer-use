@@ -168,6 +168,9 @@ def click_at(point: tuple[float, float], button: str = "left", count: int = 1, m
 
 def press(key: str, command: bool = False) -> None:
     check_abort()
+    # `start` is the Windows key. On a Mac the same action opens Spotlight, Command-Space.
+    if key == "start":
+        key, command = "space", True
     code = KEYCODES[key]
 
     def event(down: bool):
@@ -197,9 +200,9 @@ def clear_field() -> None:
     press("delete")
 
 
-def scroll(lines: int) -> None:
-    """Scroll events go to the view under the cursor, so park it over the frontmost window first."""
-    center = frontmost_window_center()
+def scroll(lines: int, at: tuple[float, float] | None = None) -> None:
+    """Scroll the view under the cursor. Park it on `at`, or over the frontmost window."""
+    center = at if at is not None else frontmost_window_center()
     check_abort()
     if center is not None:
         _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, center, Quartz.kCGMouseButtonLeft))

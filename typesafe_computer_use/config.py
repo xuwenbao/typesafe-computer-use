@@ -16,6 +16,7 @@ DEFAULT_HANDOFFS = 10  # each one is a call to the answer model, a few seconds a
 DEFAULT_WRITER_MODEL = "claude-haiku-4-5"
 DEFAULT_ANSWER_MODEL = "claude-sonnet-5"  # runs only when the classifier stops, on a screenshot: worth a stronger reader
 DEFAULT_DRIVER_STEPS = 20  # actions the driver may take once the classifier has stopped for good; each is one model call
+DEFAULT_WRITER_TIMEOUT = 120.0  # seconds; the client retries once, so a hung request ends within 240
 DEFAULT_BROWSER = "Google Chrome"
 ANTHROPIC_HOST = "api.anthropic.com"
 WRITER_APIS = ("anthropic", "openai")
@@ -120,6 +121,23 @@ def driver_steps() -> int:
 def driver_model() -> str:
     """The model the driver asks for each action. The answer model unless CLICKER_DRIVER_MODEL names another."""
     return os.environ.get("CLICKER_DRIVER_MODEL", "").strip() or answer_model()
+
+
+def writer_timeout() -> float:
+    """Seconds one writer request may take before it fails. CLICKER_WRITER_TIMEOUT, else 120.
+
+    The client retries once, so a hung request ends in twice this and the step can continue.
+    """
+    raw = os.environ.get("CLICKER_WRITER_TIMEOUT", "").strip()
+    if not raw:
+        return DEFAULT_WRITER_TIMEOUT
+    try:
+        timeout = float(raw)
+    except ValueError:
+        raise ValueError(f"CLICKER_WRITER_TIMEOUT must be a number of seconds, not {raw!r}") from None
+    if timeout <= 0:
+        raise ValueError(f"CLICKER_WRITER_TIMEOUT must be greater than zero, not {raw!r}")
+    return timeout
 
 
 def writer_reasoning() -> str | None:

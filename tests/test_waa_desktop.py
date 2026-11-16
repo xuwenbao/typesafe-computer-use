@@ -115,6 +115,7 @@ def test_keys_map_onto_pyautogui():
     desktop.press("a", command=True)
     desktop.press("tab")
     desktop.press("delete")
+    desktop.press("start")
     (code,) = desktop.actions
     assert code.splitlines() == [
         "pyautogui.press('enter')",
@@ -123,6 +124,7 @@ def test_keys_map_onto_pyautogui():
         "pyautogui.hotkey('ctrl', 'a')",
         "pyautogui.press('tab')",
         "pyautogui.press('backspace')",
+        "pyautogui.press('win')",
     ]
 
 
@@ -179,6 +181,12 @@ def test_a_wait_stands_alone_and_a_pause_between_inputs_stays_in_their_code():
         "pyautogui.press('enter')",
     ]
     ast.parse(desktop.actions[1])
+
+
+def test_a_scroll_aimed_at_an_item_uses_that_point():
+    desktop = over()
+    desktop.scroll(-10, at=(12.4, 99.6))
+    assert desktop.actions == ["pyautogui.scroll(-10, x=12, y=100)"]
 
 
 def test_with_no_tree_nothing_is_known_but_the_screenshot():

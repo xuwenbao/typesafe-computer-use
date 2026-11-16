@@ -146,7 +146,7 @@ class WAADesktop:
         else:
             # `delete` stays Backspace: that is the key the Mac adapter's Delete presses, and the
             # classifier's delete was aimed at it. The key named `backspace` is the same key here.
-            pressed = {"return": "enter", "escape": "esc", "delete": "backspace"}.get(key, key)
+            pressed = {"return": "enter", "escape": "esc", "delete": "backspace", "start": "win"}.get(key, key)
             self._do(f"pyautogui.press({pressed!r})")
 
     def type_text(self, text: str) -> None:
@@ -155,8 +155,11 @@ class WAADesktop:
     def clear_field(self) -> None:
         self._do("pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace')")
 
-    def scroll(self, lines: int) -> None:
-        """Scroll under the pointer, parked over the active window's center when the tree gives it."""
+    def scroll(self, lines: int, at: tuple[float, float] | None = None) -> None:
+        """Scroll under the pointer: on `at`, or over the active window's center when the tree gives it."""
+        if at is not None:
+            self._do(f"pyautogui.scroll({int(lines)}, x={round(at[0])}, y={round(at[1])})")
+            return
         window = self._current().window
         if window is None:
             self._do(f"pyautogui.scroll({int(lines)})")

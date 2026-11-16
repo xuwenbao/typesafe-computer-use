@@ -55,6 +55,14 @@ def test_click_releases_the_button_when_interrupted_after_mouse_down(input_event
     assert [event[0] for event in input_events] == ["move", "down", "up"]
 
 
+def test_start_opens_spotlight(input_events):
+    codes = []
+    macos.Quartz.CGEventCreateKeyboardEvent = lambda _, code, down: codes.append(code) or {"down": down}
+    macos.press("start")
+    assert codes == [macos.KEYCODES["space"], macos.KEYCODES["space"]]
+    assert input_events == [{"down": True, "flags": "command"}, {"down": False, "flags": "command"}]
+
+
 def test_a_key_goes_back_up_when_interrupted_after_key_down(input_events, monkeypatch):
     def post(event):
         input_events.append(dict(event))

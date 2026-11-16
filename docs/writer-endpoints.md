@@ -16,6 +16,7 @@ another endpoint.
 | `CLICKER_DRIVER_MODEL` | no | the model that takes over; defaults to the answer model, and uses its reasoning effort |
 | `CLICKER_WRITER_VISION` | no | `false` for an answer model that reads text only; defaults to `true` |
 | `CLICKER_WRITER_REASONING` | no | the reasoning effort the writer's calls ask an OpenAI-API model for, such as `none`; unset leaves it to the model |
+| `CLICKER_WRITER_TIMEOUT` | no | seconds one writer request may take before it is given up; defaults to `120`, and a request is retried once |
 | `CLICKER_ANSWER_REASONING` | no | the same for the answer model, such as `low` |
 
 ## Other models

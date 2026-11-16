@@ -74,9 +74,8 @@ def click_item(item: Item, screen: Screen) -> str:
         desktop.click_at(screen.to_points(item))
     except Missed as e:
         return f"{closed}click refused: {item.text!r} was not clicked, {e}"
-    if ref is None:
-        return f"{closed}clicked {item.text!r}"
-    return f"{closed}clicked {item.text!r} (accessibility press did not take)"
+    # The mouse click is the action either way. Whether it took is the next capture's to say.
+    return f"{closed}clicked {item.text!r}"
 
 
 def close_popup(popup: Popup) -> str:

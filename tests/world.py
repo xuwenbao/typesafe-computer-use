@@ -328,7 +328,9 @@ class World:
             return
         self.apply("enter" if name == "return" else name)
 
-    def scroll(self, lines: int) -> None:
+    def scroll(self, lines: int, at: tuple[float, float] | None = None) -> None:
+        if at is not None:
+            self.mouse.append(at)
         self.apply("scroll_down" if lines < 0 else "scroll_up")
 
     def type_text(self, text: str) -> None:
@@ -524,7 +526,13 @@ class FakeWriter:
             scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
             scripted = scripted(packet) if callable(scripted) else dict(scripted)
             numbers = {it["text"]: str(it["i"]) for it in packet["screen_items"]}
-            if scripted.get("action") in ("click", "double_click", "right_click"):
+            if scripted.get("item") and scripted.get("action") in (
+                "click",
+                "double_click",
+                "right_click",
+                "scroll_down",
+                "scroll_up",
+            ):
                 scripted["item"] = numbers.get(scripted["item"], scripted["item"])
             reply = {
                 "reason": "scripted",

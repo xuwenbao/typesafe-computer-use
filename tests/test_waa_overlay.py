@@ -80,6 +80,12 @@ def test_a_request_with_no_timeout_waits_ten_seconds_to_connect_and_three_minute
     assert "requests.Session.request = _request_with_timeout" in text
 
 
+def test_the_logon_script_starts_caddy_without_a_console():
+    text = (OVERLAY / "on-logon.ps1").read_text(encoding="utf-8")
+    assert "-NoNewWindow" not in text
+    assert "-WindowStyle Hidden" in text
+
+
 def test_start_client_uses_the_client_venv():
     text = (OVERLAY / "start_client.sh").read_text(encoding="utf-8")
     assert "/opt/waa/bin/python" in text

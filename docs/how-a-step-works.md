@@ -5,7 +5,7 @@ parts, and acts. This page follows it from the capture to the stop that ends a r
 
 ```
 screencapture ─► RapidOCR lines + YOLOv9 icon boxes, over the frontmost window
-                 ─► fuse: text inside an icon names it, an icon inside text goes
+                 ─► fuse: text inside an icon names it, unless the lines sit on more than one row; an icon inside text goes
                  ─► merge the remaining lines into blocks ─► drop lines echoing the goal
                  ─► Florence-2 describes each icon left without text, in English
 accessibility ─► actionable elements (role, label, frame), pruned to the display,
@@ -239,7 +239,9 @@ the rules err toward running on, never toward stopping a run that is making prog
 The same comparison feeds the history. A click, key, or scroll that left the screen as it was
 has "; the screen did not change" added to its line, so the classifier, the writer, and the
 driver all read which moves did not take, rather than just how many. Typing and waits are
-never marked: a field that took the text may show one line of difference or none.
+never marked: a field that took the text may show one line of difference or none. Copy and cut
+are not marked either, and an unchanged screen after one of them does not count as idle: the
+clipboard changes, and the screen need not.
 
 ## The answer
 
@@ -288,13 +290,15 @@ It picks from a whitelist, and code checks every move before anything reaches th
 
 | action | taken when |
 |---|---|
-| `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift |
+| `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift. `control`, `ctrl`, `command`, and `cmd` are read as `add`, and `shift` as `range` |
 | `double_click` | the same item, clicked twice, so a file or folder opens |
 | `right_click` | the same item, with the right button |
 | `type` | a text field is focused, the text is 1 to 2000 characters, and neither the field's label nor the text looks like a credential |
-| `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5 |
+| `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5, and Start, which opens the Start menu on Windows and Spotlight on a Mac |
 | `shortcut` | Cmd/Ctrl with a letter or a digit, except Q, W, H, and M, which quit, close, hide, or minimize |
-| `scroll_down`, `scroll_up`, `wait` | always |
+| `scroll_down`, `scroll_up` | the window under the pointer, or the pane of `item` when a number on this screen is given |
+| `focus_offscreen` | the number is a control on this page that is not in view; focusing it scrolls it into view, and the next screen shows it as the focused field |
+| `wait` | always |
 | `done`, `give_up` | stop |
 
 A refused move goes into the history as refused and costs a step. An action that already changed

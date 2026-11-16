@@ -1,9 +1,9 @@
 $scriptFolder = "\\host.lan\Data"
 $pythonServerPort = 5000
 
-# Start the Caddy reverse proxy in a non-blocking manner
+# jev: a hidden window, so this console can exit instead of staying up with the proxy.
 Write-Host "Running the Caddy reverse proxy from port 9222 to port 1337"
-Start-Process -NoNewWindow -FilePath "powershell" -ArgumentList "-Command", "caddy reverse-proxy --from :9222 --to :1337"
+Start-Process -WindowStyle Hidden -FilePath "powershell" -ArgumentList "-Command", "caddy reverse-proxy --from :9222 --to :1337"
 
 # jev: a windowless restarter. close_all kills a server that has an ordinary console title.
 $pythonw = "C:\Users\Docker\AppData\Local\Programs\Python\Python310\pythonw.exe"
