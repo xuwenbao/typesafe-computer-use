@@ -162,6 +162,7 @@ on the app, and the node and time caps bind first on a big tree: Notes and Chrom
 | key | does |
 |---|---|
 | `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one |
+| `open_item` | double-click that same item, to open a file, a folder, or a list entry a single click only selects. Offered only while the frontmost app is not the browser and the screen has no URL |
 | `press_offscreen` | `AXPress` a labelled control the app exposes but does not show, chosen from the off-screen list; offered only when that list is not empty, and a refusal counts as a no-op since there is no pixel to fall back on |
 | `use_browser` | go to the browser, showing the website the `site` answer names: `none` brings it forward on the page already open there, a `SITES` catalog key opens that URL through AppleScript `open location`, and `other` opens a URL the writer proposes |
 | `type_text` | the writer composes the string; it is set on the focused element through the accessibility tree, with keystrokes as the fallback when the value does not read back, and a TypeSafe Noul then checks the field's value; text the writer submits gets Return at once instead, and the next screen is the check |
@@ -235,6 +236,11 @@ out of the comparison, since it drifts between two captures of one screen.
 When more than that changes every step, a run that is getting nowhere runs to `--steps`:
 the rules err toward running on, never toward stopping a run that is making progress.
 
+The same comparison feeds the history. A click, key, or scroll that left the screen as it was
+has "; the screen did not change" added to its line, so the classifier, the writer, and the
+driver all read which moves did not take, rather than just how many. Typing and waits are
+never marked: a field that took the text may show one line of difference or none.
+
 ## The answer
 
 When the classifier stops, the writer reads the screen it stopped on
@@ -255,7 +261,8 @@ capture that stopped such a run at 0.39, the same classifier picks the filter at
 when there is something only you can say ("13 or 15 inch?"); your reply joins the
 state for the rest of the run, the writer reads the screen again with it, and the app
 you were in comes back to the front. An empty reply declines, and the answer stands.
-The writer never picks a click: every action is still the classifier's.
+The writer never picks a click: every action is still the classifier's, until the takeover
+below.
 
 The exchange cannot go round on itself. A focus the classifier takes no action under
 leaves the answer it came with standing, without a second reading of the same screen.
@@ -265,6 +272,41 @@ did not free the classifier, so the run ends `stuck`, and the writer's answer sa
 the agent could not do. On the Chrome tasks this cutoff was measured against, every run that stalled a third time on
 the same pages failed anyway, up to 210 s later, and no solved run stalled more than twice.
 A `done` the writer does not see on the screen is sent back like any other stop.
+
+## The takeover
+
+Some stops have no way back: a third stall, a focus the classifier takes no action under,
+the hand-offs spent, a composite control (a time picker, a calendar, a canvas) the classifier
+cannot score with confidence. With `CLICKER_DRIVER` on, such a run is not over while the
+writer says the goal is not reached and steps remain. A stronger model, `CLICKER_DRIVER_MODEL`
+(the answer model by default), takes over and picks one action per capture, with the whole
+story: the goal, every action taken with its "did not change" marks, every earlier stop and
+the focus given at it, why the classifier stopped, the text of the earlier screens, and the
+marked capture with its numbered items.
+
+It picks from a whitelist, and code checks every move before anything reaches the machine:
+
+| action | taken when |
+|---|---|
+| `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift |
+| `double_click` | the same item, clicked twice, so a file or folder opens |
+| `right_click` | the same item, with the right button |
+| `type` | a text field is focused, the text is 1 to 2000 characters, and neither the field's label nor the text looks like a credential |
+| `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5 |
+| `shortcut` | Cmd/Ctrl with a letter or a digit, except Q, W, H, and M, which quit, close, hide, or minimize |
+| `scroll_down`, `scroll_up`, `wait` | always |
+| `done`, `give_up` | stop |
+
+A refused move goes into the history as refused and costs a step. An action that already changed
+nothing on this screen is refused without being taken again, and two repeats of an action already
+taken on this screen stall the takeover the way they stall the classifier, which is what stops a
+loop through two screens. A reply that is not an action is recorded and the takeover continues;
+the second such reply in a row ends it. A missing `achieved` counts as false. The takeover ends on
+`done` or `give_up`, on the same stall rules as the classifier, after `CLICKER_DRIVER_STEPS`
+(20) actions, or at `--steps`, whichever comes first; then the writer answers once more on
+the final screen. The driver's history lines start with `driver: `, and each of its steps
+leaves a `step-NNN-driver.json` beside the capture. On WindowsAgentArena its actions spend
+the same `max_steps` as the classifier's.
 
 ## Who did the work
 

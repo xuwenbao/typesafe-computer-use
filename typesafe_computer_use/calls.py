@@ -10,7 +10,8 @@ from types import SimpleNamespace
 
 CLASSIFIER = "classifier"
 WRITER = "writer"
-MODELS = (CLASSIFIER, WRITER)
+DRIVER = "driver"  # the writer's client, asked for actions once the classifier stopped for good
+MODELS = (CLASSIFIER, WRITER, DRIVER)
 
 
 @dataclass
@@ -79,8 +80,9 @@ class Calls:
         return {model: asdict(usage) for model, usage in self.usage.items()}
 
     def line(self) -> str:
-        """One log line: `calls: classifier 12 (86%, 3.1s)  writer 2 (14%, 8.0s)`."""
-        parts = [f"{model} {self.count[model]} ({(self.share(model) or 0):.0%}, {self.seconds[model]:.1f}s)" for model in MODELS]
+        """One log line: `calls: classifier 12 (86%, 3.1s)  writer 2 (14%, 8.0s)`, and the driver once it was asked."""
+        shown = [model for model in MODELS if model != DRIVER or self.count[DRIVER]]
+        parts = [f"{model} {self.count[model]} ({(self.share(model) or 0):.0%}, {self.seconds[model]:.1f}s)" for model in shown]
         return "calls: " + "  ".join(parts)
 
 
@@ -108,19 +110,27 @@ class MeteredClassifier:
 
 
 class MeteredWriter:
-    """The Anthropic client, counting each request. `messages.create` is the only call the package makes."""
+    """The Anthropic client, counting each request. `messages.create` is the only call the package makes.
 
-    def __init__(self, client, calls: Calls):
+    `role` is the count a request lands in: the writer's, or the driver's for the same client.
+    """
+
+    def __init__(self, client, calls: Calls, role: str = WRITER):
         self._client = client
         self._calls = calls
+        self._role = role
         self.messages = SimpleNamespace(create=self._create)
 
+    def as_driver(self) -> MeteredWriter:
+        """The same client, counting its requests as the driver's."""
+        return MeteredWriter(self._client, self._calls, DRIVER)
+
     def _create(self, **request):
-        with self._calls.record(WRITER):
+        with self._calls.record(self._role):
             reply = self._client.messages.create(**request)
         usage = getattr(reply, "usage", None)
         self._calls.used(
-            _model(request.get("model"), WRITER),
+            _model(request.get("model"), self._role),
             input_tokens=_tokens(usage, "input_tokens") + _tokens(usage, "cache_creation_input_tokens"),
             cached_input_tokens=_tokens(usage, "cache_read_input_tokens"),
             output_tokens=_tokens(usage, "output_tokens"),

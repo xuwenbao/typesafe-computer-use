@@ -15,6 +15,7 @@ DEFAULT_DELAY = 2.0
 DEFAULT_HANDOFFS = 10  # each one is a call to the answer model, a few seconds and a few cents
 DEFAULT_WRITER_MODEL = "claude-haiku-4-5"
 DEFAULT_ANSWER_MODEL = "claude-sonnet-5"  # runs only when the classifier stops, on a screenshot: worth a stronger reader
+DEFAULT_DRIVER_STEPS = 20  # actions the driver may take once the classifier has stopped for good; each is one model call
 DEFAULT_BROWSER = "Google Chrome"
 ANTHROPIC_HOST = "api.anthropic.com"
 WRITER_APIS = ("anthropic", "openai")
@@ -98,6 +99,27 @@ def writer_vision() -> bool:
 
 def answer_model() -> str:
     return os.environ.get("CLICKER_ANSWER_MODEL", DEFAULT_ANSWER_MODEL)
+
+
+def driver_steps() -> int:
+    """The actions the driver may take when the classifier stops short of the goal for good: 0 while
+    CLICKER_DRIVER is off, else CLICKER_DRIVER_STEPS or DEFAULT_DRIVER_STEPS."""
+    raw = os.environ.get("CLICKER_DRIVER", "").strip().lower() or "false"
+    if raw not in ("true", "false", "1", "0", "yes", "no"):
+        raise ValueError(f"CLICKER_DRIVER must be true or false, not {raw!r}")
+    if raw not in ("true", "1", "yes"):
+        return 0
+    steps = os.environ.get("CLICKER_DRIVER_STEPS", "").strip()
+    if not steps:
+        return DEFAULT_DRIVER_STEPS
+    if not steps.isdigit():
+        raise ValueError(f"CLICKER_DRIVER_STEPS must be a whole number, not {steps!r}")
+    return int(steps)
+
+
+def driver_model() -> str:
+    """The model the driver asks for each action. The answer model unless CLICKER_DRIVER_MODEL names another."""
+    return os.environ.get("CLICKER_DRIVER_MODEL", "").strip() or answer_model()
 
 
 def writer_reasoning() -> str | None:

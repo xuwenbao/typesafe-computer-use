@@ -53,10 +53,38 @@ BROWSER_EXES = {"Google Chrome": "chrome", "Microsoft Edge": "msedge", "Firefox"
 
 # Virtual keys for the keys the actions press. macOS's Command becomes Control, except Command-[,
 # a browser's Back, which is Alt-Left on Windows.
-VK = {"return": 0x0D, "tab": 0x09, "escape": 0x1B, "a": 0x41, "delete": 0x2E, "[": 0xDB, "left": 0x25}
+VK = {
+    "return": 0x0D,
+    "tab": 0x09,
+    "escape": 0x1B,
+    "delete": 0x2E,
+    "[": 0xDB,
+    "up": 0x26,
+    "down": 0x28,
+    "left": 0x25,
+    "right": 0x27,
+    "pageup": 0x21,
+    "pagedown": 0x22,
+    "home": 0x24,
+    "end": 0x23,
+    "a": 0x41,
+    "c": 0x43,
+    "f": 0x46,
+    "s": 0x53,
+    "v": 0x56,
+    "x": 0x58,
+    "z": 0x5A,
+    "space": 0x20,
+    "backspace": 0x08,
+    "f2": 0x71,
+    "f5": 0x74,
+    **{ch: ord(ch.upper()) for ch in "bdefghijklmnopqrtuwy"},
+    **{d: ord(d) for d in "0123456789"},
+}
 VK_CONTROL = 0x11
+VK_SHIFT = 0x10
 VK_ALT = 0x12
-EXTENDED_KEYS = {0x2E, 0x25}  # Delete and the arrows live on the extended keypad
+EXTENDED_KEYS = {0x2E, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28}  # Delete, the page keys, and the arrows
 COMMAND_CHORDS = {"[": (VK_ALT, VK["left"])}
 
 INPUT_MOUSE = 0
@@ -66,6 +94,8 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_WHEEL = 0x0800
 
 
@@ -215,19 +245,39 @@ def _move(point: tuple[int, int]) -> None:
     time.sleep(EVENT_GAP)
 
 
-def click_at(point: tuple[float, float]) -> None:
+def click_at(point: tuple[float, float], button: str = "left", count: int = 1, modifier: str | None = None) -> None:
     """Move, read back where the cursor landed, then press and release there.
 
     A cursor that did not reach the target (another desktop has the input, or the point is off
-    every monitor) means the click would land somewhere unknown, so nothing is pressed.
+    every monitor) means the click would land somewhere unknown, so nothing is pressed. `button`
+    is left or right, `count` is 2 for a double-click, and `modifier` is `add` (Control) or
+    `range` (Shift), held around the click and released even when the click fails.
     """
     target = (round(point[0]), round(point[1]))
     _move(target)
     actual = mouse_location()
     if not landed(target, actual):
         raise Missed(f"the cursor went to {actual}, not {target}")
-    _send(_mouse(MOUSEEVENTF_LEFTDOWN))
-    _send(_mouse(MOUSEEVENTF_LEFTUP))
+    if button == "left" and count == 1 and not modifier:
+        _send(_mouse(MOUSEEVENTF_LEFTDOWN))
+        _send(_mouse(MOUSEEVENTF_LEFTUP))
+        return
+    down, up = {
+        "left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+    }[button]
+    vk = {"add": VK_CONTROL, "range": VK_SHIFT}.get(modifier or "")
+    if modifier and vk is None:
+        raise ValueError(f"unknown modifier {modifier!r}")
+    try:
+        if vk is not None:
+            _send(_key(vk=vk))
+        for _ in range(count):
+            _send(_mouse(down))
+            _send(_mouse(up))
+    finally:
+        if vk is not None:
+            _send(_key(vk=vk, flags=KEYEVENTF_KEYUP))
 
 
 def press(key: str, command: bool = False) -> None:

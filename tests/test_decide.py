@@ -50,6 +50,11 @@ def test_decision_ignores_an_offscreen_answer_for_any_other_kind():
     assert not d.pressing_offscreen and d.chosen == "3" and d.confidence == 0.8
 
 
+def test_kind_criteria_offers_a_double_click_only_on_the_desktop():
+    assert "open_item" not in kind_criteria("Google Chrome", None)
+    assert "open_item" in kind_criteria("Google Chrome", None, desktop=True)
+
+
 def test_kind_criteria_offers_press_offscreen_only_when_there_are_offscreen_controls():
     assert "press_offscreen" not in kind_criteria("Google Chrome", None)
     assert "press_offscreen" in kind_criteria("Google Chrome", None, offscreen=True)

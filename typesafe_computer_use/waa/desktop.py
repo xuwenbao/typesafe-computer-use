@@ -6,8 +6,9 @@ action as a step of its own and hands back only the last observation. A wait wit
 it is `WAIT`; a pause between two inputs of one step is a `time.sleep` in their code.
 
 The tree is fetched by jev (see `tree.py`), started as the observation arrives, and a step's
-actions are handed over only once that fetch has finished. Nothing in the VM can be pressed
-through the tree, so every click is a pointer click. Text reaches the code only through `repr()`.
+actions are handed over only once that fetch has finished. A desktop icon opens through its
+default action. Every other click is a pointer click: a folder window's row selects on a click,
+and opening it would skip a move. Text reaches the code only through `repr()`.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ TYPE_INTERVAL = 0.02
 WAIT = "WAIT"
 # Product name to the executable `start` launches. `start` brings a running instance forward.
 BROWSERS = {"Google Chrome": "chrome", "Microsoft Edge": "msedge"}
+# The desktop's window title. A folder window is named for the folder, and its rows stay clicks.
+DESKTOP_TITLES = {"program manager", "desktop"}
 
 
 class WAADesktop:
@@ -121,9 +124,19 @@ class WAADesktop:
     def accessibility_trusted(self) -> bool:
         return True
 
-    def click_at(self, point: tuple[float, float]) -> None:
-        x, y = point
-        self._do(f"pyautogui.click({round(x)}, {round(y)})")
+    def click_at(self, point: tuple[float, float], button: str = "left", count: int = 1, modifier: str | None = None) -> None:
+        x, y = round(point[0]), round(point[1])
+        key = {"add": "ctrl", "range": "shift"}.get(modifier or "")
+        if modifier and key is None:
+            raise ValueError(f"unknown modifier {modifier!r}")
+        click = f"pyautogui.click({x}, {y}, clicks={count}, button={button!r})"
+        if key:
+            # keyUp runs after the click even when the click line is what the VM executes as one script.
+            self._do(f"pyautogui.keyDown({key!r}); {click}; pyautogui.keyUp({key!r})")
+        elif count != 1 or button != "left":
+            self._do(click)
+        else:
+            self._do(f"pyautogui.click({x}, {y})")
 
     def press(self, key: str, command: bool = False) -> None:
         if command and key == "[":
@@ -131,6 +144,8 @@ class WAADesktop:
         elif command:
             self._do(f"pyautogui.hotkey('ctrl', {key!r})")
         else:
+            # `delete` stays Backspace: that is the key the Mac adapter's Delete presses, and the
+            # classifier's delete was aimed at it. The key named `backspace` is the same key here.
             pressed = {"return": "enter", "escape": "esc", "delete": "backspace"}.get(key, key)
             self._do(f"pyautogui.press({pressed!r})")
 
@@ -194,7 +209,17 @@ class WAADesktop:
         return reading.found, reading.offscreen, reading.capped
 
     def ax_press(self, ref) -> bool:
-        return False
+        """Open a desktop list item by its default action. A single click only selects it."""
+        if not isinstance(ref, dict) or ref.get("role") != "AXRow":
+            return False
+        name = (ref.get("name") or "").strip()
+        if not name:
+            return False
+        reading = self._current()
+        if reading.app != "explorer" or reading.title.strip().lower() not in DESKTOP_TITLES:
+            return False
+        self._do(_open_list_item(name))
+        return True
 
     def ax_focus(self, ref) -> bool:
         return False
@@ -204,6 +229,22 @@ class WAADesktop:
 
     def ax_value(self, ref) -> str | None:
         return None
+
+
+def _open_list_item(name: str) -> str:
+    """VM code that runs the named list item's legacy default action. `name` is one Python literal."""
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "from comtypes.gen import UIAutomationClient as api\n"
+        "_auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "_root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"_name = _auto.CreatePropertyCondition(30005, {name!r})\n"  # UIA_NamePropertyId
+        "_kind = _auto.CreatePropertyCondition(30003, 50007)\n"  # UIA_ControlTypePropertyId, ListItem
+        "_item = _root.FindFirst(4, _auto.CreateAndCondition(_name, _kind))\n"  # TreeScope_Descendants
+        "_legacy = _item.GetCurrentPattern(10018).QueryInterface(api.IUIAutomationLegacyIAccessiblePattern)\n"
+        "_legacy.DoDefaultAction()"
+    )
 
 
 def _launch(exe: str, url: str | None) -> str:

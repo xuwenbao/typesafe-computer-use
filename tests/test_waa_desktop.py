@@ -94,6 +94,19 @@ def test_the_tree_is_fetched_before_the_actions_are_handed_over():
     assert order == ["tree", "actions"]
 
 
+def test_a_double_click_and_a_modified_click_are_one_pyautogui_statement():
+    desktop = over()
+    desktop.click_at((10, 20), count=2)
+    desktop.click_at((10, 20), button="right")
+    desktop.click_at((10, 20), modifier="add")
+    (code,) = desktop.actions
+    assert code.splitlines() == [
+        "pyautogui.click(10, 20, clicks=2, button='left')",
+        "pyautogui.click(10, 20, clicks=1, button='right')",
+        "pyautogui.keyDown('ctrl'); pyautogui.click(10, 20, clicks=1, button='left'); pyautogui.keyUp('ctrl')",
+    ]
+
+
 def test_keys_map_onto_pyautogui():
     desktop = over()
     desktop.press("return")
@@ -180,6 +193,30 @@ def test_with_no_tree_nothing_is_known_but_the_screenshot():
     assert desktop.display_scale(image) == 1.0
     desktop.scroll(5)
     assert desktop.actions == ["pyautogui.scroll(5)"]
+
+
+def _explorer(title: str) -> dict:
+    return {
+        "app": r"C:\Windows\explorer.exe",
+        "pid": 4,
+        "window": {"name": title, "x": 0, "y": 0, "w": 1440, "h": 900},
+        "nodes": [],
+    }
+
+
+def test_a_desktop_list_item_opens_by_its_default_action():
+    desktop = over(None, None, _explorer("Program Manager"))
+    assert desktop.ax_press({"role": "AXRow", "name": "Recycle Bin"}) is True
+    code = desktop.actions[0]
+    ast.parse(code)
+    assert "DoDefaultAction" in code
+    assert repr("Recycle Bin") in code
+
+
+def test_a_folder_window_list_item_stays_a_click():
+    desktop = over(None, None, _explorer("Documents"))
+    assert desktop.ax_press({"role": "AXRow", "name": "Doc01.docx"}) is False
+    assert desktop.actions == []
 
 
 def test_nothing_can_be_pressed_through_the_tree(tmp_path, monkeypatch):

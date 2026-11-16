@@ -282,24 +282,36 @@ class World:
 
     # ----- the machine ---------------------------------------------------------------------
 
-    def click_at(self, point: tuple[float, float]) -> None:
+    def click_at(self, point: tuple[float, float], button: str = "left", count: int = 1, modifier: str | None = None) -> None:
         """A synthetic click, in screen points: find the cell it lands on and press that item.
 
         A page with a `covered_by` overlay takes every mouse click itself, wherever it was aimed:
         that is a cookie banner over the content. A press through accessibility still reaches the
-        element under it, which is the whole point of pressing rather than clicking.
+        element under it, which is the whole point of pressing rather than clicking. A double-click
+        is `double:`, a right-click is `right:`, and a modifier is prefixed (`add+click:`).
         """
         self.mouse.append(point)
         if self.page.covered_by is not None:
-            self.apply(f"click:{self.page.covered_by}")
+            self.apply(self._pointer(f"click:{self.page.covered_by}", button, count, modifier))
             return
         px, py = point[0] * SCALE, point[1] * SCALE
         cells = self.cells()
         hit = next((c for c in cells if c.box[0] <= px <= c.box[2] and c.box[1] <= py <= c.box[3]), None)
         if hit is not None and self.page.popup is not None and hit.text in self.page.under_popup:
-            self.apply(f"click:{self.page.popup}")  # the popup is in front of it and takes the click
+            self.apply(self._pointer(f"click:{self.page.popup}", button, count, modifier))  # the popup is in front
             return
-        self.apply(self.click_action(hit, cells) if hit is not None else "click:nothing")
+        action = self.click_action(hit, cells) if hit is not None else "click:nothing"
+        self.apply(self._pointer(action, button, count, modifier))
+
+    @staticmethod
+    def _pointer(action: str, button: str, count: int, modifier: str | None) -> str:
+        kind, _, target = action.partition(":")
+        if button == "right":
+            kind = "right"
+        elif count > 1:
+            kind = "double"
+        named = f"{kind}:{target}" if target else kind
+        return f"{modifier}+{named}" if modifier else named
 
     def ax_press(self, ref: object) -> bool:
         if not isinstance(ref, Ref) or self._refs.get(ref.name) is not ref:
@@ -310,6 +322,9 @@ class World:
     def press(self, name: str, command: bool = False) -> None:
         if command and name == "[":
             self.apply("back")
+            return
+        if command:
+            self.apply(f"command+{name}")
             return
         self.apply("enter" if name == "return" else name)
 
@@ -409,7 +424,7 @@ class FakeTypeSafe:
     def _answers(self, state: dict, questions: dict, kind: str, target, confidence: float) -> dict:
         answers = {"kind": _answer(kind, confidence), "site": _answer(target if kind == "use_browser" else "none", confidence)}
         if "item" in questions:
-            answers["item"] = _answer(self._item_key(state, target) if kind == "click_item" else "0", confidence)
+            answers["item"] = _answer(self._item_key(state, target) if kind in ("click_item", "open_item") else "0", confidence)
         if "offscreen" in questions:
             key = self._offscreen_key(state, target) if kind == "press_offscreen" else "0"
             answers["offscreen"] = _answer(key, confidence)
@@ -465,15 +480,23 @@ class FakeWriter:
     of the reply's fields, or a callable(packet) returning one. {"focus": ...} sends the classifier
     back, {"question": ...} asks the user, and either says the goal is not reached yet. Once the
     script is spent, every stop is the goal achieved, as it is with no script at all.
+
+    `drives` scripts the driver, one entry per action asked for: a dict of the reply's fields, or a
+    callable(packet) returning one. A click may name its item by text; it becomes the number that
+    item has on the screen the packet shows. Once the script is spent, the driver gives up.
     """
 
-    def __init__(self, text: str = "", url: str = "", reviews: list | None = None, submit: bool = False):
+    def __init__(
+        self, text: str = "", url: str = "", reviews: list | None = None, submit: bool = False, drives: list | None = None
+    ):
         self.requests: list[dict] = []
         self.text = text
         self.submit = submit
         self.url = url
         self.reviews = list(reviews or [])
+        self.drives = list(drives or [])
         self.packets: list[dict] = []  # the packet of every answer asked for, in order
+        self.drive_packets: list[dict] = []  # the packet of every driver action asked for, in order
         self.messages = SimpleNamespace(create=self._create)
 
     def _create(self, **request):
@@ -496,6 +519,22 @@ class FakeWriter:
                 "question": "",
                 **scripted,
             }
+        elif asked == {"reason", "action", "item", "text", "key", "modifier", "achieved"}:
+            self.drive_packets.append(packet)
+            scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
+            scripted = scripted(packet) if callable(scripted) else dict(scripted)
+            numbers = {it["text"]: str(it["i"]) for it in packet["screen_items"]}
+            if scripted.get("action") in ("click", "double_click", "right_click"):
+                scripted["item"] = numbers.get(scripted["item"], scripted["item"])
+            reply = {
+                "reason": "scripted",
+                "item": "",
+                "text": "",
+                "key": "",
+                "modifier": "",
+                "achieved": False,
+                **scripted,
+            }
         else:
             raise AssertionError(f"the writer was asked for {sorted(asked)}")
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(reply))])
@@ -513,6 +552,7 @@ def drive(
     noul: float = 0.95,
     replies: list[str] | None = None,
     handoffs: int | None = None,
+    driver_steps: int = 0,
 ) -> RunState:
     """Run the real loop against the world until it stops itself. `world.fake` holds the classifier.
 
@@ -523,7 +563,7 @@ def drive(
     fake = FakeTypeSafe(policy, noul)
     world.fake = fake
     monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)
-    cfg = RunConfig(goal=goal, out=tmp_path / "run", act=True, steps=steps, delay=0)
+    cfg = RunConfig(goal=goal, out=tmp_path / "run", act=True, steps=steps, delay=0, driver_steps=driver_steps)
     if handoffs is not None:
         cfg.handoffs = handoffs
     client = writer or FakeWriter()

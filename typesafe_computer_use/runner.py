@@ -9,6 +9,7 @@ from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
+from . import driver
 from .actions import Context, perform
 from .calls import Calls, MeteredClassifier, MeteredWriter
 from .config import DEFAULT_DELAY, DEFAULT_HANDOFFS, DEFAULT_MIN_CONFIDENCE, DEFAULT_STEPS, MAX_OPTIONS
@@ -28,6 +29,11 @@ MAX_REPEATS = 2  # consecutive actions already taken on the same screen earlier 
 MAX_STALLS = 3  # stalls with no new page between them; the last is final, since two focuses from the writer did not free the run
 EARLIER_LINES = 600  # lines of text from the screens before the last one that the answer may also be read from
 MAX_QUESTIONS = 3  # questions the writer may put to the user in one run; an empty reply ends the asking sooner
+UNCHANGED = "; the screen did not change"  # added to an action's line once the next capture shows it changed nothing
+# Actions whose line never gets UNCHANGED. A wait is meant to leave the screen alone. Typing reads
+# the field back and says what it found, and a typed value is one new line, which same_screen
+# forgives as a clock or an OCR slip.
+UNMARKED = ("wait", "type_text", "type_email")
 LEAD = 2.0  # a choice under the floor still counts when it is at least this many times the runner-up
 FLOOR_FRACTION = 0.75  # and still at least this much of the floor; a thin vote is not a decision
 
@@ -55,6 +61,7 @@ class RunConfig:
     min_confidence: float = DEFAULT_MIN_CONFIDENCE
     delay: float = DEFAULT_DELAY
     handoffs: int = DEFAULT_HANDOFFS  # stops the writer may send the classifier back from; 0 makes every stop final
+    driver_steps: int = 0  # actions the driver may take once the classifier stops short for good; 0 is no driver
     image: Path | None = None  # replay a saved capture (never acts)
     app: str | None = None  # frontmost app to report during replay
     url: str | None = None  # browser URL to report during replay
@@ -87,6 +94,8 @@ class RunState:
     stalls: int = 0  # stalls since the run last reached a page it had not been on
     pages: set[tuple[str, str | None]] = field(default_factory=set)  # every (app, URL) the run has shown
     last: Signature | None = None  # the screen the last action was taken on
+    compared: int = 0  # how many actions the run had taken when a capture was last compared with `last`
+    markable: bool = False  # whether the last action's line may get UNCHANGED (see UNMARKED)
     seen: list[tuple[Signature, str | None]] = field(
         default_factory=list
     )  # every screen acted on, with the action; None for a wait
@@ -123,6 +132,8 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
                 log(f"\nstopped after {cfg.steps} steps")
                 state.outcome = "step limit"
                 hand_off(cfg, ctx, state, cfg.steps, log)
+            if wants_driver(cfg, ctx, state) and driver.take_over(cfg, ctx, state, log, step + 1):
+                answer_last(cfg, ctx, state, log)
     except (KeyboardInterrupt, Abort) as e:
         state.outcome = f"aborted ({e or 'Ctrl-C'})"
         log(f"\n{state.outcome} after {len(state.history)} actions")
@@ -149,6 +160,47 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
         log(f"{state.calls.line()}  handoffs {len(state.handoffs)}  questions {len(state.guidance.exchanges)}")
         log(f"run folder: {cfg.out}")
     return state
+
+
+def wants_driver(cfg: RunConfig, ctx: Context, state: RunState) -> bool:
+    """Whether the driver should take the run: it is on, the run acts, and the classifier stopped
+    short of the goal with no way back. A stop the writer judged the goal reached needs no driver,
+    and a run that used every step, or that the user aborted, has none left to give it."""
+    return (
+        cfg.driver_steps > 0
+        and cfg.act
+        and not cfg.replay
+        and ctx.writer is not None
+        and state.answer is not None
+        and not state.answer.achieved
+        and state.outcome in STOPPED
+        and state.outcome != "step limit"
+    )
+
+
+def answer_last(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> None:
+    """The run's answer once the driver has stopped. Nothing hands the run back from here."""
+    try:
+        answer = review(cfg, ctx, state, driver.STOPPED[state.outcome], can_ask=False)
+    except WriterError as e:
+        log(f"\nno answer: the writer failed ({e})")
+        return
+    state.answer = answer
+    log(f"\nanswer ({verdict(answer)}):\n  {answer.text}")
+
+
+def look(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> tuple[Screen, list[Item]] | None:
+    """Capture and read the screen for the driver, and count it against the idle rule as a step
+    does. None once the last actions changed nothing (see `screen_moved`)."""
+    screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser)
+    items = perceive(screen, MAX_OPTIONS, cfg.goal)
+    state.view = (screen, items)
+    return (screen, items) if screen_moved(state, screen, items, log) else None
+
+
+def stops_so_far(state: RunState) -> list[dict]:
+    """Each time the classifier stopped and was sent back, with why and the focus it was given."""
+    return [{"after_action": h.actions, "why": STOPPED[h.outcome], "focus_given": h.focus} for h in state.handoffs]
 
 
 def metered(ctx: Context, calls: Calls) -> Context:
@@ -261,7 +313,7 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
         state.view = (screen, perceive(screen, MAX_OPTIONS, cfg.goal))
     screen, items = state.view
     earlier = earlier_screens(state, signature(screen, items))
-    earlier_stops = [{"after_action": h.actions, "why": STOPPED[h.outcome], "focus_given": h.focus} for h in state.handoffs]
+    earlier_stops = stops_so_far(state)
     return compose_answer(
         ctx.writer, cfg.goal, screen, items, state.history, stopped, earlier, state.guidance, earlier_stops, can_ask
     )
@@ -408,6 +460,7 @@ def resolve(
         what = perform(decision, screen, items, ctx)
     state.view = None
     state.history.append(what)
+    state.markable = decision.kind.choice not in UNMARKED
     log(f"  did: {what}")
     return not repeating(state, what, decision.kind.choice == "wait", log)
 
@@ -419,13 +472,21 @@ def screen_moved(state: RunState, screen: Screen, items: list[Item], log: Log) -
     taken on, an unchanged screen means a refused action, a wait on a page still loading, or a
     scroll that has run out of page; any of them is fine a couple of times. A page the run has not
     been on before starts the count of stalls again (see `stuck`).
+
+    The history line of an action that changed nothing says so, since only this capture knows it
+    and the line is all the classifier and the writer see of that action (see UNMARKED).
     """
     now = signature(screen, items)
     if now[:2] not in state.pages:
         state.pages.add(now[:2])
         state.stalls = 0
+    acted = len(state.history) > state.compared
+    state.compared = len(state.history)
     if state.last is not None:
-        state.idle = state.idle + 1 if same_screen(now, state.last) else 0
+        unchanged = same_screen(now, state.last)
+        state.idle = state.idle + 1 if unchanged else 0
+        if unchanged and acted and state.markable:
+            state.history[-1] += UNCHANGED
     state.last = now
     if state.idle >= MAX_IDLE:
         log(f"  the last {MAX_IDLE} actions changed nothing on screen; stopping")

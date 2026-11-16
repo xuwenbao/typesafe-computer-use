@@ -160,6 +160,33 @@ def test_a_click_that_did_not_land_presses_nothing(monkeypatch):
     assert sent == []
 
 
+def test_a_modified_click_holds_the_key_and_releases_it_when_the_click_fails(monkeypatch):
+    sent = []
+
+    def send(event):
+        sent.append(event)
+        if event.type == windows.INPUT_MOUSE:
+            raise OSError("blocked")
+
+    monkeypatch.setattr(windows, "_move", lambda point: None)
+    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 10.0))
+    monkeypatch.setattr(windows, "_send", send)
+    with pytest.raises(OSError):
+        windows.click_at((10.0, 10.0), modifier="add")
+    assert sent[0].type == windows.INPUT_KEYBOARD and sent[0].u.ki.wVk == windows.VK_CONTROL
+    assert sent[1].type == windows.INPUT_MOUSE
+    assert sent[-1].type == windows.INPUT_KEYBOARD and sent[-1].u.ki.dwFlags & windows.KEYEVENTF_KEYUP
+
+
+def test_a_double_right_click_is_two_presses_of_the_right_button(monkeypatch):
+    sent = []
+    monkeypatch.setattr(windows, "_move", lambda point: None)
+    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 10.0))
+    monkeypatch.setattr(windows, "_send", sent.append)
+    windows.click_at((10.0, 10.0), button="right", count=2)
+    assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_RIGHTDOWN, windows.MOUSEEVENTF_RIGHTUP] * 2
+
+
 def test_a_click_that_landed_presses_and_releases(monkeypatch):
     sent = []
     monkeypatch.setattr(windows, "_move", lambda point: None)

@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         writer = make_writer()
         config.writer_vision()  # a bad value stops the run here, not at its first stop
+        driver_steps = config.driver_steps()
     except ValueError as e:
         sys.exit(str(e))
     if writer is None:
@@ -90,6 +91,7 @@ def main(argv: list[str] | None = None) -> None:
         min_confidence=args.min_confidence,
         delay=args.delay,
         handoffs=args.handoffs,
+        driver_steps=driver_steps,
         image=args.image,
         app=args.app,
         url=args.url,

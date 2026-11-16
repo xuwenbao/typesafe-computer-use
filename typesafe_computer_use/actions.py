@@ -36,7 +36,7 @@ def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context)
     key = decision.chosen
     by_index = {str(it.index): it for it in items}
     if key in by_index:
-        what = click_item(by_index[key], screen)
+        what = open_item(by_index[key], screen) if getattr(decision, "opening", False) else click_item(by_index[key], screen)
         mates = row_mates(items, limit=None).get(int(key))
         # Three rows each end in a Buy: the line must say which, or trying one marks them all as tried.
         # The whole row goes in, so two rows that open alike still get lines of their own.
@@ -47,6 +47,15 @@ def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context)
     if handler is None:
         raise ValueError(f"unknown action {key!r}")
     return handler(decision, screen, items, ctx)
+
+
+def open_item(item: Item, screen: Screen) -> str:
+    """Open an item by double-clicking it. A single click only selects a file or a folder."""
+    try:
+        desktop.click_at(screen.to_points(item), count=2)
+    except Missed as e:
+        return f"open refused: {item.text!r} was not opened, {e}"
+    return f"opened {item.text!r}"
 
 
 def click_item(item: Item, screen: Screen) -> str:

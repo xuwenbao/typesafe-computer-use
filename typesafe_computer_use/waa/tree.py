@@ -113,6 +113,7 @@ class Reading:
     found: list[AxNode]
     offscreen: list[AxNode]
     capped: bool
+    title: str = ""
 
 
 def _window(raw: dict | None) -> tuple[float, float, float, float] | None:
@@ -131,14 +132,32 @@ def _each(nodes: list):
         yield from _each(node.get("children") or [])
 
 
+def _field(node: dict) -> Field:
+    rect = node.get("rect") or [0, 0, 0, 0]
+    x, y, w, h = (float(v) for v in rect)
+    return Field(node.get("role") or "", (node.get("name") or "").strip(), "", node.get("value") or "", x, y, w, h)
+
+
 def _focused(nodes: list) -> Field | None:
+    """The focused element. A text field wins over a host that is also marked focused."""
+    text = None
+    other = None
     for node in _each(nodes):
         if not node.get("focused"):
             continue
-        rect = node.get("rect") or [0, 0, 0, 0]
-        x, y, w, h = (float(v) for v in rect)
-        return Field(node.get("role") or "", (node.get("name") or "").strip(), "", node.get("value") or "", x, y, w, h)
-    return None
+        field = _field(node)
+        if field.is_text and text is None:
+            text = field
+        elif other is None:
+            other = field
+    return text if text is not None else other
+
+
+def _title(raw: dict | None) -> str:
+    window = raw.get("window") if raw else None
+    if isinstance(window, dict):
+        return str(window.get("name") or "")
+    return ""
 
 
 def _url(nodes: list) -> str | None:
@@ -172,11 +191,12 @@ def read(raw: dict | None, display_w: float, display_h: float) -> Reading:
     pid = int(raw.get("pid") or 0) if raw else 0
     window = _window(raw)
     nodes = raw.get("nodes") if raw else None
+    title = _title(raw)
     if not nodes:
-        return Reading(app, pid, window, None, None, [], [], False)
+        return Reading(app, pid, window, None, None, [], [], False, title)
     root = {"role": "", "name": "", "rect": None, "pressable": False, "children": nodes}
     found, offscreen, capped = walk_actionable(root, _children, _attrs, _actions, display_w, display_h)
-    return Reading(app, pid, window, _focused(nodes), _url(nodes), found, offscreen, capped or bool(raw.get("truncated")))
+    return Reading(app, pid, window, _focused(nodes), _url(nodes), found, offscreen, capped or bool(raw.get("truncated")), title)
 
 
 def _span(values: list[float]) -> dict[str, float]:

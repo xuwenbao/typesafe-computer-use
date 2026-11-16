@@ -17,7 +17,7 @@ DISPLAY = (1440.0, 900.0)
 class Node:
     """One element of a tree the walk can be pointed at."""
 
-    def __init__(self, name, control_type, rect, children=(), focused=False, value="", invoke=False, action=""):
+    def __init__(self, name, control_type, rect, children=(), focused=False, value="", invoke=False, action="", runtime_id=None):
         self._name = name
         self._control_type = control_type
         self._rect = rect
@@ -26,6 +26,7 @@ class Node:
         self._value = value
         self._invoke = invoke
         self._action = action
+        self._runtime_id = runtime_id
 
     def name(self):
         return self._name
@@ -50,6 +51,9 @@ class Node:
 
     def children(self):
         return list(self._children)
+
+    def runtime_id(self):
+        return self._runtime_id
 
 
 def test_a_button_comes_back_as_a_button():
@@ -151,6 +155,44 @@ def test_a_comtypes_stand_in_is_walked_the_same_way():
     assert got["nodes"][1]["value"] == "example.com/a"
     assert got["nodes"][2]["focused"] is True
     assert LEGACY  # the legacy pattern id the live walk asks for
+
+
+def test_a_focused_xaml_host_reads_as_its_edit():
+    edit = Node("Horizontal", 50004, (110, 110, 80, 24), value="768")
+    host = Node("DesktopWindowXamlSource", 50033, (100, 100, 400, 200), [edit], focused=True)
+    window = Node("Paint", 50032, (0, 0, 800, 600), [host])
+    got = walk(window, clock=lambda: 0, focus=host)
+    host_node = got["nodes"][0]
+    assert host_node["role"] == ""
+    assert host_node["focused"] is False
+    assert host_node["children"][0]["role"] == "AXTextField"
+    assert host_node["children"][0]["focused"] is True
+    reading = tree.read(got, *DISPLAY)
+    assert reading.focused is not None and reading.focused.is_text
+    assert reading.focused.label == "Horizontal"
+    assert reading.focused.value == "768"
+
+
+def test_two_edits_under_a_host_are_not_guessed():
+    one = Node("Horizontal", 50004, (10, 10, 40, 20), value="768")
+    two = Node("Vertical", 50004, (60, 10, 40, 20), value="480")
+    host = Node("DesktopWindowXamlSource", 50033, (0, 0, 200, 80), [one, two], focused=True)
+    window = Node("Paint", 50032, (0, 0, 800, 600), [host])
+    got = walk(window, clock=lambda: 0, focus=host)
+    assert got["nodes"][0]["focused"] is True
+    assert [child["focused"] for child in got["nodes"][0]["children"]] == [False, False]
+
+
+def test_the_focused_edit_is_matched_by_its_runtime_id():
+    edit = Node("Find", 50004, (10, 10, 80, 20), runtime_id=(7, 1))
+    host = Node("Find box", 50033, (0, 0, 200, 40), [edit])
+    window = Node("Notepad", 50032, (0, 0, 800, 600), [host])
+    focus = Node("Find", 50004, (10, 10, 80, 20), runtime_id=(7, 1))
+    got = walk(window, clock=lambda: 0, focus=focus)
+    assert got["nodes"][0]["children"][0]["focused"] is True
+    reading = tree.read(got, *DISPLAY)
+    assert reading.focused is not None and reading.focused.is_text
+    assert reading.focused.label == "Find"
 
 
 def test_an_editable_document_is_a_text_area_and_a_web_page_is_not():

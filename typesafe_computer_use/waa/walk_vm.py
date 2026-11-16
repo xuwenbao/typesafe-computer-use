@@ -22,6 +22,7 @@ INVOKE = 10000  # UIA_InvokePatternId
 VALUE = 10002  # UIA_ValuePatternId
 LEGACY = 10018  # UIA_LegacyIAccessiblePatternId
 READ_ONLY = 0x40  # STATE_SYSTEM_READONLY
+TEXT_ROLES = ("AXTextField", "AXTextArea")
 
 
 def _rules():
@@ -46,23 +47,76 @@ def empty(reason):
     return {"app": "", "pid": 0, "window": None, "nodes": [], "truncated": False, "reason": reason}
 
 
-def walk(root, *, clock, seconds=SECONDS, max_depth=MAX_DEPTH, max_width=MAX_WIDTH, max_nodes=MAX_NODES):
+def _runtime_id(node):
+    method = getattr(node, "runtime_id", None)
+    if method is None:
+        return None
+    try:
+        value = method()
+    except Exception:
+        return None
+    if not value:
+        return None
+    return tuple(value)
+
+
+def _same(node, other):
+    if node is other:
+        return True
+    left, right = _runtime_id(node), _runtime_id(other)
+    return left is not None and left == right
+
+
+def _text_focus(node, role_of):
+    """A focused text field, or the only text field inside a focused host that is not one.
+
+    Several text fields and none of them focused is left alone: guessing would type into the
+    wrong box."""
+    if node is None:
+        return None
+    if role_of(node) in TEXT_ROLES:
+        return node
+    found = []
+
+    def collect(current):
+        for child in current.children():
+            if role_of(child) in TEXT_ROLES:
+                found.append(child)
+            else:
+                collect(child)
+
+    collect(node)
+    focused = [item for item in found if item.focused()]
+    if len(focused) == 1:
+        return focused[0]
+    if len(found) == 1:
+        return found[0]
+    return None
+
+
+def walk(root, *, clock, focus=None, seconds=SECONDS, max_depth=MAX_DEPTH, max_width=MAX_WIDTH, max_nodes=MAX_NODES):
     """`root`'s descendants as JSON-ready dicts. `root` itself is the window, recorded apart.
 
     An element answers `name`, `control_type`, `rect`, `focused`, `value`, `has_invoke`,
-    `default_action`, and `children`, and a document also `legacy_state`. Past any limit the walk returns what it has and sets
-    `truncated`."""
+    `default_action`, and `children`, and a document also `legacy_state`. `focus` is the element
+    `GetFocusedElement` returned. A text field there, or the one text field inside a host that is
+    not one, is the focused node, which is how a XAML island's edit is read as a text field.
+    Past any limit the walk returns what it has and sets `truncated`."""
     role_of, can_press = _rules()
+    chosen = _text_focus(focus, role_of)
     deadline = clock() + seconds
     truncated = False
     seen = 0
+    marked = False
 
     def visit(node, depth):
-        nonlocal truncated, seen
+        nonlocal truncated, seen, marked
         if seen >= max_nodes or clock() >= deadline:
             truncated = True
             return None
         seen += 1
+        if chosen is not None and _same(node, chosen):
+            marked = True
         kids = list(node.children())
         if len(kids) > max_width:
             kids = kids[:max_width]
@@ -79,11 +133,12 @@ def walk(root, *, clock, seconds=SECONDS, max_depth=MAX_DEPTH, max_width=MAX_WID
                     truncated = True
                     break
         rect = node.rect()
+        focused = _same(node, chosen) if chosen is not None else bool(node.focused())
         return {
             "role": role_of(node),
             "name": node.name() or "",
             "rect": list(rect) if rect else None,
-            "focused": bool(node.focused()),
+            "focused": focused,
             "value": node.value() or "",
             "pressable": can_press(bool(node.has_invoke()), node.default_action() or ""),
             "children": children,
@@ -108,6 +163,19 @@ def walk(root, *, clock, seconds=SECONDS, max_depth=MAX_DEPTH, max_width=MAX_WID
         if clock() >= deadline:
             truncated = True
             break
+    if chosen is not None and not marked:
+        rect = chosen.rect()
+        nodes.append(
+            {
+                "role": role_of(chosen),
+                "name": chosen.name() or "",
+                "rect": list(rect) if rect else None,
+                "focused": True,
+                "value": chosen.value() or "",
+                "pressable": can_press(bool(chosen.has_invoke()), chosen.default_action() or ""),
+                "children": [],
+            }
+        )
     rect = root.rect()
     window = None if rect is None else {"name": root.name() or "", "x": rect[0], "y": rect[1], "w": rect[2], "h": rect[3]}
     return {
@@ -163,6 +231,15 @@ class LiveElement:
             return bool(self.raw.CurrentHasKeyboardFocus)
         except Exception:
             return False
+
+    def runtime_id(self):
+        try:
+            value = self.raw.GetRuntimeId()
+        except Exception:
+            return None
+        if not value:
+            return None
+        return tuple(int(part) for part in value)
 
     def _pattern(self, pattern_id):
         try:
@@ -254,7 +331,16 @@ def connect(hwnd):
         VALUE: api.IUIAutomationValuePattern,
         LEGACY: api.IUIAutomationLegacyIAccessiblePattern,
     }
-    return LiveElement(automation.ElementFromHandle(hwnd), automation.RawViewWalker, interfaces)
+    walker = automation.RawViewWalker
+    window = LiveElement(automation.ElementFromHandle(hwnd), walker, interfaces)
+    focused = None
+    try:
+        raw_focus = automation.GetFocusedElement()
+    except Exception:
+        raw_focus = None
+    if raw_focus is not None:
+        focused = LiveElement(raw_focus, walker, interfaces)
+    return window, focused
 
 
 def main():
@@ -263,7 +349,8 @@ def main():
         if not hwnd:
             payload = empty("no foreground window")
         else:
-            payload = walk(connect(hwnd), clock=time.monotonic)
+            window, focused = connect(hwnd)
+            payload = walk(window, clock=time.monotonic, focus=focused)
             payload["app"] = exe
             payload["pid"] = pid
     except Exception as error:

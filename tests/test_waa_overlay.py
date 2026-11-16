@@ -74,7 +74,15 @@ def test_the_agent_module_reexports_jev():
     assert names == ["JevAgent", "browser_for"]
 
 
+def test_a_request_with_no_timeout_waits_ten_seconds_to_connect_and_three_minutes_to_read():
+    text = (OVERLAY / "run.py").read_text(encoding="utf-8")
+    assert 'setdefault("timeout", (10, 180))' in text
+    assert "requests.Session.request = _request_with_timeout" in text
+
+
 def test_start_client_uses_the_client_venv():
     text = (OVERLAY / "start_client.sh").read_text(encoding="utf-8")
     assert "/opt/waa/bin/python" in text
     assert "\npython " not in text
+    assert 'max_steps="${WAA_MAX_STEPS:-15}"' in text
+    assert '--max_steps "$max_steps"' in text

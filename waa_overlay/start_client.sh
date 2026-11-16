@@ -11,6 +11,7 @@ num_workers="1"
 result_dir="./results"
 json_name="evaluation_examples_windows/test_all.json"
 diff_lvl="normal"
+max_steps="${WAA_MAX_STEPS:-15}"  # jev: WAA's own budget unless a run names another
 
 # parse agent argument
 while [[ $# -gt 0 ]]; do
@@ -81,4 +82,4 @@ if [ "$clean_results" = true ]; then
 fi
 
 echo "Running agent $agent..."
-/opt/waa/bin/python run.py --agent "$agent" --model "$model" --som_origin "$som_origin" --a11y_backend "$a11y_backend" --worker_id "$worker_id" --num_workers "$num_workers" --result_dir "$result_dir" --test_all_meta_path "$json_name" --diff_lvl "$diff_lvl"  # jev: the client runs on Python 3.12
+/opt/waa/bin/python run.py --agent "$agent" --model "$model" --som_origin "$som_origin" --a11y_backend "$a11y_backend" --worker_id "$worker_id" --num_workers "$num_workers" --result_dir "$result_dir" --test_all_meta_path "$json_name" --diff_lvl "$diff_lvl" --max_steps "$max_steps"  # jev: the client runs on Python 3.12

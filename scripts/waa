@@ -94,6 +94,74 @@ copy_overlay() {
   run cp "$REPO/waa_overlay/start_client.sh" "$CHECKOUT/src/win-arena-container/start_client.sh"
 }
 
+# The VM's own service must not go through the proxy. curl in entry_setup.sh reads no_proxy.
+NO_PROXY_VALUE="localhost,127.0.0.1,::1,20.20.20.21,20.20.20.0/24,host.lan"
+PROXY_RUN=()
+PROXY_BUILD=()
+RELAY_PID=""
+
+cleanup() {
+  if [[ -n "${RELAY_PID:-}" ]]; then
+    kill "$RELAY_PID" 2>/dev/null || true
+    wait "$RELAY_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+# A proxy on 127.0.0.1 is this machine's Clash. The container's loopback is itself, so a
+# relay on the docker bridge answers host.docker.internal and forwards there. WAA_PROXY=off
+# uses no proxy. The Windows VM is not given one.
+proxy_for_container() {
+  local raw="${WAA_PROXY:-${https_proxy:-${HTTPS_PROXY:-}}}"
+  PROXY_RUN=()
+  PROXY_BUILD=()
+  [[ -z "$raw" || "$raw" == "off" ]] && return 0
+  local container="$raw"
+  local rest="${raw#*://}"
+  rest="${rest%%/*}"
+  local hostport="${rest##*@}"
+  local host="${hostport%%:*}"
+  local port="${hostport##*:}"
+  [[ "$host" != "$port" && "$port" =~ ^[0-9]+$ ]] || die "the proxy URL needs a host and a port: $raw"
+  if [[ "$host" == "127.0.0.1" || "$host" == "localhost" ]]; then
+    local gateway relay
+    gateway=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
+    gateway=${gateway//$'\r'/}
+    [[ -n "$gateway" ]] || die "could not read the docker bridge gateway (docker network inspect bridge)"
+    relay="$REPO/scripts/waa_proxy_relay.py"
+    [[ -f "$relay" ]] || die "missing $relay"
+    # Mirrored WSL keeps Clash's port on every address, so the bridge often cannot bind it.
+    # Another port on the bridge still forwards to the loopback port Clash is using.
+    local listen_port=$port
+    if ! python3 -c "import socket; s=socket.socket(); s.bind(('${gateway}', ${port})); s.close()" 2>/dev/null; then
+      listen_port=$(python3 -c "import socket; s=socket.socket(); s.bind(('${gateway}', 0)); print(s.getsockname()[1]); s.close()")
+      [[ -n "$listen_port" ]] || die "could not bind a proxy relay on ${gateway}"
+    fi
+    echo "+ starting the proxy relay on ${gateway}:${listen_port} -> 127.0.0.1:${port}"
+    python3 "$relay" --listen "${gateway}:${listen_port}" --target "127.0.0.1:${port}" &
+    RELAY_PID=$!
+    container="http://host.docker.internal:${listen_port}"
+    PROXY_RUN+=(--add-host=host.docker.internal:host-gateway)
+    PROXY_BUILD+=(--add-host=host.docker.internal:host-gateway)
+  fi
+  PROXY_RUN+=(
+    -e "http_proxy=${container}"
+    -e "https_proxy=${container}"
+    -e "HTTP_PROXY=${container}"
+    -e "HTTPS_PROXY=${container}"
+    -e "NO_PROXY=${NO_PROXY_VALUE}"
+    -e "no_proxy=${NO_PROXY_VALUE}"
+  )
+  PROXY_BUILD+=(
+    --build-arg "http_proxy=${container}"
+    --build-arg "https_proxy=${container}"
+    --build-arg "HTTP_PROXY=${container}"
+    --build-arg "HTTPS_PROXY=${container}"
+    --build-arg "NO_PROXY=${NO_PROXY_VALUE}"
+    --build-arg "no_proxy=${NO_PROXY_VALUE}"
+  )
+}
+
 # ----- setup ---------------------------------------------------------------------------------
 
 setup() {
@@ -103,11 +171,14 @@ setup() {
   # The checkout's .dockerignore keeps only src/win-arena-container, so the lock has to live there.
   run cp "$REPO/waa_overlay/requirements.txt" "$CHECKOUT/src/win-arena-container/waa-requirements.txt"
   run cp "$REPO/waa_overlay/Dockerfile" "$CHECKOUT/Dockerfile-jev"
+  proxy_for_container
   run docker build --platform linux/amd64 \
+    "${PROXY_BUILD[@]}" \
     --build-arg "BASE_IMAGE=windowsarena/winarena-base@$WAA_IMAGE_DIGEST" \
     -f "$CHECKOUT/Dockerfile-jev" -t "$IMAGE" "$CHECKOUT"
   # The import check does not start the VM. PYTHONPATH sees the mounted checkout and this repo.
   run docker run --rm --platform linux/amd64 \
+    "${PROXY_RUN[@]}" \
     --entrypoint /opt/waa/bin/python \
     -v "$REPO:/jev" \
     -v "$CLIENT:/client" \
@@ -138,7 +209,9 @@ prepare_image() {
   fi
   need_kvm
   run mkdir -p "$STORAGE"
+  proxy_for_container
   run docker run --rm --platform linux/amd64 \
+    "${PROXY_RUN[@]}" \
     --device=/dev/kvm --cap-add NET_ADMIN --stop-timeout 120 \
     -p 8006:8006 -p 3390:3389 \
     -e "RAM_SIZE=${WAA_RAM_SIZE:-8G}" -e "CPU_CORES=${WAA_CPU_CORES:-8}" \
@@ -244,8 +317,10 @@ run_tasks() {
   stamp=$(date +%Y%m%d-%H%M%S)
   archive_earlier "$stamp" "${tasks[@]}"
 
+  proxy_for_container
   local -a cmd=(
     docker run --rm --platform linux/amd64
+    "${PROXY_RUN[@]}"
     --device=/dev/kvm --cap-add NET_ADMIN --stop-timeout 120
     -p 8006:8006 -p 3390:3389
     -e "RAM_SIZE=${WAA_RAM_SIZE:-8G}" -e "CPU_CORES=${WAA_CPU_CORES:-8}"
@@ -254,6 +329,9 @@ run_tasks() {
   )
   if [[ -n "${OPENAI_API_KEY:-}" ]]; then
     cmd+=(-e OPENAI_API_KEY)
+  fi
+  if [[ -n "${WAA_MAX_STEPS:-}" ]]; then
+    cmd+=(-e WAA_MAX_STEPS)
   fi
   while IFS= read -r name; do
     cmd+=(-e "$name")
@@ -267,6 +345,8 @@ run_tasks() {
     -v "$meta:/tasks/list.json:ro"
     -v "$REPO/waa_overlay/start_client.sh:/start_client.sh:ro"
     -v "$REPO/waa_overlay/entry_setup.sh:/entry_setup.sh:ro"
+    -v "$REPO/waa_overlay/on-logon.ps1:/shared/on-logon.ps1:ro"
+    -v "$REPO/waa_overlay/keep_server.py:/shared/keep_server.py:ro"
     --entrypoint /bin/bash
     "$IMAGE"
     -c "export PYTHONPATH=/jev:/client; exec ./entry.sh --prepare-image false --start-client true --agent jev --model jev --json-name /tasks/list.json --clean-results false"

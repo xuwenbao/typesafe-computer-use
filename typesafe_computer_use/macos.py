@@ -22,7 +22,63 @@ from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
 from .config import ABORT_CORNER_PX
 from .models import Abort, AxNode, Field
 
-KEYCODES = {"return": 36, "tab": 48, "escape": 53, "a": 0, "delete": 51, "[": 33}
+# ANSI key codes. `delete` and `backspace` are the same key: on a Mac the key labeled Delete
+# erases backward. Digits are the number row, not the keypad.
+KEYCODES = {
+    "return": 36,
+    "tab": 48,
+    "escape": 53,
+    "delete": 51,
+    "backspace": 51,
+    "space": 49,
+    "[": 33,
+    "up": 126,
+    "down": 125,
+    "left": 123,
+    "right": 124,
+    "pageup": 116,
+    "pagedown": 121,
+    "home": 115,
+    "end": 119,
+    "f2": 120,
+    "f5": 96,
+    "a": 0,
+    "b": 11,
+    "c": 8,
+    "d": 2,
+    "e": 14,
+    "f": 3,
+    "g": 5,
+    "h": 4,
+    "i": 34,
+    "j": 38,
+    "k": 40,
+    "l": 37,
+    "m": 46,
+    "n": 45,
+    "o": 31,
+    "p": 35,
+    "q": 12,
+    "r": 15,
+    "s": 1,
+    "t": 17,
+    "u": 32,
+    "v": 9,
+    "w": 13,
+    "x": 7,
+    "y": 16,
+    "z": 6,
+    "0": 29,
+    "1": 18,
+    "2": 19,
+    "3": 20,
+    "4": 21,
+    "5": 23,
+    "6": 22,
+    "7": 26,
+    "8": 28,
+    "9": 25,
+}
 MIN_WINDOW_SIDE_PT = 50.0  # anything smaller is a palette or a shadow, not the window being worked in
 
 # ------------------------------------------------------------------ escape hatch
@@ -70,13 +126,44 @@ def _down_then_up(event: Callable[[bool], object]) -> None:
         _post(event(False))
 
 
-def click_at(point: tuple[float, float]) -> None:
+def click_at(point: tuple[float, float], button: str = "left", count: int = 1, modifier: str | None = None) -> None:
+    """Click `point`. `button` is left or right, `count` is 2 for a double-click, and `modifier` is
+    `add` (Command, the Mac equivalent of Control-click) or `range` (Shift).
+
+    A plain single left click stays the two-event path the abort tests observe. Anything else sets
+    the click count and the modifier flags on each event."""
     # Check before moving: the synthetic move would otherwise take the pointer out of the abort corner.
     check_abort()
-    _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, point, Quartz.kCGMouseButtonLeft))
+    mouse = Quartz.kCGMouseButtonLeft if button == "left" else Quartz.kCGMouseButtonRight
+    _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, point, mouse))
     check_abort()
-    kinds = {True: Quartz.kCGEventLeftMouseDown, False: Quartz.kCGEventLeftMouseUp}
-    _down_then_up(lambda down: Quartz.CGEventCreateMouseEvent(None, kinds[down], point, Quartz.kCGMouseButtonLeft))
+    if button == "left" and count == 1 and not modifier:
+        kinds = {True: Quartz.kCGEventLeftMouseDown, False: Quartz.kCGEventLeftMouseUp}
+        _down_then_up(lambda down: Quartz.CGEventCreateMouseEvent(None, kinds[down], point, mouse))
+        return
+    down_kind = Quartz.kCGEventLeftMouseDown if button == "left" else Quartz.kCGEventRightMouseDown
+    up_kind = Quartz.kCGEventLeftMouseUp if button == "left" else Quartz.kCGEventRightMouseUp
+    flags = 0
+    if modifier == "add":
+        flags = Quartz.kCGEventFlagMaskCommand
+    elif modifier == "range":
+        flags = Quartz.kCGEventFlagMaskShift
+    elif modifier:
+        raise ValueError(f"unknown modifier {modifier!r}")
+
+    def one(click: int):
+        def event(down: bool):
+            kind = down_kind if down else up_kind
+            posted = Quartz.CGEventCreateMouseEvent(None, kind, point, mouse)
+            Quartz.CGEventSetIntegerValueField(posted, Quartz.kCGMouseEventClickState, click)
+            if flags:
+                Quartz.CGEventSetFlags(posted, flags)
+            return posted
+
+        _down_then_up(event)
+
+    for click in range(1, count + 1):
+        one(click)
 
 
 def press(key: str, command: bool = False) -> None:

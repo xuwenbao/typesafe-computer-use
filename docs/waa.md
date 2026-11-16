@@ -10,6 +10,17 @@ The VM runs under QEMU and needs `/dev/kvm`. Docker is required. A WSL2 machine 
 machine this runs on. The golden image is about 30 GB and wants 8 GB of RAM and 8 CPU cores,
 overridable with `WAA_RAM_SIZE` and `WAA_CPU_CORES`.
 
+The container does not see this machine's `127.0.0.1`. When `WAA_PROXY`, or else `https_proxy`,
+points at `127.0.0.1` or `localhost` (Clash Verge's usual port), `scripts/waa` forwards it
+from the docker bridge to the loopback and points the container at `host.docker.internal`.
+When that port is already taken on the bridge, as it is under WSL's mirrored networking, the
+relay listens on another port there and still forwards to Clash.
+`WAA_PROXY=off` uses no proxy. `NO_PROXY` includes `20.20.20.21`, so the VM's own service is
+never sent through the proxy. The Windows VM itself is not given a proxy. `run` also mounts
+`waa_overlay/on-logon.ps1` and `waa_overlay/keep_server.py` over `/shared`, so the arena server
+starts without a window and comes back if it stops. `close_all` cannot close a window it does
+not have.
+
 ```
 scripts/waa setup                         # the pinned commit into .waa/, then the jev-winarena image
 scripts/waa prepare-image [--iso PATH]    # the golden image in .waa/storage, from the evaluation ISO
@@ -34,7 +45,7 @@ A task is `DOMAIN/ID`, a file under the checkout's `evaluation_examples_windows/
 `run chrome/<id> msedge/<id>` checks that both files exist, that `/dev/kvm` is there, and that
 `TYPESAFE_API_KEY` is set in the environment or in `.env`. It refuses `--ocr`, `--envs` and
 `--num-workers`. Keys (`TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `CLICKER_*`) are passed into the
-container as environment variables and are never printed. `max_steps`, WAA's own default of 15,
+container as environment variables and are never printed. `max_steps`, WAA's own default of 15, or `WAA_MAX_STEPS` when a run sets it,
 counts the action lists handed to the VM. A decision that hands nothing, a refused type or a stop
 for review, does not spend one of them; those run against jev's usual step limit. `run` does not
 revert the VM between tasks: WindowsAgentArena closes the apps and leaves the disk as it is.

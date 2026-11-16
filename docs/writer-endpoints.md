@@ -11,6 +11,9 @@ another endpoint.
 | `CLICKER_WRITER_API` | no | what that endpoint speaks: `anthropic` (the default) or `openai` |
 | `CLICKER_WRITER_MODEL` | no | types text and proposes URLs; defaults to `claude-haiku-4-5` |
 | `CLICKER_ANSWER_MODEL` | no | reads the screen whenever the classifier stops; defaults to `claude-sonnet-5` |
+| `CLICKER_DRIVER` | no | `true` lets a stronger model take over once the classifier stops short of the goal for good (see [the takeover](how-a-step-works.md#the-takeover)); defaults to `false` |
+| `CLICKER_DRIVER_STEPS` | no | the most actions one takeover takes; defaults to `20` |
+| `CLICKER_DRIVER_MODEL` | no | the model that takes over; defaults to the answer model, and uses its reasoning effort |
 | `CLICKER_WRITER_VISION` | no | `false` for an answer model that reads text only; defaults to `true` |
 | `CLICKER_WRITER_REASONING` | no | the reasoning effort the writer's calls ask an OpenAI-API model for, such as `none`; unset leaves it to the model |
 | `CLICKER_ANSWER_REASONING` | no | the same for the answer model, such as `low` |

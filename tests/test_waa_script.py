@@ -196,7 +196,13 @@ def test_a_run_archives_the_earlier_result_and_does_not_print_the_key(script):
 
     secret = "waa-secret-value-9f3c"
     result = script(
-        "run", "chrome/abc", "msedge/def", TYPESAFE_API_KEY=secret, OPENAI_API_KEY=secret, CLICKER_WRITER_MODEL="luna"
+        "run",
+        "chrome/abc",
+        "msedge/def",
+        TYPESAFE_API_KEY=secret,
+        OPENAI_API_KEY=secret,
+        CLICKER_WRITER_MODEL="luna",
+        WAA_MAX_STEPS="30",
     )
     assert result.returncode == 0, result.stderr
     text = result.stdout + result.stderr + commands(script)
@@ -204,6 +210,8 @@ def test_a_run_archives_the_earlier_result_and_does_not_print_the_key(script):
     assert "-e TYPESAFE_API_KEY" in result.stdout
     assert "-e OPENAI_API_KEY" in result.stdout
     assert "-e CLICKER_WRITER_MODEL" in result.stdout
+    assert "-e WAA_MAX_STEPS" in result.stdout
+    assert "host.docker.internal" not in result.stdout
     assert "RAM_SIZE=8G" in result.stdout and "CPU_CORES=8" in result.stdout
     assert "--device=/dev/kvm" in result.stdout
     assert not earlier.exists()
@@ -212,6 +220,65 @@ def test_a_run_archives_the_earlier_result_and_does_not_print_the_key(script):
     assert (kept / "result.txt").is_file()
     listed = script.repo / ".waa" / "tasks"
     assert any(path.is_file() for path in listed.glob("*.json"))
+
+
+def _docker_that_names_the_bridge(script) -> None:
+    shutil.copy2(REPO / "scripts" / "waa_proxy_relay.py", script.repo / "scripts" / "waa_proxy_relay.py")
+    path = script.repo / "bin" / "docker"
+    path.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/bash
+            printf 'docker' >> "$COMMAND_LOG"
+            for arg in "$@"; do printf ' %q' "$arg" >> "$COMMAND_LOG"; done
+            printf '\\n' >> "$COMMAND_LOG"
+            if [[ "$1" == "network" && "$2" == "inspect" ]]; then
+              echo 172.17.0.1
+            fi
+            exit 0
+            """
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    python3 = script.repo / "bin" / "python3"
+    python3.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    python3.chmod(0o755)
+
+
+def test_a_localhost_proxy_is_relayed_to_the_container(script):
+    checkout(script, "chrome/abc")
+    _docker_that_names_the_bridge(script)
+    secret = "waa-secret-value-9f3c"
+    result = script("run", "chrome/abc", TYPESAFE_API_KEY=secret, https_proxy="http://127.0.0.1:7897")
+    assert result.returncode == 0, result.stderr
+    text = result.stdout + result.stderr + commands(script)
+    assert secret not in text
+    assert "HTTPS_PROXY=http://host.docker.internal:7897" in result.stdout
+    assert "20.20.20.21" in result.stdout
+    assert "--add-host=host.docker.internal:host-gateway" in result.stdout
+    assert "ALL_PROXY" not in result.stdout
+    assert "starting the proxy relay on 172.17.0.1:7897" in result.stdout
+    assert "/shared/on-logon.ps1:ro" in result.stdout
+    assert "/shared/keep_server.py:ro" in result.stdout
+
+
+def test_waa_proxy_off_adds_no_proxy_even_when_https_proxy_is_set(script):
+    checkout(script, "chrome/abc")
+    result = script("run", "chrome/abc", TYPESAFE_API_KEY="present", https_proxy="http://127.0.0.1:7897", WAA_PROXY="off")
+    assert result.returncode == 0, result.stderr
+    assert "host.docker.internal" not in result.stdout
+    assert "NO_PROXY" not in result.stdout
+    assert "proxy relay" not in result.stdout
+
+
+def test_setup_passes_the_proxy_to_the_image_build(script):
+    _docker_that_names_the_bridge(script)
+    result = script("setup", https_proxy="http://127.0.0.1:7897")
+    assert result.returncode == 0, result.stderr
+    assert "--build-arg https_proxy=http://host.docker.internal:7897" in result.stdout
+    assert "--add-host=host.docker.internal:host-gateway" in result.stdout
+    assert "20.20.20.21" in result.stdout
 
 
 def test_results_invokes_the_reader(script):

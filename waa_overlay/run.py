@@ -25,6 +25,11 @@ from threading import Event
 import signal
 
 
+def _request_with_timeout(self, method, url, **kwargs):  # jev: a call that names no timeout must not wait forever
+    kwargs.setdefault("timeout", (10, 180))  # jev: seconds to connect, then to read; an explicit timeout stays
+    return _session_request(self, method, url, **kwargs)  # jev:
+_session_request = requests.Session.request  # jev:
+requests.Session.request = _request_with_timeout  # jev: get and post both go through the session
 print("Waiting for the server to start...")
 
 #  Logger Configs {{{ #

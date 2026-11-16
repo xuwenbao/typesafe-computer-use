@@ -10,6 +10,9 @@ raises `Abort("WAA step limit")`, and `reset()` makes a stale worker's wait rais
 `max_steps` counts lists handed to the VM. A decision that hands nothing, a refusal or a stop for
 review, spends one of the loop's own steps, which run to the usual limit. Either way the loop
 records the outcome. When it ends, `predict` answers `DONE`, never `FAIL`.
+
+With CLICKER_DRIVER on, the driver takes the run when the classifier stops short for good (see
+driver.py). Its actions go through the same adapter, so they spend the same `max_steps`.
 """
 
 from __future__ import annotations
@@ -109,6 +112,7 @@ class JevAgent:
             writer = make_writer()
             config.writer_vision()
         self.writer = writer
+        self.driver_steps = config.driver_steps()
         self.email = config.email()
         self.step_seconds = step_seconds
         self.controller = controller
@@ -162,6 +166,7 @@ class _Run:
             act=True,
             steps=config.DEFAULT_STEPS,
             delay=0,
+            driver_steps=agent.driver_steps,
             read_ahead=True,
         )
         self.after = after

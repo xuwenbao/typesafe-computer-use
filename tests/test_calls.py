@@ -24,7 +24,7 @@ def test_each_client_counts_its_own_requests_and_passes_them_through():
         assert classifier.system_one(state={}, questions={}) == {"state": {}, "questions": {}}
     assert writer.messages.create(model="m") == {"model": "m"}
 
-    assert calls.count == {"classifier": 3, "writer": 1}
+    assert calls.count == {"classifier": 3, "writer": 1, "driver": 0}
     assert calls.share("classifier") == 0.75
     assert calls.line().startswith("calls: classifier 3 (75%, ")
     # Neither reply reports usage or, for the classifier, a model: each is still a request, with zero tokens.
@@ -63,7 +63,7 @@ def test_the_classifier_counts_tokens_under_the_model_its_reply_names():
         "ts-small": Usage(requests=2, input_tokens=900, output_tokens=4),
         "ts-large": Usage(requests=1, input_tokens=2000, output_tokens=6),
     }
-    assert calls.count == {"classifier": 3, "writer": 0}
+    assert calls.count == {"classifier": 3, "writer": 0, "driver": 0}
 
 
 def test_the_writer_counts_cache_reads_apart_and_cache_writes_as_uncached_input():

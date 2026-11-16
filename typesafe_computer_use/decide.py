@@ -74,8 +74,15 @@ def fixed_actions(browser: str, email: str | None, typing: bool = True) -> dict[
     return actions
 
 
-def kind_criteria(browser: str, email: str | None, offscreen: bool = False, typing: bool = True) -> dict[str, str]:
+def kind_criteria(
+    browser: str, email: str | None, offscreen: bool = False, typing: bool = True, desktop: bool = False
+) -> dict[str, str]:
     clicks = {"click_item": "Click one of the on-screen text items (chosen in the item question)."}
+    if desktop:
+        clicks["open_item"] = (
+            "Open one of the on-screen items (chosen in the item question) by double-clicking it: a file, "
+            "a folder, or a list entry that a single click only selects."
+        )
     if offscreen:
         clicks["press_offscreen"] = PRESS_OFFSCREEN
     return {**clicks, **fixed_actions(browser, email, typing)}
@@ -188,7 +195,11 @@ class Decision:
 
     @property
     def clicking(self) -> bool:
-        return self.kind.choice == "click_item" and self.item is not None
+        return self.kind.choice in ("click_item", "open_item") and self.item is not None
+
+    @property
+    def opening(self) -> bool:
+        return self.kind.choice == "open_item" and self.item is not None
 
     @property
     def pressing_offscreen(self) -> bool:
@@ -243,7 +254,13 @@ def decide(
                 "tried on this screen: each of those led straight back here."
                 + (FOCUS_RULE if guidance and guidance.focus else "")
             ),
-            criteria=kind_criteria(browser, email, bool(screen.offscreen), bool(screen.field and screen.field.is_text)),
+            criteria=kind_criteria(
+                browser,
+                email,
+                bool(screen.offscreen),
+                bool(screen.field and screen.field.is_text),
+                desktop=screen.url is None and screen.app != browser,
+            ),
         ),
         "site": Choice(
             instructions=(
