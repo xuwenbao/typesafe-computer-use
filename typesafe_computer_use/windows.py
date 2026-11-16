@@ -281,6 +281,27 @@ def click_at(point: tuple[float, float], button: str = "left", count: int = 1, m
             _send(_key(vk=vk, flags=KEYEVENTF_KEYUP))
 
 
+DRAG_STEPS = 8  # the button stays down across these moves, so a drop lands where the last one did
+
+
+def drag(start: tuple[float, float], end: tuple[float, float]) -> None:
+    """Press at `start`, move to `end`, and release, including when a move in between fails."""
+    origin = (round(start[0]), round(start[1]))
+    dest = (round(end[0]), round(end[1]))
+    _move(origin)
+    actual = mouse_location()
+    if not landed(origin, actual):
+        raise Missed(f"the cursor went to {actual}, not {origin}")
+    _send(_mouse(MOUSEEVENTF_LEFTDOWN))
+    try:
+        for step in range(1, DRAG_STEPS + 1):
+            x = round(origin[0] + (dest[0] - origin[0]) * step / DRAG_STEPS)
+            y = round(origin[1] + (dest[1] - origin[1]) * step / DRAG_STEPS)
+            _move((x, y))
+    finally:
+        _send(_mouse(MOUSEEVENTF_LEFTUP))
+
+
 def press(key: str, command: bool = False) -> None:
     for vk, flags in key_events(key, command):
         _send(_key(vk=vk, flags=flags))

@@ -15,7 +15,7 @@ import json
 import string
 from dataclasses import asdict
 
-from .actions import WAIT_SECONDS, click_item, fill_field
+from .actions import WAIT_SECONDS, click_item, fill_field, focus_landed
 from .calls import MeteredWriter
 from .models import AxNode, Item, Missed, Screen, signature
 from .parse.marks import marks
@@ -50,6 +50,7 @@ MODIFIERS = ("", "add", "range")  # plain, add to the selection, extend the sele
 MODIFIER_ALIASES = {"control": "add", "ctrl": "add", "command": "add", "cmd": "add", "shift": "range"}
 CLICKS = ("click", "double_click", "right_click")
 MAX_TEXT = 2000
+DRAG_LIMIT = 600  # a drag by pixels stays inside this, either way, so it cannot fling off the screen
 MAX_UNUSABLE = 2  # replies in a row that are not an action; the second ends the takeover
 PREFIX = "driver: "  # on every history line the driver adds, so the story says who did what
 UNUSABLE = "the model's reply was unusable"
@@ -207,7 +208,15 @@ def _signature(move: DriveStep, items: list[Item], offscreen: list[AxNode] | Non
         name = item.text if item is not None else f"#{move.item}"
         return f"{move.action} {name!r}"
     if move.action == "type":
+        if move.item:
+            item = next((it for it in items if str(it.index) == move.item), None)
+            name = item.text if item is not None else f"#{move.item}"
+            return f"type {move.text!r} into {name!r}"
         return f"type {move.text!r}"
+    if move.action == "drag":
+        item = next((it for it in items if str(it.index) == move.item), None)
+        start = item.text if item is not None else f"#{move.item}"
+        return f"drag:{start}->{_drag_name(move, items)}"
     return move.action
 
 
@@ -248,7 +257,12 @@ def _target(move: DriveStep) -> str:
     if move.action in ("scroll_down", "scroll_up") and move.item:
         return f"item={move.item}"
     if move.action == "type":
-        return f"text={move.text!r}"
+        aimed = f"item={move.item} " if move.item else ""
+        return f"{aimed}text={move.text!r}"
+    if move.action == "drag":
+        if move.to:
+            return f"item={move.item} to={move.to}"
+        return f"item={move.item} dx={move.dx} dy={move.dy}"
     return ""
 
 
@@ -262,15 +276,9 @@ def act(move: DriveStep, screen: Screen, items: list[Item]) -> str:
     if move.action in CLICKS:
         return _click(move, screen, items)
     if move.action == "type":
-        field = screen.field
-        if field is None or not field.is_text:
-            return "type refused: no text field is focused"
-        text = move.text
-        if not text.strip() or len(text) > MAX_TEXT:
-            return f"type refused: the text must be 1 to {MAX_TEXT} characters"
-        if looks_credential(field.label) or looks_credential(field.placeholder) or looks_credential(text):
-            return f"type refused: {field.label!r} or the text looks like a credential"
-        return f"typed {text!r} into {field.label!r} {fill_field(field, text)}"
+        return _type(move, screen, items)
+    if move.action == "drag":
+        return _drag(move, screen, items)
     if move.action == "key":
         if move.key not in KEYS:
             return f"key refused: {move.key!r} is not one of {', '.join(KEYS)}"
@@ -309,13 +317,100 @@ def _scroll(move: DriveStep, screen: Screen, items: list[Item]) -> str:
     return f"scrolled {'down' if lines < 0 else 'up'}{name}"
 
 
+def _type(move: DriveStep, screen: Screen, items: list[Item]) -> str:
+    """Type into the focused text field, or into `item` by clicking it and sending keystrokes.
+
+    A spinner, a number box, or one part of a time is not a text field, so naming the item is the
+    way text reaches it. That path is not read back: the next screen shows whether it took.
+    """
+    text = move.text
+    if not text.strip() or len(text) > MAX_TEXT:
+        return f"type refused: the text must be 1 to {MAX_TEXT} characters"
+    if move.item:
+        item = next((it for it in items if str(it.index) == move.item), None)
+        if item is None:
+            return f"type refused: there is no item {move.item!r} on this screen"
+        if looks_credential(item.text) or looks_credential(text):
+            return f"type refused: {item.text!r} or the text looks like a credential"
+        try:
+            desktop.click_at(screen.to_points(item))
+        except Missed as e:
+            return f"type refused: {item.text!r} was not clicked, {e}"
+        desktop.clear_field()
+        desktop.type_text(text)
+        return f"typed {text!r} into {item.text!r} (keystrokes, not read back)"
+    field = screen.field
+    if field is None or not field.is_text:
+        return "type refused: no text field is focused"
+    if looks_credential(field.label) or looks_credential(field.placeholder) or looks_credential(text):
+        return f"type refused: {field.label!r} or the text looks like a credential"
+    return f"typed {text!r} into {field.label!r} {fill_field(field, text)}"
+
+
+def _whole_pixels(raw: str) -> int | None:
+    """A pixel offset, or None when the text is not a whole number."""
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _on_screen(screen: Screen, point: tuple[float, float]) -> bool:
+    x, y = point
+    return 0 <= x <= screen.image.width and 0 <= y <= screen.image.height
+
+
+def _drag_name(move: DriveStep, items: list[Item]) -> str:
+    if move.to:
+        item = next((it for it in items if str(it.index) == move.to), None)
+        return item.text if item is not None else f"#{move.to}"
+    return f"{move.dx},{move.dy}"
+
+
+def _drag(move: DriveStep, screen: Screen, items: list[Item]) -> str:
+    """Drag from one item to another, or by a pixel offset that stays on the capture."""
+    start = next((it for it in items if str(it.index) == move.item), None)
+    if start is None:
+        return f"drag refused: there is no item {move.item!r} on this screen"
+    if not _on_screen(screen, start.center):
+        return f"drag refused: {start.text!r} is not on the screen"
+    if move.to:
+        end = next((it for it in items if str(it.index) == move.to), None)
+        if end is None:
+            return f"drag refused: there is no item {move.to!r} on this screen"
+        if not _on_screen(screen, end.center):
+            return f"drag refused: {end.text!r} is not on the screen"
+        dest = screen.to_points(end)
+        where = end.text
+    elif move.dx.strip() or move.dy.strip():
+        dx = _whole_pixels(move.dx) if move.dx.strip() else 0
+        dy = _whole_pixels(move.dy) if move.dy.strip() else 0
+        if dx is None or dy is None:
+            return "drag refused: dx and dy are whole pixels"
+        if abs(dx) > DRAG_LIMIT or abs(dy) > DRAG_LIMIT:
+            return f"drag refused: a drag stays within {DRAG_LIMIT} pixels"
+        cx, cy = start.center
+        landed_at = (cx + dx, cy + dy)
+        if not _on_screen(screen, landed_at):
+            return "drag refused: the drag leaves the screen"
+        dest = (landed_at[0] / screen.scale, landed_at[1] / screen.scale)
+        where = f"{dx},{dy}"
+    else:
+        return "drag refused: name the item it ends on, or how far to drag"
+    try:
+        desktop.drag(screen.to_points(start), dest)
+    except Missed as e:
+        return f"drag refused: {start.text!r} was not dragged, {e}"
+    return f"dragged {start.text!r} to {where!r}"
+
+
 def _focus_offscreen(move: DriveStep, screen: Screen) -> str:
-    """Focus a control the app exposes but does not show, so the next capture has it in view."""
+    """Focus a control the app exposes but does not show, once the next read shows it focused."""
     nodes = screen.offscreen
     node = nodes[int(move.item)] if move.item.isdigit() and int(move.item) < len(nodes) else None
     if node is None:
         return f"focus_offscreen refused: there is no off-screen control {move.item!r}"
-    if desktop.ax_focus(node.ref):
+    if desktop.ax_focus(node.ref) and focus_landed(node.label):
         return f"focused {node.label!r} (off-screen control)"
     return f"focus_offscreen refused: {node.label!r} did not take the focus"
 

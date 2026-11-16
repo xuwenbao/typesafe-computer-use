@@ -28,6 +28,8 @@ def machine(monkeypatch):
     monkeypatch.setattr(desktop, "type_text", lambda text: log.append(("type", text)))
     monkeypatch.setattr(desktop, "clear_field", lambda: log.append(("clear",)))
     monkeypatch.setattr(desktop, "ax_focus", lambda ref: True)
+    monkeypatch.setattr(desktop, "focused_field", lambda: None)
+    monkeypatch.setattr(desktop, "drag", lambda start, end: log.append(("drag", start, end)))
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: log.append(("sleep", seconds)))
     return log
 
@@ -56,6 +58,12 @@ def test_a_number_that_is_not_on_the_screen_clicks_nothing(screen, machine):
 def test_typing_needs_a_focused_text_field(screen, machine):
     assert act(move("type", text="Kyoto"), screen, ITEMS) == "type refused: no text field is focused"
     assert machine == []
+
+
+def test_typing_into_an_item_clicks_it_and_sends_keystrokes(screen, machine):
+    line = act(move("type", item="0", text="30"), screen, ITEMS)
+    assert line == "typed '30' into 'Archive' (keystrokes, not read back)"
+    assert machine == [("click", (100.0, 60.0), "left", 1, None), ("clear",), ("type", "30")]
 
 
 def test_typing_fills_the_focused_field(screen, machine):
@@ -103,8 +111,16 @@ def test_focus_offscreen_focuses_the_named_control(screen, machine, monkeypatch)
     node = AxNode("AXTextField", "Record directory", 0, 0, 10, 10, True, ref="the-field")
     showing = replace(screen, offscreen=[node])
     monkeypatch.setattr(desktop, "ax_focus", lambda ref: machine.append(("focus", ref)) or True)
+    monkeypatch.setattr(desktop, "focused_field", lambda: text_field("Record directory"))
     assert act(move("focus_offscreen", item="0"), showing, ITEMS) == "focused 'Record directory' (off-screen control)"
     assert _signature(move("focus_offscreen", item="0"), ITEMS, showing.offscreen) == "focus_offscreen:Record directory"
+    assert machine == [("focus", "the-field")]
+
+    machine.clear()
+    monkeypatch.setattr(desktop, "focused_field", lambda: text_field("Other"))
+    assert act(move("focus_offscreen", item="0"), showing, ITEMS) == (
+        "focus_offscreen refused: 'Record directory' did not take the focus"
+    )
     assert machine == [("focus", "the-field")]
 
     machine.clear()
@@ -113,6 +129,25 @@ def test_focus_offscreen_focuses_the_named_control(screen, machine, monkeypatch)
         "focus_offscreen refused: 'Record directory' did not take the focus"
     )
     assert act(move("focus_offscreen", item="4"), showing, ITEMS).startswith("focus_offscreen refused: there is no")
+    assert machine == []
+
+
+CANVAS = [Item(0, "Oval", 1.0, 100.0, 100.0, 180.0, 140.0), Item(1, "Canvas", 1.0, 400.0, 400.0, 800.0, 700.0)]
+
+
+def test_a_drag_goes_from_one_item_to_another_or_by_pixels(screen, machine):
+    assert act(move("drag", item="0", to="1"), screen, CANVAS) == "dragged 'Oval' to 'Canvas'"
+    assert act(move("drag", item="0", dx="80", dy="-40"), screen, CANVAS) == "dragged 'Oval' to '80,-40'"
+    assert machine == [("drag", (70.0, 60.0), (300.0, 275.0)), ("drag", (70.0, 60.0), (110.0, 40.0))]
+    assert _signature(move("drag", item="0", to="1"), CANVAS) == "drag:Oval->Canvas"
+
+
+def test_a_drag_that_leaves_the_screen_or_names_nothing_is_refused(screen, machine):
+    edge = [Item(0, "Edge", 1.0, 1900.0, 100.0, 1980.0, 140.0)]
+    assert act(move("drag", item="0", dx="100"), screen, edge).startswith("drag refused: the drag leaves")
+    assert act(move("drag", item="0", dx="601"), screen, CANVAS).startswith("drag refused: a drag stays within")
+    assert act(move("drag", item="0"), screen, CANVAS).startswith("drag refused: name the item")
+    assert act(move("drag", item="9", to="1"), screen, CANVAS).startswith("drag refused: there is no item")
     assert machine == []
 
 

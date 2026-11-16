@@ -293,11 +293,12 @@ It picks from a whitelist, and code checks every move before anything reaches th
 | `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift. `control`, `ctrl`, `command`, and `cmd` are read as `add`, and `shift` as `range` |
 | `double_click` | the same item, clicked twice, so a file or folder opens |
 | `right_click` | the same item, with the right button |
-| `type` | a text field is focused, the text is 1 to 2000 characters, and neither the field's label nor the text looks like a credential |
+| `type` | the text is 1 to 2000 characters and looks like no credential. With `item`, the item is clicked and the text is typed there, which is how a spinner or a number box takes a value. Without `item`, a text field is focused |
 | `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5, and Start, which opens the Start menu on Windows and Spotlight on a Mac |
 | `shortcut` | Cmd/Ctrl with a letter or a digit, except Q, W, H, and M, which quit, close, hide, or minimize |
 | `scroll_down`, `scroll_up` | the window under the pointer, or the pane of `item` when a number on this screen is given |
-| `focus_offscreen` | the number is a control on this page that is not in view; focusing it scrolls it into view, and the next screen shows it as the focused field |
+| `drag` | from `item` to `to`, or by `dx` and `dy` capture pixels, each within 600, and both ends stay on the screen. Draws a shape, moves a slider, or drags a link or a file |
+| `focus_offscreen` | the number is a control on this page that is not in view; it counts only once the next read shows that control focused |
 | `wait` | always |
 | `done`, `give_up` | stop |
 

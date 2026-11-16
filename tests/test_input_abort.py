@@ -15,6 +15,7 @@ def input_events(monkeypatch):
         kCGEventMouseMoved="move",
         kCGEventLeftMouseDown="down",
         kCGEventLeftMouseUp="up",
+        kCGEventLeftMouseDragged="dragged",
         kCGMouseButtonLeft=0,
         CGEventCreateMouseEvent=lambda _, kind, point, button: (kind, point),
         CGEventCreateKeyboardEvent=lambda _, code, down: {"down": down},
@@ -53,6 +54,26 @@ def test_click_releases_the_button_when_interrupted_after_mouse_down(input_event
     with pytest.raises(KeyboardInterrupt):
         macos.click_at((200, 200))
     assert [event[0] for event in input_events] == ["move", "down", "up"]
+
+
+def test_a_drag_presses_drags_and_releases(input_events):
+    macos.drag((10.0, 20.0), (18.0, 28.0))
+    kinds = [event[0] for event in input_events]
+    assert kinds[0] == "move" and kinds[1] == "down" and kinds[-1] == "up"
+    assert kinds[2:-1] == ["dragged"] * macos.DRAG_STEPS
+    assert input_events[-1][1] == (18.0, 28.0)
+
+
+def test_a_drag_releases_the_button_when_a_move_fails(input_events, monkeypatch):
+    def post(event):
+        input_events.append(event)
+        if event[0] == "dragged":
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(macos, "_post", post)
+    with pytest.raises(KeyboardInterrupt):
+        macos.drag((10.0, 20.0), (50.0, 20.0))
+    assert [event[0] for event in input_events] == ["move", "down", "dragged", "up"]
 
 
 def test_start_opens_spotlight(input_events):

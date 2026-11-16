@@ -94,12 +94,27 @@ def close_popup(popup: Popup) -> str:
     return f"closed {popup.title}" if button is not None else f"closed {popup.title} with Escape"
 
 
+# A press on a text field means "put the cursor there". When the press is refused, focusing it is
+# the same outcome, and the next screen's focused field is then where typing goes.
+_TEXT_ROLES = frozenset({"AXTextField", "AXTextArea", "AXSearchField"})
+
+
+def focus_landed(label: str) -> bool:
+    """Whether the focused field is the control just asked for.
+
+    Queuing a focus is not the same as it taking. The next read is what shows it.
+    """
+    field = desktop.focused_field()
+    return field is not None and field.label.strip() == label.strip()
+
+
 def press_offscreen(key: str, screen: Screen) -> str:
     """Press a control the app exposes but does not show.
 
     AXPress does not need the element to be visible: a note row scrolled thousands of points down
-    and a link the browser parked above the viewport both take it. There is no pixel to fall back
-    on, so a refusal is the end of it and reads as a no-op.
+    and a link the browser parked above the viewport both take it. A text field that refuses the
+    press is focused instead, so the next step can type into it. Anything else has no pixel to
+    fall back on, so a refusal is the end of it and reads as a no-op.
     """
     nodes = screen.offscreen
     node = nodes[int(key)] if key.isdigit() and int(key) < len(nodes) else None
@@ -107,6 +122,10 @@ def press_offscreen(key: str, screen: Screen) -> str:
         return f"press_offscreen refused: there is no off-screen control {key!r}"
     if desktop.ax_press(node.ref):
         return f"pressed {node.label!r} (off-screen control) via accessibility"
+    if node.role in _TEXT_ROLES and desktop.ax_focus(node.ref):
+        if focus_landed(node.label):
+            return f"focused {node.label!r} (off-screen control)"
+        return f"press_offscreen refused: {node.label!r} did not take the focus"
     return f"press_offscreen refused: {node.label!r} did not accept the press"
 
 

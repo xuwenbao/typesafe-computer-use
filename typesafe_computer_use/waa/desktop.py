@@ -21,6 +21,7 @@ from pathlib import Path
 from PIL import Image
 
 from ..models import AxNode, Field
+from ..uia_roles import ROLE_TO_CONTROL_TYPE_ID
 from . import tree
 
 NextObs = Callable[[list[str]], dict]
@@ -138,6 +139,11 @@ class WAADesktop:
         else:
             self._do(f"pyautogui.click({x}, {y})")
 
+    def drag(self, start: tuple[float, float], end: tuple[float, float]) -> None:
+        x1, y1 = round(start[0]), round(start[1])
+        x2, y2 = round(end[0]), round(end[1])
+        self._do(f"pyautogui.moveTo({x1}, {y1}); pyautogui.dragTo({x2}, {y2}, duration=0.5, button='left')")
+
     def press(self, key: str, command: bool = False) -> None:
         if command and key == "[":
             self._do("pyautogui.hotkey('alt', 'left')")  # Back, where Command-[ is Back on a Mac
@@ -225,13 +231,68 @@ class WAADesktop:
         return True
 
     def ax_focus(self, ref) -> bool:
-        return False
+        """Queue a focus of the named element. Whether it took is the next screen's focused field.
+
+        The code runs on the VM with the rest of this step, so True means it was queued, not that
+        the element already has the focus. A control that supports it is scrolled into view first.
+        """
+        if not isinstance(ref, dict):
+            return False
+        name = (ref.get("name") or "").strip()
+        if not name:
+            return False
+        self._do(_focus_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or "")))
+        return True
 
     def ax_set_value(self, ref, text: str) -> bool:
         return False
 
     def ax_value(self, ref) -> str | None:
         return None
+
+
+def _focus_element(name: str, control_type: int | None) -> str:
+    """VM code that focuses the named element, scrolling it into view when the control allows it.
+
+    `name` is one Python literal. A missing element, or one that cannot scroll, is caught, so
+    input queued after this in the same step still runs.
+    """
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"  # UIA_NamePropertyId
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"  # UIA_ControlTypePropertyId
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    # The first line stays a simple statement: WAA prefixes it with `... False; `, and a `try`
+    # there is a syntax error. The block below is where a missing element is swallowed.
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"  # TreeScope_Descendants
+        "    if _item is None:\n"
+        "        print('focus failed: element not found')\n"
+        "    else:\n"
+        "        try:\n"
+        "            _scroll = _item.GetCurrentPattern(10017)\n"  # UIA_ScrollItemPatternId
+        "            _scroll.QueryInterface(api.IUIAutomationScrollItemPattern).ScrollIntoView()\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "        try:\n"
+        "            _item.SetFocus()\n"
+        "        except Exception as _err:\n"
+        "            print('focus failed: SetFocus', _err)\n"
+        "        try:\n"
+        "            _legacy = _item.GetCurrentPattern(10018)\n"  # UIA_LegacyIAccessiblePatternId
+        "            _legacy.QueryInterface(api.IUIAutomationLegacyIAccessiblePattern).Select(1)\n"  # SELFLAG_TAKEFOCUS
+        "        except Exception as _err:\n"
+        "            print('focus failed: Select', _err)\n"
+        "except Exception as _err:\n"
+        "    print('focus failed:', _err)"
+    )
 
 
 def _open_list_item(name: str) -> str:

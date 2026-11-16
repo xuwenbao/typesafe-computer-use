@@ -199,6 +199,37 @@ def test_a_scroll_aimed_at_a_point_parks_the_pointer_there(monkeypatch):
     assert moved == [(30, 41)]
 
 
+def test_a_drag_presses_moves_and_releases(monkeypatch):
+    sent = []
+    moved = []
+    monkeypatch.setattr(windows, "_move", moved.append)
+    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 20.0))
+    monkeypatch.setattr(windows, "_send", sent.append)
+    windows.drag((10.0, 20.0), (18.0, 28.0))
+    assert moved[0] == (10, 20) and moved[-1] == (18, 28)
+    assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
+    assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
+    assert len(moved) == windows.DRAG_STEPS + 1
+
+
+def test_a_drag_releases_the_button_when_a_move_fails(monkeypatch):
+    sent = []
+    moved = []
+
+    def move(point):
+        moved.append(point)
+        if len(moved) > 2:
+            raise OSError("blocked")
+
+    monkeypatch.setattr(windows, "_move", move)
+    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 20.0))
+    monkeypatch.setattr(windows, "_send", sent.append)
+    with pytest.raises(OSError):
+        windows.drag((10.0, 20.0), (50.0, 20.0))
+    assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
+    assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
+
+
 def test_a_click_that_landed_presses_and_releases(monkeypatch):
     sent = []
     monkeypatch.setattr(windows, "_move", lambda point: None)

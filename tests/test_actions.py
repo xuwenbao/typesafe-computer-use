@@ -70,6 +70,37 @@ def test_an_off_screen_control_is_pressed_through_accessibility(screen, calls, m
     assert pressed == [ref] and calls == []
 
 
+def test_a_refused_press_of_an_offscreen_text_field_focuses_it(screen, calls, monkeypatch):
+    ref = {"role": "AXTextField", "name": "Record directory"}
+    focused = []
+    monkeypatch.setattr(desktop, "ax_press", lambda r: False)
+    monkeypatch.setattr(desktop, "ax_focus", lambda r: focused.append(r) or True)
+    monkeypatch.setattr(
+        desktop, "focused_field", lambda: Field("AXTextField", "Record directory", "", "", 0, 0, 10, 10)
+    )
+    node = AxNode(role="AXTextField", label="Record directory", x=0.0, y=900.0, w=200.0, h=24.0, pressable=True, ref=ref)
+    assert press_offscreen("0", replace(screen, offscreen=[node])) == "focused 'Record directory' (off-screen control)"
+    assert focused == [ref] and calls == []
+
+
+def test_a_focus_that_does_not_land_is_refused(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: True)
+    monkeypatch.setattr(desktop, "focused_field", lambda: Field("AXTextField", "Other", "", "", 0, 0, 10, 10))
+    node = AxNode(role="AXTextField", label="Record directory", x=0.0, y=900.0, w=200.0, h=24.0, pressable=True, ref=object())
+    refusal = press_offscreen("0", replace(screen, offscreen=[node]))
+    assert refusal == "press_offscreen refused: 'Record directory' did not take the focus"
+
+
+def test_a_refused_press_of_an_offscreen_button_stays_a_refusal(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: pytest.fail("a button is not focused"))
+    node = AxNode(role="AXButton", label="Save", x=0.0, y=900.0, w=80.0, h=24.0, pressable=True, ref=object())
+    refusal = press_offscreen("0", replace(screen, offscreen=[node]))
+    assert refusal == "press_offscreen refused: 'Save' did not accept the press"
+    assert calls == []
+
+
 def test_a_refused_off_screen_press_is_a_no_op_with_nothing_to_click(screen, calls, monkeypatch):
     monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
     node = AxNode(role="AXLink", label="Register Now", x=0.0, y=-4200.0, w=120.0, h=32.0, pressable=True, ref=object())

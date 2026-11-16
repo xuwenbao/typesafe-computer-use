@@ -166,6 +166,27 @@ def click_at(point: tuple[float, float], button: str = "left", count: int = 1, m
         one(click)
 
 
+DRAG_STEPS = 8
+
+
+def drag(start: tuple[float, float], end: tuple[float, float]) -> None:
+    """Press at `start`, drag to `end`, and release, including when a move in between fails."""
+    check_abort()
+    mouse = Quartz.kCGMouseButtonLeft
+    _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, start, mouse))
+    check_abort()
+    _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, start, mouse))
+    try:
+        for step in range(1, DRAG_STEPS + 1):
+            point = (
+                start[0] + (end[0] - start[0]) * step / DRAG_STEPS,
+                start[1] + (end[1] - start[1]) * step / DRAG_STEPS,
+            )
+            _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDragged, point, mouse))
+    finally:
+        _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, end, mouse))
+
+
 def press(key: str, command: bool = False) -> None:
     check_abort()
     # `start` is the Windows key. On a Mac the same action opens Spotlight, Command-Space.

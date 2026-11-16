@@ -30,6 +30,9 @@ CONTROL_TYPE_TO_ROLE = {name: role for name, _, role in _TYPES}
 CONTROL_TYPE_ID_TO_ROLE = {type_id: role for _, type_id, role in _TYPES}
 
 DOCUMENT_ID = 50030  # UIA_DocumentControlTypeId: Notepad's editor, and a browser's page
+# The walk's roles, back to a control type, so a focus can ask for the same element by both.
+# A document the walk kept is a text area; a search field has no type of its own here.
+ROLE_TO_CONTROL_TYPE_ID = {role: type_id for _, type_id, role in _TYPES} | {"AXTextArea": DOCUMENT_ID}
 STATE_READ_ONLY = 0x40  # STATE_SYSTEM_READONLY, in LegacyIAccessible's state
 
 

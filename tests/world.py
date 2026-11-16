@@ -333,6 +333,11 @@ class World:
             self.mouse.append(at)
         self.apply("scroll_down" if lines < 0 else "scroll_up")
 
+    def drag(self, start: tuple[float, float], end: tuple[float, float]) -> None:
+        self.mouse.append(start)
+        self.mouse.append(end)
+        self.apply(f"drag:{start}->{end}")
+
     def type_text(self, text: str) -> None:
         self.apply(f"type:{text}", append=True)
 
@@ -521,7 +526,7 @@ class FakeWriter:
                 "question": "",
                 **scripted,
             }
-        elif asked == {"reason", "action", "item", "text", "key", "modifier", "achieved"}:
+        elif asked == {"reason", "action", "item", "text", "key", "modifier", "to", "dx", "dy", "achieved"}:
             self.drive_packets.append(packet)
             scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
             scripted = scripted(packet) if callable(scripted) else dict(scripted)
@@ -540,6 +545,9 @@ class FakeWriter:
                 "text": "",
                 "key": "",
                 "modifier": "",
+                "to": "",
+                "dx": "",
+                "dy": "",
                 "achieved": False,
                 **scripted,
             }

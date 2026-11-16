@@ -242,10 +242,16 @@ def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env, mon
 def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
     assert "press escape to close it, then press the shortcut" in DRIVE_SYSTEM
     assert "press start, type its name into the search box" in DRIVE_SYSTEM
-    assert "Do not give_up while a next step would get closer" in DRIVE_SYSTEM
+    assert "Do not give_up because one way failed" in DRIVE_SYSTEM
+    assert "A spinner, a number box" in DRIVE_SYSTEM
+    assert "do not press escape until the selection has been used" in DRIVE_SYSTEM
+    assert "cut them and paste them" in DRIVE_SYSTEM
+    assert "%USERPROFILE%" in DRIVE_SYSTEM
+    assert "drag: drag from item number" in DRIVE_SYSTEM
     assert "Keep the reason to three sentences." in DRIVE_SYSTEM
     assert "Do not click Previous or Next once per month." in DRIVE_SYSTEM
-    assert "focus_offscreen" in DRIVE_SYSTEM
+    assert "type into it directly" in DRIVE_SYSTEM
+    assert "whether or not it came into view" in DRIVE_SYSTEM
     assert "do not tell it to repeat a click" in ANSWER_SYSTEM
     assert "click the heading that shows the month and year" in ANSWER_SYSTEM
     assert "offscreen_controls lists controls on this page" in ANSWER_SYSTEM

@@ -221,6 +221,41 @@ def test_a_desktop_list_item_opens_by_its_default_action():
     assert repr("Recycle Bin") in code
 
 
+def test_focusing_a_named_element_queues_a_scroll_into_view_and_a_focus():
+    desktop = over()
+    assert desktop.ax_focus({"role": "AXTextField", "name": "Record directory"}) is True
+    code = desktop.actions[0]
+    # WAA joins its prefix onto the first line with a semicolon, so that line cannot be a block.
+    ast.parse("import pyautogui; import time; pyautogui.FAILSAFE = False; " + code)
+    assert "SetFocus" in code and "ScrollIntoView" in code and "Select(1)" in code
+    assert repr("Record directory") in code
+    assert "50004" in code  # Edit, so a label of the same name is not the field
+
+
+def test_a_drag_is_a_move_then_a_drag():
+    desktop = over()
+    desktop.drag((12.4, 20.6), (80.2, 40.8))
+    code = desktop.actions[0]
+    ast.parse(code)
+    assert code == "pyautogui.moveTo(12, 21); pyautogui.dragTo(80, 41, duration=0.5, button='left')"
+
+
+def test_a_focus_without_a_name_queues_nothing():
+    desktop = over()
+    assert desktop.ax_focus({"role": "AXTextField", "name": "  "}) is False
+    assert desktop.ax_focus({"role": "AXButton"}) is False
+    assert desktop.actions == []
+
+
+def test_a_focus_of_an_unknown_role_searches_by_name_alone():
+    desktop = over()
+    assert desktop.ax_focus({"role": "AXSearchField", "name": "Find"}) is True
+    code = desktop.actions[0]
+    ast.parse("import pyautogui; import time; pyautogui.FAILSAFE = False; " + code)
+    assert "30003" not in code
+    assert repr("Find") in code
+
+
 def test_a_folder_window_list_item_stays_a_click():
     desktop = over(None, None, _explorer("Documents"))
     assert desktop.ax_press({"role": "AXRow", "name": "Doc01.docx"}) is False
