@@ -28,7 +28,7 @@ from typing import Protocol
 
 from PIL import Image
 
-from .models import AxNode, Field
+from .models import AxNode, ElementState, Field
 
 
 class Desktop(Protocol):
@@ -67,6 +67,8 @@ class Desktop(Protocol):
     def ax_focus(self, ref) -> bool: ...
     def ax_set_value(self, ref, text: str) -> bool: ...
     def ax_value(self, ref) -> str | None: ...
+    def ax_operate(self, ref, operation: str, value: str | None = None) -> bool: ...
+    def element_state(self, ref) -> ElementState | None: ...
 
 
 class NoDesktop:

@@ -1,6 +1,6 @@
 """The WAA VM's foreground UI Automation tree, fetched and read by jev.
 
-`script` is `uia_roles.py` followed by `walk_vm.py`: the VM runs it with `python -c` and prints
+`script` is `uia_roles.py`, `uia_patterns.py`, then `walk_vm.py`: the VM runs it with `python -c` and prints
 JSON. The fetch runs on its own thread. A failure, a timeout, or a window that is not there is a
 step with no tree, and the screen is still read from the screenshot. Nothing here reaches this
 machine; `run` is the call that posts the script to the VM.
@@ -17,8 +17,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..ax_walk import AX_PRESS, AxAttrs, walk_actionable
+from ..ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
 from ..models import AxNode, Field
+from ..uia_patterns import ID_TO_NAME
 
 WALK_SECONDS = 8.0  # the script stops itself here
 GRACE_SECONDS = 2.0  # how long the client waits after that before giving up
@@ -34,8 +35,9 @@ PACKAGE = Path(__file__).resolve().parent.parent
 def script() -> str:
     """The program the VM runs: the role table, the walk, and a call to `main`."""
     roles = (PACKAGE / "uia_roles.py").read_text(encoding="utf-8")
+    patterns = (PACKAGE / "uia_patterns.py").read_text(encoding="utf-8")
     walk = (PACKAGE / "waa" / "walk_vm.py").read_text(encoding="utf-8")
-    return f"{roles}\n{walk}\nmain()\n"
+    return f"{roles}\n{patterns}\n{walk}\nmain()\n"
 
 
 def app_name(exe: str) -> str:
@@ -177,8 +179,24 @@ def _attrs(node: dict) -> AxAttrs:
     return AxAttrs(node.get("role") or "", (node.get("name") or "").strip(), frame)
 
 
-def _actions(node: dict) -> list[str]:
-    return [AX_PRESS] if node.get("pressable") else []
+def _actions(node: dict) -> AxFacts:
+    names: list[str] = [AX_PRESS] if node.get("pressable") else []
+    for pattern_id in node.get("patterns") or []:
+        name = ID_TO_NAME.get(pattern_id)
+        if name and name not in names:
+            names.append(name)
+    enabled = node.get("enabled")
+    if not isinstance(enabled, bool):
+        enabled = None
+    checked = node.get("checked")
+    expanded = node.get("expanded")
+    return AxFacts(
+        tuple(names),
+        enabled=enabled,
+        checked=checked if isinstance(checked, bool) else None,
+        expanded=expanded if isinstance(expanded, bool) else None,
+        current=node.get("value") or None,
+    )
 
 
 def read(raw: dict | None, display_w: float, display_h: float) -> Reading:

@@ -20,7 +20,8 @@ from pathlib import Path
 from PIL import Image
 
 from ..config import settings
-from ..models import AxNode, Field
+from ..models import AxNode, ElementState, Field
+from ..uia_patterns import ID_TO_NAME, OPERATION_PATTERN, OPERATIONS, PATTERN_IDS, VALUE
 from ..uia_roles import ROLE_TO_CONTROL_TYPE_ID
 from . import tree
 
@@ -245,10 +246,145 @@ class WAADesktop:
         return True
 
     def ax_set_value(self, ref, text: str) -> bool:
-        return False
+        """Queue a Value-pattern write, after this observation's tree has arrived.
+
+        True means it was queued. The script sets the value and reads it back; a mismatch is caught
+        inside the VM and does not abort the step.
+        """
+        self._ensure()
+        if not isinstance(ref, dict):
+            return False
+        supported = {ID_TO_NAME.get(pattern_id) for pattern_id in ref.get("patterns") or []}
+        if VALUE not in supported:
+            return False
+        name = (ref.get("name") or "").strip()
+        if not name:
+            return False
+        self._do(_set_value_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""), text))
+        return True
 
     def ax_value(self, ref) -> str | None:
         return None
+
+    def ax_operate(self, ref, operation: str, value: str | None = None) -> bool:
+        """Queue one UIA operation, after this observation's tree has arrived.
+
+        True means the operation was queued, which is how `ax_focus` reports a focus. The element
+        has to list the pattern; otherwise the click falls through to the pointer.
+        """
+        self._ensure()
+        if operation not in OPERATIONS or not isinstance(ref, dict):
+            return False
+        pattern = OPERATION_PATTERN[operation]
+        supported = {ID_TO_NAME.get(pattern_id) for pattern_id in ref.get("patterns") or []}
+        if pattern not in supported:
+            return False
+        name = (ref.get("name") or "").strip()
+        if not name:
+            return False
+        self._do(_operate_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""), operation, value))
+        return True
+
+    def element_state(self, ref) -> ElementState | None:
+        """Hand over whatever input is waiting, then answer from the tree of the screen that follows."""
+        self._step()
+        if self._ensure().raw is None or not isinstance(ref, dict):
+            return None
+        reading = self._current()
+        name = (ref.get("name") or "").strip()
+        role = ref.get("role") or ""
+        for node in reading.found:
+            if node.label == name and node.role == role:
+                return ElementState(True, True, node.enabled)
+        for node in reading.offscreen:
+            if node.label == name and node.role == role:
+                return ElementState(True, False, node.enabled)
+        return ElementState(False, False, None)
+
+
+_PATTERN_INTERFACE = {
+    "toggle": "IUIAutomationTogglePattern",
+    "select": "IUIAutomationSelectionItemPattern",
+    "expand_toggle": "IUIAutomationExpandCollapsePattern",
+    "scroll_into_view": "IUIAutomationScrollItemPattern",
+    "set_range": "IUIAutomationRangeValuePattern",
+}
+
+
+def _operate_element(name: str, control_type: int | None, operation: str, value: str | None) -> str:
+    """VM code that runs one pattern on the named element. `name` is one Python literal.
+
+    The pattern id is the shared table's. A missing element or a refused call is caught, so input
+    queued after this in the same step still runs.
+    """
+    pattern_id = PATTERN_IDS[OPERATION_PATTERN[operation]]
+    interface = _PATTERN_INTERFACE[operation]
+    if operation == "set_range":
+        number = float(value or "")
+        call = (
+            f"if {number!r} < _p.CurrentMinimum or {number!r} > _p.CurrentMaximum:\n"
+            f"            print('operate failed: outside the range')\n"
+            f"        else:\n"
+            f"            _p.SetValue({number!r})"
+        )
+    elif operation == "expand_toggle":
+        call = "_p.Expand() if _p.CurrentExpandCollapseState == 0 else _p.Collapse()"
+    else:
+        call = {"toggle": "_p.Toggle()", "select": "_p.Select()", "scroll_into_view": "_p.ScrollIntoView()"}[operation]
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"
+        "    if _item is None:\n"
+        "        print('operate failed: element not found')\n"
+        "    else:\n"
+        f"        _raw = _item.GetCurrentPattern({pattern_id})\n"
+        f"        _p = _raw.QueryInterface(api.{interface})\n"
+        f"        {call}\n"
+        "except Exception as _err:\n"
+        "    print('operate failed:', _err)"
+    )
+
+
+def _set_value_element(name: str, control_type: int | None, text: str) -> str:
+    """VM code that sets a Value-pattern control and reads it back. `text` is one Python literal."""
+    pattern_id = PATTERN_IDS[VALUE]
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"
+        "    if _item is None:\n"
+        "        print('operate failed: element not found')\n"
+        "    else:\n"
+        f"        _raw = _item.GetCurrentPattern({pattern_id})\n"
+        "        _p = _raw.QueryInterface(api.IUIAutomationValuePattern)\n"
+        f"        _p.SetValue({text!r})\n"
+        "        _got = _p.CurrentValue\n"
+        f"        if _got != {text!r}:\n"
+        "            print('operate failed: read back', _got)\n"
+        "except Exception as _err:\n"
+        "    print('operate failed:', _err)"
+    )
 
 
 def _focus_element(name: str, control_type: int | None) -> str:

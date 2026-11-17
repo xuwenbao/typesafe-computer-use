@@ -60,7 +60,7 @@ for _windows_module in ("psutil", "uiautomation", "win32api", "win32con", "win32
 import pytest  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from typesafe_computer_use import config, macos, windows  # noqa: E402
+from typesafe_computer_use import config, macos, windows, windows_session  # noqa: E402
 from typesafe_computer_use.browser import cdp  # noqa: E402
 from typesafe_computer_use.models import Item, Screen  # noqa: E402
 from typesafe_computer_use.parse import caption as parse_caption  # noqa: E402
@@ -103,7 +103,7 @@ def no_real_machine(monkeypatch):
 
         return call
 
-    for name in ("_post", "osascript", "screenshot", "open_path"):
+    for name in ("_post", "osascript", "screenshot", "open_path", "element_state"):
         monkeypatch.setattr(macos, name, refuse(f"macos.{name}"))
     monkeypatch.setattr(macos, "mouse_location", lambda: (500.0, 500.0))
     if REAL_ACCESSIBILITY:
@@ -111,8 +111,30 @@ def no_real_machine(monkeypatch):
             monkeypatch.setattr(macos.AS, name, refuse(f"ApplicationServices.{name}"))
     # The Windows adapter: SendInput and the cursor carry all input; the rest launch, activate,
     # open, capture, or act on another app's element.
-    for name in ("_send", "_move", "screenshot", "activate", "open_url", "open_path", "ax_press", "ax_focus", "ax_set_value"):
+    for name in (
+        "_send",
+        "_move",
+        "screenshot",
+        "activate",
+        "open_url",
+        "open_path",
+        "ax_press",
+        "ax_focus",
+        "ax_set_value",
+        "ax_operate",
+        "element_state",
+    ):
         monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))
+    for name in (
+        "enable_child_session",
+        "connect_child_session",
+        "launch_in_session",
+        "create_session_pipe",
+        "attach_session_pipe",
+        "in_console_session",
+        "collect_facts",
+    ):
+        monkeypatch.setattr(windows_session, name, refuse(f"windows_session.{name}"))
     monkeypatch.setattr(windows, "mouse_location", lambda: (500.0, 500.0))
 
     # The browser backend: no Chrome and no process of any kind, nothing over CDP, and no

@@ -18,9 +18,20 @@ MAX_DEPTH = 30
 MAX_WIDTH = 256
 MAX_NODES = 8000
 SECONDS = 8.0
-INVOKE = 10000  # UIA_InvokePatternId
-VALUE = 10002  # UIA_ValuePatternId
-LEGACY = 10018  # UIA_LegacyIAccessiblePatternId
+
+
+def _pattern_table():
+    """The shared pattern ids. The import works in jev; the names work in the concatenated VM script."""
+    try:
+        from typesafe_computer_use.uia_patterns import PATTERN_IDS as table
+    except ImportError:
+        table = globals()["PATTERN_IDS"]
+    return table
+
+
+INVOKE = _pattern_table()["invoke"]
+VALUE = _pattern_table()["value"]
+LEGACY = 10018  # UIA_LegacyIAccessiblePatternId, which is not an action jev offers the model
 READ_ONLY = 0x40  # STATE_SYSTEM_READONLY
 TEXT_ROLES = ("AXTextField", "AXTextArea")
 
@@ -40,6 +51,15 @@ def _rules():
         return document_role(node.legacy_state()) if control_type == DOCUMENT_ID else role_for_id(control_type)
 
     return role_of, pressable
+
+
+def _control_facts(node):
+    """Enabled and supported patterns, when the element can say. Missing methods mean unknown."""
+    enabled = node.enabled() if callable(getattr(node, "enabled", None)) else None
+    patterns = list(node.pattern_ids()) if callable(getattr(node, "pattern_ids", None)) else []
+    checked = node.checked() if callable(getattr(node, "checked", None)) else None
+    expanded = node.expanded() if callable(getattr(node, "expanded", None)) else None
+    return {"enabled": enabled, "patterns": patterns, "checked": checked, "expanded": expanded}
 
 
 def empty(reason):
@@ -141,6 +161,7 @@ def walk(root, *, clock, focus=None, seconds=SECONDS, max_depth=MAX_DEPTH, max_w
             "focused": focused,
             "value": node.value() or "",
             "pressable": can_press(bool(node.has_invoke()), node.default_action() or ""),
+            **_control_facts(node),
             "children": children,
         }
 
@@ -173,6 +194,7 @@ def walk(root, *, clock, focus=None, seconds=SECONDS, max_depth=MAX_DEPTH, max_w
                 "focused": True,
                 "value": chosen.value() or "",
                 "pressable": can_press(bool(chosen.has_invoke()), chosen.default_action() or ""),
+                **_control_facts(chosen),
                 "children": [],
             }
         )
@@ -266,6 +288,29 @@ class LiveElement:
 
     def has_invoke(self):
         return self._pattern(INVOKE) is not None
+
+    def enabled(self):
+        try:
+            return bool(self.raw.CurrentIsEnabled)
+        except Exception:
+            return None
+
+    def pattern_ids(self):
+        return [pattern_id for pattern_id in _pattern_table().values() if self._pattern(pattern_id) is not None]
+
+    def checked(self):
+        pattern = self._pattern(_pattern_table()["toggle"])
+        try:
+            return bool(int(pattern.CurrentToggleState)) if pattern is not None else None
+        except Exception:
+            return None
+
+    def expanded(self):
+        pattern = self._pattern(_pattern_table()["expand_collapse"])
+        try:
+            return int(pattern.CurrentExpandCollapseState) != 0 if pattern is not None else None
+        except Exception:
+            return None
 
     def default_action(self):
         pattern = self._pattern(LEGACY)

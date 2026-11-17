@@ -37,6 +37,18 @@ class Abort(Exception):
     """Raised when the user triggers an escape hatch."""
 
 
+@dataclass(frozen=True)
+class ElementState:
+    """Whether an accessibility element can still be acted on, read just before the action.
+
+    `enabled` is None when the platform cannot say. That is not the same as disabled.
+    """
+
+    present: bool
+    visible: bool
+    enabled: bool | None = None
+
+
 class Missed(Exception):
     """A click that could not be aimed: the pointer did not reach the point, so nothing was pressed."""
 
@@ -136,6 +148,14 @@ class Item:
     y2: float
     role: str = ""
     source: str = "ocr"
+    controls: tuple[str, ...] = ()  # UIA operations this control accepts, when it came from the tree
+    enabled: bool | None = None  # None when the tree did not say; False refuses the action
+    checked: bool | None = None
+    expanded: bool | None = None
+    current: str | None = None  # the control's value, when it has one
+    low: float | None = None  # RangeValue minimum
+    high: float | None = None  # RangeValue maximum
+    writable: bool | None = None  # False when the value is read-only
 
     @property
     def center(self) -> tuple[float, float]:
@@ -164,6 +184,14 @@ class AxNode:
     pressable: bool
     ref: object | None = field(default=None, compare=False, repr=False)
     covered_by: Popup | None = None
+    enabled: bool | None = None  # None when the tree did not say
+    patterns: tuple[str, ...] = ()
+    checked: bool | None = None
+    expanded: bool | None = None
+    current: str | None = None
+    low: float | None = None
+    high: float | None = None
+    writable: bool | None = None
 
     @property
     def role_word(self) -> str:

@@ -492,6 +492,21 @@ def changed_tiles(
     return [tile for tile in tiles if tile_changed(thumb, previous, tile, divisor, threshold)]
 
 
+def pixels_changed(before: Image.Image, after: Image.Image) -> bool:
+    """Whether two captures differ by the same tile test a step uses, without reading any text.
+
+    A batch of driver actions uses this between two of them. It does not run OCR or the icon detector.
+    """
+    if before.size != after.size or not before.width or not before.height:
+        return True
+    width, height = before.size
+
+    def thumb(image: Image.Image) -> Image.Image:
+        return image.convert("L").resize((max(1, width // THUMB_DIVISOR), max(1, height // THUMB_DIVISOR)))
+
+    return bool(changed_tiles(thumb(before), thumb(after), tiles_in((0, 0, width, height))))
+
+
 def tile_clusters(changed: list[Box], tile: float = TILE_PX) -> list[list[Box]]:
     """The changed tiles grouped into blobs that touch along a side or at a corner.
 
@@ -721,6 +736,34 @@ def in_field(block: Item, screen: Screen) -> bool:
     return field.x < x < field.x + field.w and field.y < y < field.y + field.h
 
 
+def _carried_item(item: Item) -> dict:
+    """The same facts, copied from the control item onto the text or icon it replaces."""
+    return {
+        "controls": item.controls,
+        "enabled": item.enabled,
+        "checked": item.checked,
+        "expanded": item.expanded,
+        "current": item.current,
+        "low": item.low,
+        "high": item.high,
+        "writable": item.writable,
+    }
+
+
+def _carried(node: AxNode) -> dict:
+    """The control facts an item keeps when it came from the accessibility tree."""
+    return {
+        "controls": node.patterns,
+        "enabled": node.enabled,
+        "checked": node.checked,
+        "expanded": node.expanded,
+        "current": node.current,
+        "low": node.low,
+        "high": node.high,
+        "writable": node.writable,
+    }
+
+
 def to_ax_items(nodes: list[AxNode], scale: float) -> list[Item]:
     """Controls as items, converted from screen points to capture pixels."""
     return [
@@ -734,6 +777,7 @@ def to_ax_items(nodes: list[AxNode], scale: float) -> list[Item]:
             y2=(node.y + node.h) * scale,
             role=node.role_word,
             source="ax",
+            **_carried(node),
         )
         for i, node in enumerate(nodes)
     ]
@@ -772,13 +816,24 @@ def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int | No
         if block is not None:
             taken.add(block)
             text = control.text if len(control.text) >= len(found[block].text) else found[block].text
-            merged.append((replace(found[block], text=text, role=control.role, source="ax+ocr"), origin))
+            merged.append(
+                (replace(found[block], text=text, role=control.role, source="ax+ocr", **_carried_item(control)), origin)
+            )
             continue
         icon = _best_icon(control, found, taken)
         if icon is not None and (control.text or found[icon].text):
             taken.add(icon)
             merged.append(
-                (replace(found[icon], text=control.text or found[icon].text, role=control.role, source="ax+icon"), origin)
+                (
+                    replace(
+                        found[icon],
+                        text=control.text or found[icon].text,
+                        role=control.role,
+                        source="ax+icon",
+                        **_carried_item(control),
+                    ),
+                    origin,
+                )
             )
         elif control.text:
             merged.append((control, origin))

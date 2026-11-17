@@ -67,6 +67,10 @@ def test_a_button_comes_back_as_a_button():
             "focused": False,
             "value": "",
             "pressable": True,
+            "enabled": None,
+            "patterns": [],
+            "checked": None,
+            "expanded": None,
             "children": [],
         }
     ]

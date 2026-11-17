@@ -24,7 +24,7 @@ from typesafe_sdk import Noul
 
 from typesafe_computer_use import actions, runner
 from typesafe_computer_use.actions import Context
-from typesafe_computer_use.models import AxNode, Field, Item, Popup, Screen
+from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import RunConfig, RunState, run
 
@@ -373,6 +373,8 @@ class World:
         monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
         monkeypatch.setattr(desktop, "click_at", self.click_at)
         monkeypatch.setattr(desktop, "ax_press", self.ax_press)
+        monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: False)
+        monkeypatch.setattr(desktop, "element_state", lambda ref: ElementState(True, True, None))
         monkeypatch.setattr(desktop, "press", self.press)
         monkeypatch.setattr(desktop, "scroll", self.scroll)
         monkeypatch.setattr(desktop, "type_text", self.type_text)
@@ -526,7 +528,7 @@ class FakeWriter:
                 "question": "",
                 **scripted,
             }
-        elif asked == {"reason", "action", "item", "text", "key", "modifier", "to", "dx", "dy", "achieved"}:
+        elif asked == {"reason", "actions"}:
             self.drive_packets.append(packet)
             scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
             scripted = scripted(packet) if callable(scripted) else dict(scripted)
@@ -539,8 +541,8 @@ class FakeWriter:
                 "scroll_up",
             ):
                 scripted["item"] = numbers.get(scripted["item"], scripted["item"])
-            reply = {
-                "reason": "scripted",
+            action = {
+                "action": "give_up",
                 "item": "",
                 "text": "",
                 "key": "",
@@ -551,6 +553,7 @@ class FakeWriter:
                 "achieved": False,
                 **scripted,
             }
+            reply = {"reason": "scripted", "actions": [action]}
         else:
             raise AssertionError(f"the writer was asked for {sorted(asked)}")
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(reply))])

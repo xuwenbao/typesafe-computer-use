@@ -63,7 +63,9 @@ does for free has to be rebuilt here as deterministic state.
 ## Install
 
 macOS 14 or newer on Apple silicon, Python 3.12 or newer, [uv](https://docs.astral.sh/uv/).
-Windows 10 and 11 are experimental; see [Windows](docs/windows.md). An Intel Mac can run only the
+Windows 10 and 11 are experimental; see [Windows](docs/windows.md). On Windows Pro, Enterprise,
+or Education, `clicker session` runs the task in a child session; see
+[the isolated session](docs/windows-session.md). An Intel Mac can run only the
 [browser backend](docs/browser-backend.md): the desktop perception needs PyTorch, which ships no
 build for it.
 
@@ -92,6 +94,7 @@ their SHA-256. Without `clicker-models fetch`, the first run downloads them and 
 | `CLICKER_MAX_OPTIONS` | no | items offered to the classifier, at most `255`; defaults to `255` |
 | `CLICKER_MIN_OCR_CONFIDENCE` | no | OCR lines kept at or above this confidence; defaults to `0.3` |
 | `CLICKER_ABORT_CORNER_PX` | no | top-left square, in pixels, that aborts a run; defaults to `4` |
+| `CLICKER_DRIVER_BATCH` | no | actions one takeover reply may name; defaults to `3` |
 
 `.env` lives at the repo root and is read by every entry point (`clicker`, `clicker-inspect`,
 `clicker-bench`). `config.settings()` is the only way the program reads these, and it keeps one

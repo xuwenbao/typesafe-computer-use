@@ -29,9 +29,10 @@ import win32gui
 import win32process
 from PIL import Image, ImageGrab
 
-from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
+from .ax_walk import AX_PRESS, AxAttrs, AxFacts, Frame, walk_actionable
 from .config import settings
-from .models import Abort, AxNode, Field, Missed
+from .models import Abort, AxNode, ElementState, Field, Missed
+from .uia_patterns import OPERATION_PATTERN, PATTERN_IDS
 from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
 from .uia_roles import pressable, role_for
 
@@ -214,6 +215,11 @@ def mouse_location() -> tuple[float, float]:
 
 
 def check_abort() -> None:
+    if os.environ.get("JEV_SESSION") == "1":
+        from .windows_session import session_cancelled
+
+        if session_cancelled():
+            raise Abort("the session was cancelled")
     corner = settings().abort_corner_px
     x, y = mouse_location()
     if x <= corner and y <= corner:
@@ -553,6 +559,63 @@ def ax_value(ref) -> str | None:
     return _ui_value(ref)
 
 
+def ax_operate(ref, operation: str, value: str | None = None) -> bool:
+    """Run one UIA operation. False when the element does not support it or refuses it."""
+    check_abort()
+    pattern_name = OPERATION_PATTERN.get(operation)
+    if pattern_name is None:
+        return False
+    pattern = _pattern(ref, PATTERN_IDS[pattern_name])
+    if pattern is None:
+        return False
+    try:
+        if operation == "toggle":
+            pattern.Toggle()
+        elif operation == "select":
+            pattern.Select()
+        elif operation == "expand_toggle":
+            if int(getattr(pattern, "ExpandCollapseState", 0)) == 0:
+                pattern.Expand()
+            else:
+                pattern.Collapse()
+        elif operation == "scroll_into_view":
+            pattern.ScrollIntoView()
+        elif operation == "set_range":
+            number = float(value) if value is not None else None
+            if number is None:
+                return False
+            low, high = float(pattern.Minimum), float(pattern.Maximum)
+            if number < low or number > high:
+                return False
+            pattern.SetValue(number)
+            return abs(float(pattern.Value) - number) < 1e-3
+        else:
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def element_state(ref) -> ElementState | None:
+    """Whether this element is still there, on screen, and enabled. None when it cannot be asked."""
+    return read_uia_state(ref)
+
+
+def read_uia_state(element) -> ElementState | None:
+    """The same facts from an element or a stand-in. A dead element, or one that raises, is unknown."""
+    if element is None:
+        return None
+    try:
+        offscreen = bool(element.IsOffscreen)
+        try:
+            enabled = bool(element.IsEnabled)
+        except Exception:
+            enabled = None
+    except Exception:
+        return None
+    return ElementState(True, not offscreen, enabled)
+
+
 # ------------------------------------------------------------------ actionable elements
 
 
@@ -578,9 +641,63 @@ def _ui_attrs(element) -> AxAttrs:
     return AxAttrs(role_for(getattr(element, "ControlTypeName", "")), label, _ui_frame(element))
 
 
-def _ui_actions(element) -> list[str]:
-    has_invoke = _pattern(element, auto.PatternId.InvokePattern) is not None
-    return [AX_PRESS] if pressable(has_invoke, "" if has_invoke else _ui_default_action(element)) else []
+def _toggle_state(element) -> bool | None:
+    pattern = _pattern(element, PATTERN_IDS["toggle"])
+    try:
+        return bool(int(pattern.ToggleState)) if pattern is not None else None
+    except Exception:
+        return None
+
+
+def _expand_state(element) -> bool | None:
+    pattern = _pattern(element, PATTERN_IDS["expand_collapse"])
+    try:
+        # 0 is collapsed. Anything expanded counts as open.
+        return int(pattern.ExpandCollapseState) != 0 if pattern is not None else None
+    except Exception:
+        return None
+
+
+def _range_bounds(element) -> tuple[float | None, float | None]:
+    pattern = _pattern(element, PATTERN_IDS["range_value"])
+    try:
+        return (float(pattern.Minimum), float(pattern.Maximum)) if pattern is not None else (None, None)
+    except Exception:
+        return None, None
+
+
+def _writable(element) -> bool | None:
+    pattern = _pattern(element, PATTERN_IDS["value"])
+    try:
+        return (not bool(pattern.IsReadOnly)) if pattern is not None else None
+    except Exception:
+        return None
+
+
+def _ui_actions(element) -> AxFacts:
+    """Pressability, the operations the element supports, and the state a click needs to see."""
+    names: list[str] = []
+    for name, pattern_id in PATTERN_IDS.items():
+        if _pattern(element, pattern_id) is not None:
+            names.append(name)
+    has_invoke = "invoke" in names
+    if pressable(has_invoke, "" if has_invoke else _ui_default_action(element)):
+        names.insert(0, AX_PRESS)
+    try:
+        enabled: bool | None = bool(element.IsEnabled)
+    except Exception:
+        enabled = None
+    low, high = _range_bounds(element)
+    return AxFacts(
+        tuple(dict.fromkeys(names)),
+        enabled,
+        _toggle_state(element),
+        _expand_state(element),
+        _ui_value(element),
+        low,
+        high,
+        _writable(element),
+    )
 
 
 def actionable_elements(pid: int, display_w_pt: float, display_h_pt: float) -> tuple[list[AxNode], list[AxNode], bool]:

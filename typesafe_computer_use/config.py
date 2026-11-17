@@ -70,7 +70,8 @@ class Settings(BaseSettings):
     answer_reasoning: str | None = None  # 回答模型的推理强度。不设就交给模型
 
     driver: bool = True  # 分类器彻底做不完时默认交给更强模型接管。设为 false 就停在分类器
-    driver_steps: int = Field(20, ge=0)  # 一次接管最多多少步。每步一次模型调用。不占用 --steps
+    driver_steps: int = Field(20, ge=0)  # 一次接管最多执行多少个动作，被拒绝的也算。不按模型调用次数计，也不占用 --steps
+    driver_batch: int = Field(3, ge=1)  # 接管模型一次回复最多几个动作。1 就是一次一个
     driver_model: str | None = None  # 接管用的模型。不设就用回答模型
 
     # 下面这些不带 CLICKER_ 前缀。按原名读取。
@@ -176,6 +177,10 @@ def _explain(item: dict) -> str:
     if field == "writer_timeout" and kind in {"float_parsing", "int_parsing"}:
         return f"{env} must be a number of seconds, not {raw!r}"
     if field == "driver_steps" and kind in {"int_parsing", "float_parsing"}:
+        return f"{env} must be a whole number, not {raw!r}"
+    if field == "driver_batch" and kind == "greater_than_equal":
+        return f"{env} must be at least 1, not {raw!r}"
+    if field == "driver_batch" and kind in {"int_parsing", "float_parsing"}:
         return f"{env} must be a whole number, not {raw!r}"
     return f"{env} {item['msg']}"
 

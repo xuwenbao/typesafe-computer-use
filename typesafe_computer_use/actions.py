@@ -58,16 +58,35 @@ def open_item(item: Item, screen: Screen) -> str:
     return f"opened {item.text!r}"
 
 
+def _disabled(item: Item) -> str | None:
+    """A refusal when the tree said this control cannot be used. Unknown is not disabled."""
+    if item.enabled is False:
+        return f"click refused: {item.text!r} is disabled"
+    return None
+
+
+# After Invoke and a named default action, both of which `ax_press` already tries.
+_PATTERN_CLICKS = (("toggle", "toggled"), ("select", "selected"), ("expand_toggle", "expanded or collapsed"))
+
+
 def click_item(item: Item, screen: Screen) -> str:
     """Press an item the app declared through the accessibility tree; click the pixel under it otherwise.
 
     A press goes to the control itself, so it lands even when the center of the box is covered by
     a sticky header, a cookie banner, or a tooltip. An element that refuses still has a location.
     A click there would land on a popup in front of the item, so that popup is closed first.
+    A control the tree says is disabled is not clicked at all.
     """
+    refused = _disabled(item)
+    if refused is not None:
+        return refused
     ref = screen.ax_refs.get(item.index)
     if ref is not None and desktop.ax_press(ref):
         return f"pressed {item.text!r} via accessibility"
+    if ref is not None:
+        for operation, verb in _PATTERN_CLICKS:
+            if desktop.ax_operate(ref, operation):
+                return f"{verb} {item.text!r} via accessibility"
     popup = screen.covered.get(item.index)
     closed = f"{close_popup(popup)} then " if popup is not None else ""
     try:
@@ -120,6 +139,9 @@ def press_offscreen(key: str, screen: Screen) -> str:
     node = nodes[int(key)] if key.isdigit() and int(key) < len(nodes) else None
     if node is None:
         return f"press_offscreen refused: there is no off-screen control {key!r}"
+    if node.enabled is False:
+        return f"press_offscreen refused: {node.label!r} is disabled"
+    desktop.ax_operate(node.ref, "scroll_into_view")
     if desktop.ax_press(node.ref):
         return f"pressed {node.label!r} (off-screen control) via accessibility"
     if node.role in _TEXT_ROLES and desktop.ax_focus(node.ref):

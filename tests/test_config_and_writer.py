@@ -272,15 +272,7 @@ def test_a_timed_out_request_is_a_writer_error(clean_env):
 def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env):
     clean_env.setenv("CLICKER_WRITER_VISION", "false")
     sent: list[int] = []
-    drive = {
-        "reason": "The screen is idle.",
-        "action": "wait",
-        "item": "",
-        "text": "",
-        "key": "",
-        "modifier": "",
-        "achieved": False,
-    }
+    drive = {"reason": "The screen is idle.", "actions": [{"action": "wait"}]}
     answer = {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
 
     def create(**kwargs):
@@ -321,7 +313,7 @@ def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_en
     def create(**kwargs):
         seen.append(json.loads(kwargs["messages"][0]["content"][0]["text"]))
         payload = (
-            {"reason": "next", "action": "wait", "item": "", "text": "", "key": "", "modifier": "", "achieved": False}
+            {"reason": "next", "actions": [{"action": "wait"}]}
             if len(seen) == 1
             else {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
         )

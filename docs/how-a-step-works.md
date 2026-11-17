@@ -161,9 +161,9 @@ on the app, and the node and time caps bind first on a big tree: Notes and Chrom
 
 | key | does |
 |---|---|
-| `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one |
+| `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one. On Windows the press tries Invoke, then a named default action, then Toggle, SelectionItem.Select, and ExpandCollapse, and only then the mouse. A control the tree says is disabled is refused, including the mouse. Double-click, right-click, and a modified click stay pointer clicks |
 | `open_item` | double-click that same item, to open a file, a folder, or a list entry a single click only selects. Offered only while the frontmost app is not the browser and the screen has no URL |
-| `press_offscreen` | `AXPress` a labelled control the app exposes but does not show, chosen from the off-screen list; offered only when that list is not empty, and a refusal counts as a no-op since there is no pixel to fall back on |
+| `press_offscreen` | `AXPress` a labelled control the app exposes but does not show, chosen from the off-screen list; offered only when that list is not empty, and a refusal counts as a no-op since there is no pixel to fall back on. On Windows a control that supports ScrollItem is scrolled into view first |
 | `use_browser` | go to the browser, showing the website the `site` answer names: `none` brings it forward on the page already open there, a `SITES` catalog key opens that URL through AppleScript `open location`, and `other` opens a URL the writer proposes |
 | `type_text` | the writer composes the string; it is set on the focused element through the accessibility tree, with keystrokes as the fallback when the value does not read back, and a TypeSafe Noul then checks the field's value; text the writer submits gets Return at once instead, and the next screen is the check |
 | `type_email` | fills in `$CLICKER_EMAIL` the same way; refused unless a text field is focused |
@@ -281,10 +281,12 @@ Some stops have no way back: a third stall, a focus the classifier takes no acti
 the hand-offs spent, a composite control (a time picker, a calendar, a canvas) the classifier
 cannot score with confidence, and so does using up `--steps`. `CLICKER_DRIVER` defaults to on, so
 such a run is not over while the writer says the goal is not reached. A stronger model, `CLICKER_DRIVER_MODEL`
-(the answer model by default), takes over and picks one action per capture, with the whole
+(the answer model by default), takes over and may name up to `CLICKER_DRIVER_BATCH` actions
+per reply (3 by default; `1` is one action per reply). It sees the whole
 story: the goal, every action taken with its "did not change" marks, every earlier stop and
 the focus given at it, why the classifier stopped, the text of the earlier screens, and the
-marked capture with its numbered items.
+marked capture with its numbered items. An action after the first has to name an item that
+came from the accessibility tree. `done` and `give_up` come last.
 
 It picks from a whitelist, and code checks every move before anything reaches the machine:
 
@@ -293,25 +295,38 @@ It picks from a whitelist, and code checks every move before anything reaches th
 | `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift. `control`, `ctrl`, `command`, and `cmd` are read as `add`, and `shift` as `range` |
 | `double_click` | the same item, clicked twice, so a file or folder opens |
 | `right_click` | the same item, with the right button |
-| `type` | the text is 1 to 2000 characters and looks like no credential. With `item`, the item is clicked and the text is typed there, which is how a spinner or a number box takes a value. Without `item`, a text field is focused |
+| `type` | the text is 1 to 2000 characters and looks like no credential. With `item`, the item is clicked and the text is typed there. Without `item`, a text field is focused |
+| `set_value` | set `item` to `text`. A slider uses RangeValue, checked against its minimum and maximum and read back; a text value uses the existing value write and is read back. A password, a read-only control, or a control that accepts neither is refused. The classifier does not gain this action |
 | `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5, and Start, which opens the Start menu on Windows and Spotlight on a Mac |
 | `shortcut` | Cmd/Ctrl with a letter or a digit, except Q, W, H, and M, which quit, close, hide, or minimize |
 | `scroll_down`, `scroll_up` | the window under the pointer, or the pane of `item` when a number on this screen is given |
 | `drag` | from `item` to `to`, or by `dx` and `dy` capture pixels, each within 600, and both ends stay on the screen. Draws a shape, moves a slider, or drags a link or a file |
-| `focus_offscreen` | the number is a control on this page that is not in view; it counts only once the next read shows that control focused |
+| `focus_offscreen` | the number is a control on this page that is not in view; it counts only once the next read shows that control focused. On Windows it is scrolled into view first when the control supports that |
 | `wait` | always |
 | `done`, `give_up` | stop |
 
-A refused move goes into the history as refused and costs a step. An action that already changed
-nothing on this screen is refused without being taken again, and two repeats of an action already
-taken on this screen stall the takeover the way they stall the classifier, which is what stops a
-loop through two screens. A reply that is not an action is recorded and the takeover continues;
-the second such reply in a row ends it. A missing `achieved` counts as false. The takeover ends on
-`done` or `give_up`, on the same stall rules as the classifier, or after `CLICKER_DRIVER_STEPS`
-(20) actions, which do not come out of `--steps`; then the writer answers once more on
-the final screen. The driver's history lines start with `driver: `, and each of its steps
-leaves a `step-NNN-driver.json` beside the capture. On WindowsAgentArena its actions spend
-the same `max_steps` as the classifier's.
+Each action is checked, then checked again against the live element when it came from the
+accessibility tree: still present, still visible, and not explicitly disabled. macOS does not
+report enabled, so that part is skipped. A refusal, a failed check, an action that leaves the
+screen unchanged, or `done` / `give_up` drops the rest of the batch. The unchanged test is the
+existing tile comparison and does not run OCR or the icon models. `wait`, `type`, `set_value`,
+copy, and cut are not compared. An item with no element handle is allowed only as the first
+action of a batch.
+
+A refused move goes into the history as refused and costs an action. `done` and `give_up` do
+not. An action that already changed nothing on this screen is refused without being taken again,
+and two repeats of an action already taken on this screen stall the takeover the way they stall
+the classifier, which is what stops a loop through two screens. A reply that is not a usable
+batch is recorded and the takeover continues; the second such reply in a row ends it. A missing
+`achieved` counts as false. The takeover ends on `done` or `give_up`, on the same stall rules
+as the classifier, or after `CLICKER_DRIVER_STEPS` (20) executed actions, which do not come out
+of `--steps`; then the writer answers once more on the final screen. History lines start with
+`driver: `. Actions that were not executed are not written; a batch that stops early adds one
+line, `driver: stopped the rest of the batch: ...`. One model call writes one
+`step-NNN-driver.json`, named for the first action of that call, with the call index and each
+action's result. `run.json` records the action count and the call count separately. An older
+file with no call index is read as one call and one action. On WindowsAgentArena each action
+is still its own VM step: the batch saves model calls, not VM steps.
 
 ## Who did the work
 

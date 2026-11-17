@@ -149,7 +149,8 @@ def checked(data: dict, properties: dict, defaults: dict | None = None) -> dict:
             out[name] = defaults[name]
         elif spec["type"] == "string" and name not in out:
             out[name] = ""
-        if not isinstance(out.get(name), {"boolean": bool, "string": str}[spec["type"]]):
+        kind = {"boolean": bool, "string": str, "array": list, "number": (int, float)}[spec["type"]]
+        if not isinstance(out.get(name), kind):
             raise WriterError(f"the writer's reply has no {spec['type']} {name!r}: {json.dumps(data)[:400]}")
     return out
 
@@ -403,6 +404,7 @@ DRIVE_ACTIONS = (
     "scroll_down",
     "scroll_up",
     "drag",
+    "set_value",
     "focus_offscreen",
     "wait",
     "done",
@@ -412,7 +414,7 @@ DRIVE_ACTIONS = (
 DRIVE_SYSTEM = (
     "An agent is driving a user's computer toward the user's goal. A small classifier picked each "
     "action until it stopped for good, short of the goal, and the run is now yours: you choose the "
-    "actions from here, one per reply, until the goal is reached or no action would help. You "
+    "actions from here until the goal is reached or no action would help. You "
     "receive the goal, every action taken so far (by the classifier and then by you, yours marked "
     "'driver:'), the times the classifier stopped with the focus a reviewer gave it each time, why "
     "it stopped for the last time, the text of the screens it passed through, and the screen now: "
@@ -421,8 +423,11 @@ DRIVE_SYSTEM = (
     "nothing. already_tried_on_this_screen lists what was already done on this screen and whether "
     "it changed anything. When an action changed nothing, do not repeat it: try another kind of "
     "action, such as a key, a shortcut, a double-click, a right-click, or a different item.\n\n"
-    "Work out how the goal can be done from this screen, then give the one action that comes next. "
-    "Choose action from these, and fill only the fields it uses:\n"
+    "Work out how the goal can be done from this screen, then give the next actions, at most batch_size "
+    "of them, in the order they should happen. Only list actions that do not need you to see the screen "
+    "in between. An action after the first must name a numbered item that came from the accessibility "
+    "tree. Put done or give_up last, and nowhere else, to stop. Choose each action from these, and fill "
+    "only the fields it uses:\n"
     "click: click item number `item`, one of the numbers on the screen now. Set `modifier` to add "
     "to add the item to the selection (Control, or Command on a Mac), range to extend the selection "
     "to it (Shift), or leave modifier empty for a plain click.\n"
@@ -444,6 +449,10 @@ DRIVE_SYSTEM = (
     "drag: drag from item number `item` to item number `to`, or by `dx` and `dy` pixels on the "
     "capture, each between -600 and 600. Use it to draw a shape, move a slider, or drag a link "
     "or a file somewhere.\n"
+    "set_value: set item number `item` to `text`. Use it for a slider or a number box that lists "
+    "range_value or value in its controls. The text is the number or the value, inside the control's "
+    "range. Never a password or anything read-only. Read checked, expanded, and value on the item "
+    "before choosing a click that would flip a switch.\n"
     "focus_offscreen: give the keyboard focus to off-screen control number `item`, one of the "
     "numbers in offscreen_controls. The control is on this page but not in view. The next screen "
     "shows it as the focused field, whether or not it came into view. When it is a text field, "
@@ -519,9 +528,11 @@ def compose_drive_step(
     steps_left: int,
     picture: Image.Image | None,
     tried: list[dict] | None = None,
-) -> DriveStep:
-    """The next action after the classifier stopped for good. The model reads the whole story of
-    the run and the screen now, numbered as the capture shows it."""
+    batch: int | None = None,
+) -> list[DriveStep]:
+    """The next actions after the classifier stopped for good. The model reads the whole story of
+    the run and the screen now, numbered as the capture shows it, and may name several actions."""
+    limit = settings().driver_batch if batch is None else batch
     packet = {
         "goal": goal,
         **(guidance.state() if guidance else {}),
@@ -531,6 +542,7 @@ def compose_drive_step(
         "why_the_classifier_stopped": stopped,
         **({"earlier_screens": earlier} if earlier else {}),
         "actions_left": steps_left,
+        "batch_size": limit,
         "already_tried_on_this_screen": tried or [],
         "last_action": _last_action(history),
         "frontmost_app": screen.app,
@@ -543,6 +555,10 @@ def compose_drive_step(
                 "text": it.text,
                 "where": screen.region(it),
                 **({"role": it.role} if it.role else {}),
+                **({"controls": list(it.controls)} if it.controls else {}),
+                **({"checked": it.checked} if it.checked is not None else {}),
+                **({"expanded": it.expanded} if it.expanded is not None else {}),
+                **({"value": it.current} if it.current else {}),
                 **({"under": screen.covered[it.index].title} if it.index in screen.covered else {}),
             }
             for it in items
@@ -552,36 +568,47 @@ def compose_drive_step(
         writer,
         system=DRIVE_SYSTEM,
         packet=packet,
-        properties={  # in this order: the reason is written before the action is chosen
+        properties={  # the reason is written before the actions are chosen
             "reason": {"type": "string"},
-            "action": {"type": "string", "enum": list(DRIVE_ACTIONS)},
-            "item": {"type": "string"},
-            "text": {"type": "string"},
-            "key": {"type": "string"},
-            "modifier": {"type": "string"},
-            "to": {"type": "string"},
-            "dx": {"type": "string"},
-            "dy": {"type": "string"},
-            "achieved": {"type": "boolean"},
+            "actions": {"type": "array"},
         },
         max_tokens=2048,
         answering=True,
         image=picture if settings().writer_vision else None,
         model=settings().resolved_driver_model,
-        defaults={"achieved": False},
     )
-    return DriveStep(
-        reason=data["reason"].strip(),
-        action=data["action"].strip().lower(),
-        item=data["item"].strip(),
-        text=data["text"],
-        key=data["key"].strip().lower(),
-        modifier=data["modifier"].strip().lower(),
-        to=data["to"].strip(),
-        dx=data["dx"].strip(),
-        dy=data["dy"].strip(),
-        achieved=data["achieved"],
-    )
+    return _drive_batch(data, limit)
+
+
+def _drive_batch(data: dict, limit: int) -> list[DriveStep]:
+    """The reply's action list, or an error when the list itself is not usable."""
+    actions = data["actions"]
+    if not actions or len(actions) > limit:
+        raise WriterError(f"the driver replied with {len(actions)} actions; the batch allows 1 to {limit}")
+    steps: list[DriveStep] = []
+    for raw in actions:
+        if not isinstance(raw, dict) or not isinstance(raw.get("action"), str):
+            raise WriterError("each driver action needs an action name")
+        action = raw["action"].strip().lower()
+        if action not in DRIVE_ACTIONS:
+            raise WriterError(f"{action!r} is not a driver action")
+        steps.append(
+            DriveStep(
+                reason=data["reason"].strip(),
+                action=action,
+                item=str(raw.get("item") or "").strip(),
+                text=str(raw.get("text") or ""),
+                key=str(raw.get("key") or "").strip().lower(),
+                modifier=str(raw.get("modifier") or "").strip().lower(),
+                to=str(raw.get("to") or "").strip(),
+                dx=str(raw.get("dx") or "").strip(),
+                dy=str(raw.get("dy") or "").strip(),
+                achieved=bool(raw.get("achieved", False)),
+            )
+        )
+    if any(step.action in ("done", "give_up") for step in steps[:-1]):
+        raise WriterError("done and give_up come last")
+    return steps
 
 
 def compose_answer(

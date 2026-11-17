@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -43,6 +44,24 @@ def ask_user(question: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
+    args = list(sys.argv[1:] if argv is None else argv)
+    # 隔离会话只在 Windows 上导入。其它系统在导入之前就退出，避免把那条路径带进来。
+    if args[:1] == ["session"]:
+        if sys.platform != "win32":
+            sys.exit("clicker session only runs on Windows")
+        from .windows_session import run_controller
+
+        run_controller(args[1:])
+        return
+    # 子会话里的 jev 若仍在控制台会话，必须在截图和输入之前退出。提问走管道。
+    session_ask = None
+    session_done = None
+    if os.environ.get("JEV_SESSION") == "1":
+        from .windows_session import child_startup, refuse_if_console
+
+        refuse_if_console()
+        goal, session_ask, session_done = child_startup()
+        argv = [goal] if argv is None else [goal, *argv]
     config.load_dotenv(DOTENV)
     try:
         options = config.settings()
@@ -106,10 +125,12 @@ def main(argv: list[str] | None = None) -> None:
             typesafe=typesafe,
             writer=writer,
             history=history,
-            ask=ask_user if sys.stdin.isatty() else None,
+            ask=session_ask if session_ask is not None else (ask_user if sys.stdin.isatty() else None),
         )
 
     state = run(cfg, ctx_factory)
+    if session_done is not None:
+        session_done(state.outcome, str(args.out))
     if state.outcome.startswith("aborted"):
         sys.exit(130)
 

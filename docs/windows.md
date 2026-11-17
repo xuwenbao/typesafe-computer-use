@@ -18,5 +18,7 @@ No permission prompt is needed. What differs from macOS:
   not reach the target (a UAC prompt or the lock screen has the input).
 - The browser URL is read off the address bar, which Chrome and Edge show without the scheme.
 - Only the primary monitor is captured. Command-[ (back) is Alt-Left.
+- `clicker session "the goal"` runs jev in a child session so the console desktop stays usable.
+  See [the isolated session](windows-session.md). It needs Pro, Enterprise, or Education.
 - When a policy blocks the installed `clicker.exe`, run `uv run python -m typesafe_computer_use`
   with the same arguments, or `... typesafe_computer_use inspect` for `clicker-inspect`.

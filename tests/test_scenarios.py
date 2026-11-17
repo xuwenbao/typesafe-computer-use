@@ -2119,7 +2119,7 @@ def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
 
         def _create(self, **request):
             asked = set(request["output_config"]["format"]["schema"]["properties"])
-            if "action" in asked and self.left:
+            if "actions" in asked and self.left:
                 self.left -= 1
                 return type("R", (), {"content": [type("B", (), {"type": "text", "text": "not json"})()]})()
             return inner._create(**request)

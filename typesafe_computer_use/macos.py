@@ -20,7 +20,7 @@ from PIL import Image
 
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
 from .config import settings
-from .models import Abort, AxNode, Field
+from .models import Abort, AxNode, ElementState, Field
 
 # ANSI key codes. `delete` and `backspace` are the same key: on a Mac the key labeled Delete
 # erases backward. Digits are the number row, not the keypad.
@@ -400,6 +400,21 @@ def ax_value(ref) -> str | None:
     """An element's value, when it has a textual one."""
     value = _ax_attr(ref, AS.kAXValueAttribute)
     return value if isinstance(value, str) else None
+
+
+def ax_operate(ref, operation: str, value: str | None = None) -> bool:
+    """macOS has no UI Automation patterns. A click falls back to the pointer."""
+    return False
+
+
+def element_state(ref) -> ElementState | None:
+    """Whether the element is still there. macOS does not report an enabled bit here."""
+    if ref is None:
+        return None
+    check_abort()
+    if _ax_attr(ref, AS.kAXRoleAttribute) is None:
+        return None
+    return ElementState(True, True, None)
 
 
 # ------------------------------------------------------------------ actionable elements

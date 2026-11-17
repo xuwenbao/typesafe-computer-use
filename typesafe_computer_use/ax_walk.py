@@ -67,6 +67,30 @@ class AxAttrs(NamedTuple):
     frame: Frame | None
 
 
+class AxFacts(NamedTuple):
+    """What an adapter reports about one element, beyond the role and the frame.
+
+    `names` includes `AX_PRESS` when the element accepts a press, plus the UIA operation names it
+    supports. `enabled` is None when the adapter could not read it.
+    """
+
+    names: tuple[str, ...] = ()
+    enabled: bool | None = None
+    checked: bool | None = None
+    expanded: bool | None = None
+    current: str | None = None
+    low: float | None = None
+    high: float | None = None
+    writable: bool | None = None
+
+
+def read_facts(raw) -> AxFacts:
+    """An `actions` callable may return operation names, or the fuller `AxFacts`."""
+    if isinstance(raw, AxFacts):
+        return raw
+    return AxFacts(tuple(raw))
+
+
 def off_display(frame: Frame | None, display_w_pt: float, display_h_pt: float) -> bool:
     """True when a real frame lies wholly outside the display: a note list thousands of screens down,
     or a web node the browser parked above the viewport. A zero-size frame claims nothing, which is
@@ -198,15 +222,27 @@ def walk_actionable(
         # crosses the display. It stays reachable by AXPress, and its children are judged as their own.
         visible = not hidden and clickable(frame) and center_on_display(frame, display_w_pt, display_h_pt)
         if label and not duplicate and not nameless_group and not wrapper:
+            facts = read_facts(actions(node))
+            pressable = AX_PRESS in facts.names
+            patterns = tuple(name for name in facts.names if name != AX_PRESS)
+            carried = dict(
+                enabled=facts.enabled,
+                patterns=patterns,
+                checked=facts.checked,
+                expanded=facts.expanded,
+                current=facts.current,
+                low=facts.low,
+                high=facts.high,
+                writable=facts.writable,
+            )
             if visible:
-                pressable = AX_PRESS in actions(node)
                 if pressable or role in AX_ACTIONABLE_ROLES:
                     x, y, w, h = frame
-                    found.append(AxNode(role=role, label=label, x=x, y=y, w=w, h=h, pressable=pressable, ref=node))
+                    found.append(AxNode(role=role, label=label, x=x, y=y, w=w, h=h, pressable=pressable, ref=node, **carried))
                     emitted = True
-            elif frame is not None and len(offscreen) < offscreen_cap and AX_PRESS in actions(node):
+            elif frame is not None and len(offscreen) < offscreen_cap and pressable:
                 x, y, w, h = frame
-                offscreen.append(AxNode(role=role, label=label, x=x, y=y, w=w, h=h, pressable=True, ref=node))
+                offscreen.append(AxNode(role=role, label=label, x=x, y=y, w=w, h=h, pressable=True, ref=node, **carried))
         child_label = own_label if role in AX_LABEL_PARENT_ROLES else ""
         queue.extend((kid, child_label, emitted, hidden, key) for kid in kids)
     return found, offscreen, False

@@ -76,7 +76,8 @@ class RunConfig:
     min_confidence: float = field(default_factory=lambda: settings().min_confidence)  # 置信度低于它就停下
     delay: float = field(default_factory=lambda: settings().delay)  # 每个动作后等几秒再截图
     handoffs: int = field(default_factory=lambda: settings().handoffs)  # 写手最多能让分类器“继续干”几次；0 表示一停就结束
-    driver_steps: int = 0  # 接管模型最多操作几步；0 表示不接管
+    driver_steps: int = 0  # 接管模型最多执行多少个动作；0 表示不接管
+    driver_batch: int = field(default_factory=lambda: settings().driver_batch)  # 一次回复最多几个动作
     image: Path | None = None  # 用一张保存的截图重放（只读不操作）
     app: str | None = None  # 重放时假装的前台应用名
     url: str | None = None  # 重放时假装的浏览器网址
@@ -122,6 +123,8 @@ class RunState:
     handoffs: list[Handoff] = field(default_factory=list)  # 所有“交回”记录
     calls: Calls = field(default_factory=Calls)  # 整次运行里调用各模型的次数和用量
     image_refusals: list[dict] = field(default_factory=list)  # 截图被模型拒收、改成不带图重问的步骤及原因
+    driver_actions: int = 0  # 接管实际执行的动作数，含被拒绝的
+    driver_calls: int = 0  # 接管问模型的次数
 
 
 def run(cfg: RunConfig, ctx_factory) -> RunState:
@@ -173,6 +176,8 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "timing": summarize(state.timings),
             "perception": pipeline_record(),
             "image_refusals": state.image_refusals,
+            "driver_actions": state.driver_actions,
+            "driver_calls": state.driver_calls,
             "history": state.history,
             "config": {k: str(v) for k, v in asdict(cfg).items()},
         }

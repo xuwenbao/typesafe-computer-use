@@ -17,7 +17,8 @@ so a stall can be replayed offline with `--image`.
   or ask the user, and the classifier takes every step from there. Watch the
   `calls:` line: a change that moves work to the writer should say why.
 - Once the classifier has stopped short of the goal for good, `driver.py` picks actions
-  itself, one at a time, from a whitelist code checks before anything reaches the machine.
+  itself, up to `CLICKER_DRIVER_BATCH` per reply, from a whitelist code checks before anything
+  reaches the machine.
   `CLICKER_DRIVER` defaults to on; `false` leaves the stop where it is. A new driver action
   goes in that whitelist, in both adapters' key tables, and in `tests/test_driver.py`; it
   never types a credential. Shortcuts other than Q, W, H, and M are allowed. The classifier's
