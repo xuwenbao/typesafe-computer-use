@@ -8,7 +8,7 @@ import openai
 import pytest
 
 from typesafe_computer_use.calls import Calls, MeteredWriter
-from typesafe_computer_use.config import load_dotenv, settings
+from typesafe_computer_use.config import load_dotenv, reset_settings, settings
 from typesafe_computer_use.models import AxNode
 from typesafe_computer_use.writer import (
     ANSWER_SYSTEM,
@@ -36,6 +36,42 @@ def test_dotenv_sets_only_missing_keys(tmp_path, monkeypatch):
 
 def test_dotenv_missing_file_is_fine(tmp_path):
     load_dotenv(tmp_path / "nope.env")
+
+
+def test_settings_is_one_object_until_reset(clean_env):
+    first = settings()
+    assert settings() is first
+
+
+def test_an_environment_change_waits_for_reset(clean_env):
+    assert settings().writer_timeout == 120.0
+    os.environ["CLICKER_WRITER_TIMEOUT"] = "45"
+    try:
+        assert settings().writer_timeout == 120.0
+        reset_settings()
+        assert settings().writer_timeout == 45.0
+    finally:
+        os.environ.pop("CLICKER_WRITER_TIMEOUT", None)
+        reset_settings()
+
+
+def test_a_bad_value_is_not_cached(clean_env):
+    os.environ["CLICKER_WRITER_TIMEOUT"] = "0"
+    try:
+        with pytest.raises(ValueError, match="greater than zero"):
+            settings()
+        os.environ["CLICKER_WRITER_TIMEOUT"] = "30"
+        assert settings().writer_timeout == 30.0
+    finally:
+        os.environ.pop("CLICKER_WRITER_TIMEOUT", None)
+        reset_settings()
+
+
+def test_dotenv_refreshes_a_settings_already_read(tmp_path, clean_env):
+    assert settings().browser == "Google Chrome"
+    (tmp_path / ".env").write_text("CLICKER_BROWSER=Safari\n")
+    load_dotenv(tmp_path / ".env")
+    assert settings().browser == "Safari"
 
 
 @pytest.mark.parametrize(

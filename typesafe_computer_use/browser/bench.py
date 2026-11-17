@@ -179,7 +179,9 @@ def benchmark_loop(args: argparse.Namespace) -> int:
     except ValueError as e:
         sys.exit(str(e))
     if writer is None:
-        print("writer disabled: no OPENAI_API_KEY, or ANTHROPIC_API_KEY when CLICKER_WRITER_API=anthropic; type_text and navigate need one")
+        print(
+            "writer disabled: no OPENAI_API_KEY, or ANTHROPIC_API_KEY when CLICKER_WRITER_API=anthropic; type_text and navigate need one"
+        )
     else:
         print(f"writer: {provider(writer)}")
 

@@ -94,8 +94,8 @@ their SHA-256. Without `clicker-models fetch`, the first run downloads them and 
 | `CLICKER_ABORT_CORNER_PX` | no | top-left square, in pixels, that aborts a run; defaults to `4` |
 
 `.env` lives at the repo root and is read by every entry point (`clicker`, `clicker-inspect`,
-`clicker-bench`). `config.settings()` is the only way the program reads these: it builds a new
-`Settings` each call. A value already in the environment is kept, so a shell export wins over `.env`.
+`clicker-bench`). `config.settings()` is the only way the program reads these, and it keeps one
+`Settings` for the process. A value already in the environment is kept, so a shell export wins over `.env`.
 To run the writer on another model or endpoint (LM Studio, Ollama, any OpenAI-compatible
 server), see [writer endpoints](docs/writer-endpoints.md).
 

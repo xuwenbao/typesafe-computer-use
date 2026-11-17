@@ -1,9 +1,9 @@
 """Tunables, the site catalog, and environment loading.
 
-`settings()` is the only way to read configuration. It builds a new `Settings` on every call, so a
-test can change the environment after import and the next call sees it. `.env` is copied into the
-environment by `load_dotenv` first: the Anthropic and TypeSafe SDKs read their own variables from
-there, and pydantic-settings does not write them back.
+`settings()` is the only way to read configuration, and it returns one `Settings` for the process.
+`load_dotenv` and `reset_settings()` drop that copy so the next call reads the environment again.
+`.env` is copied into the environment by `load_dotenv` first: the Anthropic and TypeSafe SDKs read
+their own variables from there, and pydantic-settings does not write them back.
 """
 
 from __future__ import annotations
@@ -130,12 +130,28 @@ class Settings(BaseSettings):
         return bool(url) and urlparse(url).hostname != ANTHROPIC_HOST
 
 
+_settings: Settings | None = None
+
+
 def settings() -> Settings:
-    """The configuration now. Invalid values raise `ValueError` naming the environment variable."""
-    try:
-        return Settings()
-    except ValidationError as error:
-        raise ValueError(_settings_error(error)) from None
+    """The one configuration for this process, built from the environment on the first call.
+
+    Invalid values raise `ValueError` naming the environment variable, and are not kept: the next
+    call tries again.
+    """
+    global _settings
+    if _settings is None:
+        try:
+            _settings = Settings()
+        except ValidationError as error:
+            raise ValueError(_settings_error(error)) from None
+    return _settings
+
+
+def reset_settings() -> None:
+    """Drop the cached configuration. The next `settings()` reads the environment again."""
+    global _settings
+    _settings = None
 
 
 def _env_name(field: str) -> str:
@@ -169,12 +185,16 @@ def _settings_error(error: ValidationError) -> str:
 
 
 def load_dotenv(path: Path) -> None:
-    """Set KEY=VALUE lines from a .env file into the environment unless already set."""
-    if not path.is_file():
-        return
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+    """Set KEY=VALUE lines from a .env file into the environment unless already set.
+
+    Drops the cached configuration either way, so a `settings()` taken before this call is not the
+    one a later call returns.
+    """
+    if path.is_file():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+    reset_settings()

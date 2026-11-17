@@ -60,12 +60,30 @@ for _windows_module in ("psutil", "uiautomation", "win32api", "win32con", "win32
 import pytest  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from typesafe_computer_use import macos, windows  # noqa: E402
+from typesafe_computer_use import config, macos, windows  # noqa: E402
 from typesafe_computer_use.browser import cdp  # noqa: E402
 from typesafe_computer_use.models import Item, Screen  # noqa: E402
 from typesafe_computer_use.parse import caption as parse_caption  # noqa: E402
 from typesafe_computer_use.parse import detect as parse_detect  # noqa: E402
 from typesafe_computer_use.parse import ocr as parse_ocr  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def fresh_settings(monkeypatch):
+    """Each test starts from a fresh settings singleton. Changing the environment through
+    monkeypatch drops it, so the next `settings()` reads the new value. Tests that change
+    `os.environ` directly call `config.reset_settings()` themselves."""
+    config.reset_settings()
+    for name in ("setenv", "delenv"):
+        original = getattr(monkeypatch, name)
+
+        def changed(*args, _original=original, **kwargs):
+            _original(*args, **kwargs)
+            config.reset_settings()
+
+        setattr(monkeypatch, name, changed)
+    yield
+    config.reset_settings()
 
 
 @pytest.fixture(autouse=True)

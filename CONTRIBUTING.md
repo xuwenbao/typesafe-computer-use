@@ -26,12 +26,14 @@ so a stall can be replayed offline with `--image`.
   reaches them through `platform_adapter.desktop`, and a new adapter call goes into the
   `Desktop` protocol and both adapters together. The accessibility-tree walk is shared, in
   `ax_walk.py`.
-- Configuration lives in `config.Settings` and is read only through `config.settings()`. A new
+- Configuration lives in `config.Settings` and is read only through `config.settings()`, which
+  keeps one copy for the process. `load_dotenv` and `config.reset_settings()` drop it. A new
   variable is a field there, not another `os.environ.get`. `CLICKER_*` is the prefix; a variable
   that already has a name of its own (`TYPESAFE_API_KEY`, `ANTHROPIC_BASE_URL`, `JEV_WAA_SAVE_TREE`,
   `WAA_COMMIT`, `WAA_IMAGE_DIGEST`) keeps it. `.env` is copied into the environment without
   overriding what is already set, because the Anthropic and TypeSafe SDKs read their own variables
-  from there.
+  from there. Tests refresh the copy themselves: `tests/conftest.py` drops it around each test and
+  after every `monkeypatch.setenv` or `delenv`, so change the environment through `monkeypatch`.
 - Never add a path that types a password.
 
 ## A task the loop cannot do
