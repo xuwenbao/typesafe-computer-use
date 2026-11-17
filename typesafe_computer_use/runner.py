@@ -12,7 +12,7 @@ from typesafe_sdk import TypeSafeClient
 from . import driver
 from .actions import Context, perform
 from .calls import Calls, MeteredClassifier, MeteredWriter
-from .config import DEFAULT_DELAY, DEFAULT_HANDOFFS, DEFAULT_MIN_CONFIDENCE, DEFAULT_STEPS, MAX_OPTIONS
+from .config import settings
 from .decide import Decision, decide, offscreen_records
 from .models import Abort, Guidance, Item, Screen, Signature, same_screen, signature
 from .parse.marks import marks
@@ -57,10 +57,10 @@ class RunConfig:
     goal: str
     out: Path
     act: bool = False
-    steps: int = DEFAULT_STEPS
-    min_confidence: float = DEFAULT_MIN_CONFIDENCE
-    delay: float = DEFAULT_DELAY
-    handoffs: int = DEFAULT_HANDOFFS  # stops the writer may send the classifier back from; 0 makes every stop final
+    steps: int = field(default_factory=lambda: settings().steps)
+    min_confidence: float = field(default_factory=lambda: settings().min_confidence)
+    delay: float = field(default_factory=lambda: settings().delay)
+    handoffs: int = field(default_factory=lambda: settings().handoffs)  # stops the writer may send back; 0 is final
     driver_steps: int = 0  # actions the driver may take once the classifier stops short for good; 0 is no driver
     image: Path | None = None  # replay a saved capture (never acts)
     app: str | None = None  # frontmost app to report during replay
@@ -194,7 +194,7 @@ def look(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> tuple[Scree
     """Capture and read the screen for the driver, and count it against the idle rule as a step
     does. None once the last actions changed nothing (see `screen_moved`)."""
     screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser)
-    items = perceive(screen, MAX_OPTIONS, cfg.goal)
+    items = perceive(screen, settings().max_options, cfg.goal)
     state.view = (screen, items)
     return (screen, items) if screen_moved(state, screen, items, log) else None
 
@@ -230,7 +230,7 @@ def hand_off(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     if stopped is None:
         return False
     if ctx.writer is None:
-        log("\nno answer: the writer is disabled (set ANTHROPIC_API_KEY or CLICKER_WRITER_BASE_URL)")
+        log("\nno answer: the writer is disabled (set OPENAI_API_KEY, or ANTHROPIC_API_KEY when CLICKER_WRITER_API=anthropic)")
         return False
     if state.handoffs and state.handoffs[-1].actions == len(state.history) and state.answer is not None:
         log(f"\nanswer ({verdict(state.answer)}; the focus led to no action, so the last answer stands):\n  {state.answer.text}")
@@ -311,7 +311,7 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
         desktop.check_abort()
         screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser)
         screen.image.save(cfg.out / "answer-raw.png")
-        state.view = (screen, perceive(screen, MAX_OPTIONS, cfg.goal))
+        state.view = (screen, perceive(screen, settings().max_options, cfg.goal))
     screen, items = state.view
     earlier = earlier_screens(state, signature(screen, items))
     earlier_stops = stops_so_far(state)
@@ -347,7 +347,7 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     cache = None if cfg.replay else state.parse_cache
     with phase(timing, "capture"):
         screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser, timing, ahead=cache if cfg.read_ahead else None)
-    items = perceive(screen, MAX_OPTIONS, cfg.goal, timing, cache)
+    items = perceive(screen, settings().max_options, cfg.goal, timing, cache)
     state.view = (screen, items)
     if not screen_moved(state, screen, items, log):
         return False

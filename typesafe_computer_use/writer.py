@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import io
 import json
-import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -13,18 +12,7 @@ import anthropic
 import openai
 from PIL import Image
 
-from .config import (
-    answer_model,
-    answer_reasoning,
-    custom_writer_endpoint,
-    driver_model,
-    writer_api,
-    writer_base_url,
-    writer_model,
-    writer_reasoning,
-    writer_timeout,
-    writer_vision,
-)
+from .config import OPENAI_HOST, settings
 from .dates import now_context
 from .models import Guidance, Item, Screen
 from .openai_writer import OpenAIWriter
@@ -43,20 +31,27 @@ class WriterError(Exception):
 def make_writer() -> Writer | None:
     """A client, or None when there is nothing to write with.
 
-    A key only ever goes to the endpoint it belongs to. CLICKER_WRITER_BASE_URL (see
-    config.writer_base_url) is paired with CLICKER_WRITER_API_KEY, or with a placeholder when that
-    is unset, since an endpoint you host yourself checks no key. Otherwise the SDK reads the
-    ANTHROPIC_* key, token, and base URL as it always does. An endpoint that speaks OpenAI's API
-    (CLICKER_WRITER_API=openai) has no default to fall back on, so it must be named. Every client
-    gives up after writer_timeout() seconds and retries the request once.
+    A key only ever goes to the endpoint it belongs to. The default endpoint is OpenAI's own
+    (`https://api.openai.com/v1`), and its key is OPENAI_API_KEY, or CLICKER_WRITER_API_KEY when that
+    is set. Another CLICKER_WRITER_BASE_URL is paired with CLICKER_WRITER_API_KEY only, or with a
+    placeholder when that is unset, since an endpoint you host yourself checks no key. On the
+    Anthropic API with no base URL of its own, the SDK reads the ANTHROPIC_* key, token, and base
+    URL as it always does. Every client gives up after `writer_timeout` seconds and retries once.
     """
-    base_url = writer_base_url()
-    key = os.environ.get("CLICKER_WRITER_API_KEY") or PLACEHOLDER_KEY
-    timeout = writer_timeout()
-    if writer_api() == "openai":
+    cfg = settings()
+    base_url = cfg.writer_base_url
+    timeout = cfg.writer_timeout
+    if cfg.writer_api == "openai":
         if not base_url:
-            raise ValueError("CLICKER_WRITER_API=openai needs CLICKER_WRITER_BASE_URL, such as http://localhost:1234/v1")
+            return None
+        official = urlparse(base_url).hostname == OPENAI_HOST
+        key = cfg.writer_api_key or (cfg.openai_api_key if official else None)
+        if key is None:
+            if official:
+                return None
+            key = PLACEHOLDER_KEY
         return OpenAIWriter(base_url, key, timeout)
+    key = cfg.writer_api_key or PLACEHOLDER_KEY
     if base_url:
         # Proxies differ in which header they read, so the key goes in both. Passing any key at all
         # also keeps the SDK from adding ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN on its own.
@@ -72,7 +67,8 @@ def provider(writer: Writer) -> str:
     url = writer.base_url
     port = f":{url.port}" if url.port else ""
     where = f"{url.scheme}://{url.host}{port}{url.path.rstrip('/')}"
-    return f"{where} ({writer_api()} API)  models: {writer_model()} (writing), {answer_model()} (answering)"
+    cfg = settings()
+    return f"{where} ({cfg.writer_api} API)  models: {cfg.writer_model} (writing), {cfg.answer_model} (answering)"
 
 
 def _structured(
@@ -91,26 +87,27 @@ def _structured(
 
     `defaults` fills a field the reply left out. A flag still has to be present unless it is named
     here: one missing decides the next step on a guess."""
+    cfg = settings()
     schema = {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
     content: list[dict] = [{"type": "text", "text": json.dumps(packet)}]
     if image is not None:
         content.insert(0, _image_block(image))
     extra: dict = {}
-    if custom_writer_endpoint():
+    if cfg.custom_writer_endpoint:
         # Anthropic enforces output_config. Another endpoint may ignore it without a word, so the
         # schema is spelled out in the prompt as well.
         system = f"{system}\n\nAnswer with a single JSON object and nothing else, matching this schema:\n{json.dumps(schema)}"
         # Another endpoint may think by default, out of the same max_tokens: a 200-token call then
         # comes back with no text at all. Anthropic thinks only when asked.
         extra["thinking"] = {"type": "disabled"}
-    if writer_api() == "openai":
+    if cfg.writer_api == "openai":
         # An OpenAI model reasons by default, out of max_tokens too; the effort is its own setting.
-        effort = answer_reasoning() if answering else writer_reasoning()
+        effort = cfg.answer_reasoning if answering else cfg.writer_reasoning
         if effort:
             extra["reasoning"] = effort
     try:
         response = writer.messages.create(
-            model=model or (answer_model() if answering else writer_model()),
+            model=model or (cfg.answer_model if answering else cfg.writer_model),
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": content}],
@@ -569,8 +566,8 @@ def compose_drive_step(
         },
         max_tokens=2048,
         answering=True,
-        image=picture if writer_vision() else None,
-        model=driver_model(),
+        image=picture if settings().writer_vision else None,
+        model=settings().resolved_driver_model,
         defaults={"achieved": False},
     )
     return DriveStep(
@@ -635,7 +632,7 @@ def compose_answer(
         },
         max_tokens=2048,
         answering=True,
-        image=screen.image if writer_vision() else None,
+        image=screen.image if settings().writer_vision else None,
     )
     return Answer(
         text=data["answer"].strip(), achieved=data["achieved"], focus=data["focus"].strip(), question=data["question"].strip()

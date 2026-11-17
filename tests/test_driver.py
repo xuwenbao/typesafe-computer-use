@@ -226,14 +226,15 @@ def test_every_key_the_driver_offers_is_one_both_adapters_press():
             assert key in macos.KEYCODES
 
 
-def test_the_driver_is_off_unless_asked_for(monkeypatch):
+def test_the_driver_takes_over_unless_turned_off(monkeypatch):
     monkeypatch.delenv("CLICKER_DRIVER", raising=False)
     monkeypatch.delenv("CLICKER_DRIVER_STEPS", raising=False)
-    assert config.driver_steps() == 0
+    assert config.settings().driver_budget == 20
+    monkeypatch.setenv("CLICKER_DRIVER", "0")
+    assert config.settings().driver_budget == 0
     monkeypatch.setenv("CLICKER_DRIVER", "1")
-    assert config.driver_steps() == config.DEFAULT_DRIVER_STEPS
     monkeypatch.setenv("CLICKER_DRIVER_STEPS", "5")
-    assert config.driver_steps() == 5
+    assert config.settings().driver_budget == 5
 
 
 @pytest.mark.parametrize(("name", "value"), [("CLICKER_DRIVER", "maybe"), ("CLICKER_DRIVER_STEPS", "lots")])
@@ -241,11 +242,11 @@ def test_a_bad_driver_setting_is_an_error(monkeypatch, name, value):
     monkeypatch.setenv("CLICKER_DRIVER", "true")
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError, match=name):
-        config.driver_steps()
+        config.settings()
 
 
 def test_the_driver_model_is_the_answer_model_unless_named(monkeypatch):
     monkeypatch.delenv("CLICKER_DRIVER_MODEL", raising=False)
-    assert config.driver_model() == config.answer_model()
+    assert config.settings().resolved_driver_model == config.settings().answer_model
     monkeypatch.setenv("CLICKER_DRIVER_MODEL", "some-model")
-    assert config.driver_model() == "some-model"
+    assert config.settings().resolved_driver_model == "some-model"

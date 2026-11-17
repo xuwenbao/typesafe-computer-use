@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
-from .config import MAX_OPTIONS, MIN_OCR_CONFIDENCE
+from .config import settings
 from .models import MENU_BAR_PT, AxNode, Box, Item, Screen
 from .parse import caption as parse_caption
 from .parse import detect as parse_detect
@@ -175,10 +175,11 @@ def ocr(
         if ahead is not None:
             timing[OCR_AHEAD] = round(ahead.seconds, 3)
     echoes = goal_echoes(goal)
+    floor = settings().min_ocr_confidence
     kept: list[Line] = [
         (t.strip(), c, b)
         for t, c, b in reading.lines
-        if t.strip() and c >= MIN_OCR_CONFIDENCE and not is_echo(t, echoes) and not in_field(Item(0, t, c, *b), screen)
+        if t.strip() and c >= floor and not is_echo(t, echoes) and not in_field(Item(0, t, c, *b), screen)
     ]
     texts, icons = fuse(kept, reading.icons)
     items = [Item(0, t, c, *b) for t, c, b in merge_blocks(texts)]
@@ -743,12 +744,12 @@ def ax_items(screen: Screen, budget: int) -> list[Item]:
     return [it for it in to_ax_items(ax_nodes(screen, budget)[0], screen.scale) if it.text]
 
 
-def merge_sources(found: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[Item]:
+def merge_sources(found: list[Item], ax_items: list[Item], budget: int | None = None) -> list[Item]:
     """One item per thing: a control that sits on the text block naming it, or on an icon, replaces both."""
     return [it for it, _ in merge_with_origins(found, ax_items, budget)]
 
 
-def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[tuple[Item, int | None]]:
+def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int | None = None) -> list[tuple[Item, int | None]]:
     """The merge, each item paired with the position of the control it came from, or None.
 
     A control pairs first with the text block it overlaps that names it ("ax+ocr"), and failing
@@ -762,6 +763,8 @@ def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MA
     The pairing survives the budget cut and the renumbering, which is the only way back from a
     final item to the accessibility element behind it.
     """
+    if budget is None:
+        budget = settings().max_options
     taken: set[int] = set()
     merged: list[tuple[Item, int | None]] = []
     for origin, control in enumerate(ax_items):

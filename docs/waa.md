@@ -60,7 +60,9 @@ the ones that scored below, and lists a task with no score without counting it.
 
 Rerunning a task moves its earlier result to `results/archive/<time>/` first. With
 `JEV_WAA_SAVE_TREE=1`, each observation's raw tree is saved in the run folder as
-`obs-NNN-uia.json`, counting from `000`.
+`obs-NNN-uia.json`, counting from `000`. `WAA_COMMIT` and `WAA_IMAGE_DIGEST`, when the run sets
+them, are recorded on `run.json`. All three are read through `config.settings()`, like every other
+variable jev uses.
 
 A task WindowsAgentArena marks infeasible scores 0. jev ends a task with `DONE` and never with
 `FAIL`, which is the only result that evaluator accepts.

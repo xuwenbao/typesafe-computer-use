@@ -8,7 +8,7 @@ import openai
 import pytest
 
 from typesafe_computer_use.calls import Calls, MeteredWriter
-from typesafe_computer_use.config import custom_writer_endpoint, load_dotenv, writer_base_url, writer_timeout
+from typesafe_computer_use.config import load_dotenv, settings
 from typesafe_computer_use.models import AxNode
 from typesafe_computer_use.writer import (
     ANSWER_SYSTEM,
@@ -49,16 +49,19 @@ def test_dotenv_missing_file_is_fine(tmp_path):
     ],
 )
 def test_the_writer_endpoint_accepts_any_of_its_spellings(given, expected, clean_env):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", given)
-    assert writer_base_url() == expected
+    assert settings().writer_base_url == expected
 
 
 def test_the_anthropic_base_url_is_left_to_the_sdk(clean_env):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_BASE_URL", "http://localhost:8081")
-    assert writer_base_url() is None
+    assert settings().writer_base_url is None
 
 
 def test_an_endpoint_of_its_own_needs_no_key(clean_env, endpoint):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", f"{endpoint.url}/v1/messages")
     assert compose_url(make_writer(), "open example", []) == "https://example.com"
     (request,) = endpoint.seen
@@ -67,6 +70,7 @@ def test_an_endpoint_of_its_own_needs_no_key(clean_env, endpoint):
 
 
 def test_the_endpoint_key_goes_to_the_endpoint_and_no_anthropic_credential_does(clean_env, endpoint):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", endpoint.url)
     clean_env.setenv("CLICKER_WRITER_API_KEY", "proxy-key")
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-real")
@@ -79,6 +83,7 @@ def test_the_endpoint_key_goes_to_the_endpoint_and_no_anthropic_credential_does(
 
 
 def test_a_bearer_token_still_goes_out_as_a_bearer_token(clean_env, endpoint):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_BASE_URL", endpoint.url)
     clean_env.setenv("ANTHROPIC_AUTH_TOKEN", "oauth-real")
     compose_url(make_writer(), "open example", [])
@@ -88,10 +93,12 @@ def test_a_bearer_token_still_goes_out_as_a_bearer_token(clean_env, endpoint):
 
 
 def test_without_credentials_or_an_endpoint_there_is_no_writer(clean_env):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     assert make_writer() is None
 
 
 def test_a_custom_endpoint_is_told_the_schema_in_the_prompt(clean_env, endpoint):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", endpoint.url)
     endpoint.state["reply"] = 'Here you go:\n```json\n{"ok": true, "url": "https://example.com", "reason": "x"}\n```'
     # Metered, as the runner hands it out.
@@ -104,19 +111,20 @@ def test_a_custom_endpoint_is_told_the_schema_in_the_prompt(clean_env, endpoint)
 @pytest.mark.parametrize(
     ("env", "custom"),
     [
-        ({}, False),
-        ({"ANTHROPIC_BASE_URL": "https://api.anthropic.com"}, False),
-        ({"ANTHROPIC_BASE_URL": "http://localhost:1234"}, True),
-        ({"CLICKER_WRITER_BASE_URL": "http://localhost:1234/v1/messages"}, True),
+        ({"CLICKER_WRITER_API": "anthropic"}, False),
+        ({"CLICKER_WRITER_API": "anthropic", "ANTHROPIC_BASE_URL": "https://api.anthropic.com"}, False),
+        ({"CLICKER_WRITER_API": "anthropic", "ANTHROPIC_BASE_URL": "http://localhost:1234"}, True),
+        ({"CLICKER_WRITER_API": "anthropic", "CLICKER_WRITER_BASE_URL": "http://localhost:1234/v1/messages"}, True),
     ],
 )
 def test_the_endpoint_is_custom_whichever_variable_names_it(clean_env, env, custom):
     for name, value in env.items():
         clean_env.setenv(name, value)
-    assert custom_writer_endpoint() is custom
+    assert settings().custom_writer_endpoint is custom
 
 
 def test_anthropic_itself_gets_the_schema_only_through_output_config(clean_env, monkeypatch):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     writer = make_writer()
     sent = {}
@@ -133,6 +141,7 @@ def test_anthropic_itself_gets_the_schema_only_through_output_config(clean_env, 
 
 
 def test_the_startup_line_leaves_credentials_out_of_the_url(clean_env):
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", "https://user:secret@proxy.example.com/v1/messages")
     line = provider(make_writer())
     assert line.startswith("https://proxy.example.com (anthropic API)  models:")
@@ -174,6 +183,7 @@ def test_writer_clients_time_out_and_retry_once(clean_env, monkeypatch):
     monkeypatch.setattr("typesafe_computer_use.writer.anthropic.Anthropic", FakeAnthropic)
     monkeypatch.setattr("typesafe_computer_use.openai_writer.openai.OpenAI", FakeOpenAI)
 
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     assert make_writer() is not None
     clean_env.setenv("CLICKER_WRITER_BASE_URL", "http://localhost:9")
@@ -193,16 +203,25 @@ def test_writer_clients_time_out_and_retry_once(clean_env, monkeypatch):
     ]
 
 
+def test_the_writer_speaks_openai_unless_told_otherwise(clean_env):
+    clean_env.setenv("OPENAI_BASE_URL", "http://localhost:9/v1")  # never read: it may point anywhere
+    cfg = settings()
+    assert cfg.writer_api == "openai"
+    assert cfg.writer_base_url == "https://api.openai.com/v1"
+    assert cfg.writer_model == "gpt-6.1-terra"
+    assert cfg.answer_model == "gpt-6.1-sol"
+
+
 def test_the_writer_timeout_is_configurable(clean_env):
-    assert writer_timeout() == 120.0
+    assert settings().writer_timeout == 120.0
     clean_env.setenv("CLICKER_WRITER_TIMEOUT", "45")
-    assert writer_timeout() == 45.0
+    assert settings().writer_timeout == 45.0
     clean_env.setenv("CLICKER_WRITER_TIMEOUT", "0")
     with pytest.raises(ValueError, match="greater than zero"):
-        writer_timeout()
+        settings()
     clean_env.setenv("CLICKER_WRITER_TIMEOUT", "soon")
     with pytest.raises(ValueError, match="number of seconds"):
-        writer_timeout()
+        settings()
 
 
 def test_a_timed_out_request_is_a_writer_error(clean_env):
@@ -214,8 +233,8 @@ def test_a_timed_out_request_is_a_writer_error(clean_env):
         _structured(writer, "system", {"goal": "x"}, {"reason": {"type": "string"}}, 20)
 
 
-def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env, monkeypatch):
-    monkeypatch.setattr("typesafe_computer_use.writer.writer_vision", lambda: False)
+def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env):
+    clean_env.setenv("CLICKER_WRITER_VISION", "false")
     sent: list[int] = []
     drive = {
         "reason": "The screen is idle.",
@@ -257,8 +276,8 @@ def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
     assert "offscreen_controls lists controls on this page" in ANSWER_SYSTEM
 
 
-def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_env, monkeypatch):
-    monkeypatch.setattr("typesafe_computer_use.writer.writer_vision", lambda: False)
+def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_env):
+    clean_env.setenv("CLICKER_WRITER_VISION", "false")
     node = AxNode("AXTextField", "Record directory", 0, 0, 10, 10, True)
     showing = replace(screen, offscreen=[node])
     seen: list[dict] = []
@@ -286,3 +305,48 @@ def test_valid_url():
     assert not valid_url("https://localhost")
     assert not valid_url("https://www.cnn.com/a b")
     assert not valid_url("")
+
+
+def test_a_tunable_comes_from_its_variable(clean_env):
+    assert settings().steps == 100
+    assert settings().delay == 2.0
+    assert settings().min_confidence == 0.4
+    assert settings().handoffs == 10
+    assert settings().max_options == 255
+    assert settings().min_ocr_confidence == 0.3
+    assert settings().abort_corner_px == 4
+    clean_env.setenv("CLICKER_STEPS", "12")
+    clean_env.setenv("CLICKER_DELAY", "0.5")
+    clean_env.setenv("CLICKER_MIN_CONFIDENCE", "0.6")
+    clean_env.setenv("CLICKER_HANDOFFS", "2")
+    clean_env.setenv("CLICKER_MAX_OPTIONS", "40")
+    clean_env.setenv("CLICKER_MIN_OCR_CONFIDENCE", "0.5")
+    clean_env.setenv("CLICKER_ABORT_CORNER_PX", "8")
+    cfg = settings()
+    assert (cfg.steps, cfg.delay, cfg.min_confidence, cfg.handoffs) == (12, 0.5, 0.6, 2)
+    assert (cfg.max_options, cfg.min_ocr_confidence, cfg.abort_corner_px) == (40, 0.5, 8)
+
+
+def test_a_bad_tunable_names_its_variable(clean_env):
+    clean_env.setenv("CLICKER_MAX_OPTIONS", "lots")
+    with pytest.raises(ValueError, match="CLICKER_MAX_OPTIONS"):
+        settings()
+    clean_env.setenv("CLICKER_MAX_OPTIONS", "40")
+    clean_env.setenv("CLICKER_WRITER_VISION", "maybe")
+    with pytest.raises(ValueError, match="CLICKER_WRITER_VISION"):
+        settings()
+
+
+def test_variables_that_are_not_prefixed_keep_their_names(clean_env):
+    clean_env.setenv("TYPESAFE_API_KEY", "ts-key")
+    clean_env.setenv("JEV_WAA_SAVE_TREE", "1")
+    clean_env.setenv("WAA_COMMIT", "abc")
+    clean_env.setenv("WAA_IMAGE_DIGEST", "sha256:def")
+    cfg = settings()
+    assert cfg.typesafe_api_key == "ts-key"
+    assert cfg.waa_save_tree is True
+    assert cfg.waa_commit == "abc"
+    assert cfg.waa_image_digest == "sha256:def"
+    assert cfg.anthropic_base_url is None
+    clean_env.setenv("OPENAI_API_KEY", "sk-openai")
+    assert settings().openai_api_key == "sk-openai"

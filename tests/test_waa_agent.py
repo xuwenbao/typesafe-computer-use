@@ -156,8 +156,8 @@ def test_the_browser_follows_the_domain_and_the_run_records_it(jev, tmp_path, mo
     assert browser_for("msedge") == "Microsoft Edge"
     assert browser_for("chrome") == "Google Chrome"
     assert browser_for("vlc") == "Google Chrome"
-    monkeypatch.setenv(agent_module.COMMIT, "abc123")
-    monkeypatch.setenv(agent_module.DIGEST, "sha256:def")
+    monkeypatch.setenv("WAA_COMMIT", "abc123")
+    monkeypatch.setenv("WAA_IMAGE_DIGEST", "sha256:def")
     agent = jev(scripted(("done", None)), browser=browser_for("msedge"))
 
     calls(agent, obs())

@@ -30,7 +30,7 @@ import win32process
 from PIL import Image, ImageGrab
 
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
-from .config import ABORT_CORNER_PX
+from .config import settings
 from .models import Abort, AxNode, Field, Missed
 from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
 from .uia_roles import pressable, role_for
@@ -214,8 +214,9 @@ def mouse_location() -> tuple[float, float]:
 
 
 def check_abort() -> None:
+    corner = settings().abort_corner_px
     x, y = mouse_location()
-    if x <= ABORT_CORNER_PX and y <= ABORT_CORNER_PX:
+    if x <= corner and y <= corner:
         raise Abort("mouse in top-left corner")
 
 

@@ -19,7 +19,7 @@ import Quartz
 from PIL import Image
 
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
-from .config import ABORT_CORNER_PX
+from .config import settings
 from .models import Abort, AxNode, Field
 
 # ANSI key codes. `delete` and `backspace` are the same key: on a Mac the key labeled Delete
@@ -90,8 +90,9 @@ def mouse_location() -> tuple[float, float]:
 
 
 def check_abort() -> None:
+    corner = settings().abort_corner_px
     x, y = mouse_location()
-    if x <= ABORT_CORNER_PX and y <= ABORT_CORNER_PX:
+    if x <= corner and y <= corner:
         raise Abort("mouse in top-left corner")
 
 

@@ -279,7 +279,7 @@ A `done` the writer does not see on the screen is sent back like any other stop.
 
 Some stops have no way back: a third stall, a focus the classifier takes no action under,
 the hand-offs spent, a composite control (a time picker, a calendar, a canvas) the classifier
-cannot score with confidence. With `CLICKER_DRIVER` on, such a run is not over while the
+cannot score with confidence. `CLICKER_DRIVER` defaults to on, so such a run is not over while the
 writer says the goal is not reached and steps remain. A stronger model, `CLICKER_DRIVER_MODEL`
 (the answer model by default), takes over and picks one action per capture, with the whole
 story: the goal, every action taken with its "did not change" marks, every earlier stop and

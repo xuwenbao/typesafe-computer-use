@@ -13,13 +13,13 @@ and opening it would skip a move. Text reaches the code only through `repr()`.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
 
+from ..config import settings
 from ..models import AxNode, Field
 from ..uia_roles import ROLE_TO_CONTROL_TYPE_ID
 from . import tree
@@ -45,7 +45,7 @@ class WAADesktop:
         folder that receives each observation's raw tree when `JEV_WAA_SAVE_TREE=1`."""
         self._next_obs = next_obs
         self._start_tree = start_tree
-        self._save_tree = save_tree if os.environ.get(tree.SAVE_TREE) == "1" else None
+        self._save_tree = save_tree if settings().waa_save_tree else None
         self._seen = 0
         self.fetches: list[tree.Fetch] = []
         self.actions: list[str] = []

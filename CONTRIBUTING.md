@@ -16,16 +16,22 @@ so a stall can be replayed offline with `--image`.
 - The writer never picks an action. When the classifier stops it may name a focus
   or ask the user, and the classifier takes every step from there. Watch the
   `calls:` line: a change that moves work to the writer should say why.
-- Once the classifier has stopped short of the goal for good, and only with `CLICKER_DRIVER`
-  on, `driver.py` picks actions itself, one at a time, from a whitelist code checks before
-  anything reaches the machine. A new driver action goes in that whitelist, in both adapters'
-  key tables, and in `tests/test_driver.py`; it never types a credential. Shortcuts other than
-  Q, W, H, and M are allowed. The classifier's own double-click is `open_item`, and only while
-  the frontmost app is not the browser.
+- Once the classifier has stopped short of the goal for good, `driver.py` picks actions
+  itself, one at a time, from a whitelist code checks before anything reaches the machine.
+  `CLICKER_DRIVER` defaults to on; `false` leaves the stop where it is. A new driver action
+  goes in that whitelist, in both adapters' key tables, and in `tests/test_driver.py`; it
+  never types a credential. Shortcuts other than Q, W, H, and M are allowed. The classifier's
+  own double-click is `open_item`, and only while the frontmost app is not the browser.
 - Platform calls live in the adapters, `macos.py` and `windows.py`, only. Everything else
   reaches them through `platform_adapter.desktop`, and a new adapter call goes into the
   `Desktop` protocol and both adapters together. The accessibility-tree walk is shared, in
   `ax_walk.py`.
+- Configuration lives in `config.Settings` and is read only through `config.settings()`. A new
+  variable is a field there, not another `os.environ.get`. `CLICKER_*` is the prefix; a variable
+  that already has a name of its own (`TYPESAFE_API_KEY`, `ANTHROPIC_BASE_URL`, `JEV_WAA_SAVE_TREE`,
+  `WAA_COMMIT`, `WAA_IMAGE_DIGEST`) keeps it. `.env` is copied into the environment without
+  overriding what is already set, because the Anthropic and TypeSafe SDKs read their own variables
+  from there.
 - Never add a path that types a password.
 
 ## A task the loop cannot do

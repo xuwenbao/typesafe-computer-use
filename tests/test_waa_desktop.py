@@ -263,7 +263,7 @@ def test_a_folder_window_list_item_stays_a_click():
 
 
 def test_nothing_can_be_pressed_through_the_tree(tmp_path, monkeypatch):
-    monkeypatch.setenv(tree.SAVE_TREE, "1")
+    monkeypatch.setenv("JEV_WAA_SAVE_TREE", "1")
     body = raw("edge-address.json")
     desktop = WAADesktop(observation(), lambda actions: observation(), start_tree=lambda: Ready(body), save_tree=tmp_path)
     assert desktop.ax_press(object()) is False

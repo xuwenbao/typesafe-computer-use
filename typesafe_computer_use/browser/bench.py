@@ -19,7 +19,6 @@ import argparse
 import base64
 import io
 import json
-import os
 import statistics
 import sys
 import time
@@ -180,7 +179,7 @@ def benchmark_loop(args: argparse.Namespace) -> int:
     except ValueError as e:
         sys.exit(str(e))
     if writer is None:
-        print("writer disabled: no ANTHROPIC_API_KEY or CLICKER_WRITER_BASE_URL; type_text and navigate need one")
+        print("writer disabled: no OPENAI_API_KEY, or ANTHROPIC_API_KEY when CLICKER_WRITER_API=anthropic; type_text and navigate need one")
     else:
         print(f"writer: {provider(writer)}")
 
@@ -272,7 +271,7 @@ DOTENV = Path.cwd() / ".env"
 
 def _require_key() -> None:
     """The TypeSafe key, resolved the way `clicker` resolves it: the environment, then ./.env."""
-    if not os.environ.get("TYPESAFE_API_KEY"):
+    if not config.settings().typesafe_api_key:
         sys.exit("TYPESAFE_API_KEY is not set (export it or put it in .env)")
 
 
@@ -322,8 +321,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--model", default=None)
     r.set_defaults(func=cmd_replay)
 
-    args = ap.parse_args(argv)
     config.load_dotenv(DOTENV)
+    args = ap.parse_args(argv)
     return int(args.func(args))
 
 

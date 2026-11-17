@@ -24,7 +24,6 @@ WALK_SECONDS = 8.0  # the script stops itself here
 GRACE_SECONDS = 2.0  # how long the client waits after that before giving up
 COMMAND_LIMIT = 32 * 1024  # Windows' command line; the script is one argument of `python -c`
 ADDRESS = re.compile(r"(?i)address")
-SAVE_TREE = "JEV_WAA_SAVE_TREE"  # "1" stores each observation's raw JSON in the run folder
 # Executable stems the classifier should see as the browser's product name, as windows.py does.
 APP_NAMES = {"chrome": "Google Chrome", "msedge": "Microsoft Edge", "firefox": "Firefox", "brave": "Brave Browser"}
 

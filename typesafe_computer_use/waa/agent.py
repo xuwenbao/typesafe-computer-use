@@ -11,14 +11,13 @@ raises `Abort("WAA step limit")`, and `reset()` makes a stale worker's wait rais
 review, spends one of the loop's own steps, which run to the usual limit. Either way the loop
 records the outcome. When it ends, `predict` answers `DONE`, never `FAIL`.
 
-With CLICKER_DRIVER on, the driver takes the run when the classifier stops short for good (see
+CLICKER_DRIVER defaults to on, so the driver takes the run when the classifier stops short for good (see
 driver.py). Its actions go through the same adapter, so they spend the same `max_steps`.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import queue
 import threading
 from collections.abc import Callable
@@ -42,8 +41,6 @@ RUN_FOLDER = "jev"
 STEP_SECONDS = 600.0
 RESET_JOIN_SECONDS = 5.0
 DONE = "DONE"
-COMMIT = "WAA_COMMIT"
-DIGEST = "WAA_IMAGE_DIGEST"
 
 
 def browser_for(domain: str) -> str:
@@ -108,12 +105,12 @@ class JevAgent:
         self.max_steps = max_steps
         self.out_root = Path(out_root) if out_root is not None else Path("jev-runs")
         self.browser = browser
+        options = config.settings()
         if isinstance(writer, _FromEnv):
             writer = make_writer()
-            config.writer_vision()
         self.writer = writer
-        self.driver_steps = config.driver_steps()
-        self.email = config.email()
+        self.driver_steps = options.driver_budget
+        self.email = options.email
         self.step_seconds = step_seconds
         self.controller = controller
         self._run: _Run | None = None
@@ -164,7 +161,7 @@ class _Run:
             goal=instruction,
             out=Path(agent.out_root) / RUN_FOLDER,
             act=True,
-            steps=config.DEFAULT_STEPS,
+            steps=config.settings().steps,
             delay=0,
             driver_steps=agent.driver_steps,
             read_ahead=True,
@@ -273,8 +270,8 @@ class _Run:
         summary = json.loads(path.read_text(encoding="utf-8"))
         fetches = list(self.adapter.fetches) if self.adapter is not None else []
         summary["waa"] = {
-            "commit": os.environ.get(COMMIT),
-            "image_digest": os.environ.get(DIGEST),
+            "commit": config.settings().waa_commit,
+            "image_digest": config.settings().waa_image_digest,
             "browser": self.agent.browser,
             "tree": "jev-uia",
             **tree.summary(fetches),

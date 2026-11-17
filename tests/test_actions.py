@@ -75,9 +75,7 @@ def test_a_refused_press_of_an_offscreen_text_field_focuses_it(screen, calls, mo
     focused = []
     monkeypatch.setattr(desktop, "ax_press", lambda r: False)
     monkeypatch.setattr(desktop, "ax_focus", lambda r: focused.append(r) or True)
-    monkeypatch.setattr(
-        desktop, "focused_field", lambda: Field("AXTextField", "Record directory", "", "", 0, 0, 10, 10)
-    )
+    monkeypatch.setattr(desktop, "focused_field", lambda: Field("AXTextField", "Record directory", "", "", 0, 0, 10, 10))
     node = AxNode(role="AXTextField", label="Record directory", x=0.0, y=900.0, w=200.0, h=24.0, pressable=True, ref=ref)
     assert press_offscreen("0", replace(screen, offscreen=[node])) == "focused 'Record directory' (off-screen control)"
     assert focused == [ref] and calls == []
@@ -244,6 +242,7 @@ def test_use_browser_refuses_when_the_writer_proposes_nothing(screen, browser, m
 @pytest.fixture
 def broken_writer(clean_env, endpoint):
     """A real writer whose endpoint refuses every request."""
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", endpoint.url)
     endpoint.state["reject"] = lambda body: "model 'nope' not found"
     return make_writer()
