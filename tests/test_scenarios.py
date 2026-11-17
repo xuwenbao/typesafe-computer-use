@@ -2207,3 +2207,55 @@ def test_l69_the_driver_scrolls_the_pane_an_item_is_in_until_the_target_shows(mo
     assert world.log == ["scroll_down", "click:Record directory"]
     assert state.history == ["driver: scrolled down over 'Input / Codecs'", "driver: clicked 'Record directory'"]
     assert world.mouse  # the scroll was aimed at the pane's item, not the window center
+
+
+def test_l70_using_every_classifier_step_still_hands_the_run_to_the_driver(monkeypatch, tmp_path):
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world := archive_world(),
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        steps=1,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert state.outcome == "driver done" and state.answer.achieved and world.page.name == "moved"
+    assert writer.drive_packets[0]["why_the_classifier_stopped"] == STOPPED["step limit"]
+    assert writer.drive_packets[0]["actions_left"] == 10
+
+
+def test_l71_the_driver_keeps_its_own_budget_when_the_classifier_has_one_step_left(monkeypatch, tmp_path):
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+        ],
+    )
+
+    state = drive(
+        archive_world(),
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        steps=2,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=3,
+    )
+
+    assert state.outcome == "driver step limit"
+    assert [p["actions_left"] for p in writer.drive_packets] == [3, 2, 1]

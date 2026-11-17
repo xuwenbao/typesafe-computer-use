@@ -279,8 +279,8 @@ A `done` the writer does not see on the screen is sent back like any other stop.
 
 Some stops have no way back: a third stall, a focus the classifier takes no action under,
 the hand-offs spent, a composite control (a time picker, a calendar, a canvas) the classifier
-cannot score with confidence. `CLICKER_DRIVER` defaults to on, so such a run is not over while the
-writer says the goal is not reached and steps remain. A stronger model, `CLICKER_DRIVER_MODEL`
+cannot score with confidence, and so does using up `--steps`. `CLICKER_DRIVER` defaults to on, so
+such a run is not over while the writer says the goal is not reached. A stronger model, `CLICKER_DRIVER_MODEL`
 (the answer model by default), takes over and picks one action per capture, with the whole
 story: the goal, every action taken with its "did not change" marks, every earlier stop and
 the focus given at it, why the classifier stopped, the text of the earlier screens, and the
@@ -307,8 +307,8 @@ nothing on this screen is refused without being taken again, and two repeats of 
 taken on this screen stall the takeover the way they stall the classifier, which is what stops a
 loop through two screens. A reply that is not an action is recorded and the takeover continues;
 the second such reply in a row ends it. A missing `achieved` counts as false. The takeover ends on
-`done` or `give_up`, on the same stall rules as the classifier, after `CLICKER_DRIVER_STEPS`
-(20) actions, or at `--steps`, whichever comes first; then the writer answers once more on
+`done` or `give_up`, on the same stall rules as the classifier, or after `CLICKER_DRIVER_STEPS`
+(20) actions, which do not come out of `--steps`; then the writer answers once more on
 the final screen. The driver's history lines start with `driver: `, and each of its steps
 leaves a `step-NNN-driver.json` beside the capture. On WindowsAgentArena its actions spend
 the same `max_steps` as the classifier's.

@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     answer_reasoning: str | None = None  # 回答模型的推理强度。不设就交给模型
 
     driver: bool = True  # 分类器彻底做不完时默认交给更强模型接管。设为 false 就停在分类器
-    driver_steps: int = Field(20, ge=0)  # 一次接管最多多少步。每步一次模型调用
+    driver_steps: int = Field(20, ge=0)  # 一次接管最多多少步。每步一次模型调用。不占用 --steps
     driver_model: str | None = None  # 接管用的模型。不设就用回答模型
 
     # 下面这些不带 CLICKER_ 前缀。按原名读取。

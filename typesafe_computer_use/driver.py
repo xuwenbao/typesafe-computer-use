@@ -71,12 +71,13 @@ STOPPED = {
 def take_over(cfg, ctx, state, log, first: int) -> bool:
     """Drive from step `first` until the driver is done, gives up, stalls, or runs out of actions.
 
-    False when it never started: the run left no room, or there is no writer to ask. Otherwise
+    False when it never started: the takeover is off, or there is no writer to ask. The budget is
+    `cfg.driver_steps` on its own, not whatever of `--steps` the classifier left. Otherwise
     `state.outcome` is one of STOPPED, and `state.history` holds every action it took.
     """
     from . import runner  # runner calls this module, so it cannot be imported at the top
 
-    budget = min(cfg.driver_steps, cfg.steps - first + 1)
+    budget = cfg.driver_steps
     if budget <= 0 or ctx.writer is None:
         return False
     writer = ctx.writer.as_driver() if isinstance(ctx.writer, MeteredWriter) else ctx.writer

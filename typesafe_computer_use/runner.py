@@ -187,7 +187,7 @@ def wants_driver(cfg: RunConfig, ctx: Context, state: RunState) -> bool:
 
     - 接管功能开着（driver_steps > 0），而且是真操作（不是演练或重放）；
     - 写手可用，并且判断目标还没完成；
-    - 分类器是“走不下去”而停下的；步数用完的不算，因为已经没有步数可分给接管了。
+    - 分类器停在 STOPPED 里的任一结局，包括把 --steps 走满。接管用自己的步数，不占用 --steps。
     """
     return (
         cfg.driver_steps > 0
@@ -197,7 +197,6 @@ def wants_driver(cfg: RunConfig, ctx: Context, state: RunState) -> bool:
         and state.answer is not None
         and not state.answer.achieved
         and state.outcome in STOPPED
-        and state.outcome != "step limit"
     )
 
 

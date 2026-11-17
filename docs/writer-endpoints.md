@@ -13,7 +13,7 @@ model or send it to another endpoint. `config.settings()` is the only way the pr
 | `CLICKER_WRITER_MODEL` | no | types text and proposes URLs; defaults to `gpt-6.1-terra` |
 | `CLICKER_ANSWER_MODEL` | no | reads the screen whenever the classifier stops; defaults to `gpt-6.1-sol` |
 | `CLICKER_DRIVER` | no | a stronger model takes over once the classifier stops short of the goal for good (see [the takeover](how-a-step-works.md#the-takeover)); defaults to `true`, and `false` leaves the stop where it is |
-| `CLICKER_DRIVER_STEPS` | no | the most actions one takeover takes; defaults to `20` |
+| `CLICKER_DRIVER_STEPS` | no | the most actions one takeover takes; defaults to `20`, and does not come out of `--steps` |
 | `CLICKER_DRIVER_MODEL` | no | the model that takes over; defaults to the answer model, and uses its reasoning effort |
 | `CLICKER_WRITER_VISION` | no | `false` for an answer model that reads text only; defaults to `true` |
 | `CLICKER_WRITER_REASONING` | no | the reasoning effort the writer's calls ask an OpenAI-API model for, such as `none`; unset leaves it to the model |
