@@ -14,6 +14,11 @@ param(
     [string]$Out = "dist"
 )
 $ErrorActionPreference = "Stop"
+# Resolve-Path .Path is a PowerShell provider path (FileSystem::\\server\share) when the repo
+# lives on a UNC path, which Python and ISCC cannot open. ProviderPath is the Win32 path.
+function WinPath([string]$Path) {
+    return (Resolve-Path -LiteralPath $Path).ProviderPath
+}
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
@@ -32,13 +37,22 @@ try {
     }
     Set-Content -Path "$folder\version.txt" -Value $version -NoNewline -Encoding ascii
 
+    # The hub takes a Windows file lock in its cache. That lock fails on a UNC path, which is
+    # what a WSL checkout looks like from Windows, so the download lands on the local disk and
+    # is copied into the installer tree. Symlinks are disabled: the installer needs real files.
     $models = "$root\build\helper\models"
-    New-Item -ItemType Directory -Force -Path $models | Out-Null
-    $env:HF_HUB_CACHE = (Resolve-Path $models).Path
+    $cache = Join-Path $env:LOCALAPPDATA "jev-build\hf-cache"
+    New-Item -ItemType Directory -Force -Path $cache | Out-Null
+    $env:HF_HUB_CACHE = $cache
+    $env:HF_HUB_DISABLE_SYMLINKS = "1"
     $env:HF_HUB_OFFLINE = "0"
     $env:TRANSFORMERS_OFFLINE = "0"
     uv run clicker-models fetch
     if ($LASTEXITCODE -ne 0) { throw "clicker-models fetch failed" }
+    if (Test-Path -LiteralPath $models) { Remove-Item -LiteralPath $models -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $models | Out-Null
+    & robocopy $cache (WinPath $models) /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "copying the model cache failed ($LASTEXITCODE)" }
     $links = @(Get-ChildItem -LiteralPath $models -Recurse -Force | Where-Object {
         $_.LinkType -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
     })
@@ -48,12 +62,17 @@ try {
 
     $iscc = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-        "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
     if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) was not found" }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
-    $outDir = (Resolve-Path $Out).Path
-    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/O$outDir"
+    $outDir = WinPath $Out
+    # A normalized absolute path. A relative one that still contains ".." is longer, and the
+    # longest file then exceeds the 260-character limit before Windows collapses the "..".
+    $distArg = WinPath $folder
+    $modelsArg = WinPath $models
+    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/O$outDir"
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
     $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "jev-setup-$version*")

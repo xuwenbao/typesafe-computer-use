@@ -4,6 +4,14 @@
 #ifndef Version
   #define Version "0.0.0"
 #endif
+; Absolute paths, passed by the build script. A relative path that still contains ".." can exceed
+; the 260-character limit on a long checkout path before Windows normalizes it.
+#ifndef DistDir
+  #define DistDir "..\..\build\helper\dist\jev"
+#endif
+#ifndef ModelsDir
+  #define ModelsDir "..\..\build\helper\models"
+#endif
 
 #define AppExe "jev.exe"
 
@@ -32,8 +40,8 @@ RestartApplications=no
 UninstallDisplayName=jev
 
 [Files]
-Source: "..\..\build\helper\dist\jev\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\..\build\helper\models\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ModelsDir}\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Code]
 function McpConfig(): String;

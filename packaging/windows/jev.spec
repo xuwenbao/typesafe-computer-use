@@ -1,14 +1,23 @@
 # PyInstaller spec for jev.exe, built by scripts/build-helper.ps1 on Windows.
 #
 # One folder, with a console: `jev mcp` speaks MCP on stdio, and a console program is what an
-# agent's pipe can attach to. `jev mcp` starts `jev helper` detached, so that process has no
-# window of its own. `jev mcp` drives the screen in this process. The perception's weights are
+# agent's pipe can attach to. `jev mcp` drives the screen in this process. The perception's weights are
 # not frozen into this folder: the installer places them in `models` beside `jev.exe`, and
 # jev_entry.py points the hub cache there.
 
+from pathlib import Path
+
+import torchvision
 from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 datas, binaries, hiddenimports = [], [], []
+# torchvision 0.29 loads _C_stable.pyd by path, beside its package, not by a normal import.
+# PyInstaller's hook still looks for the old torchvision._C name and misses these.
+_torchvision = Path(torchvision.__file__).parent
+for _lib in _torchvision.glob("*.pyd"):
+    binaries.append((str(_lib), "torchvision"))
+for _lib in _torchvision.glob("*.dll"):
+    binaries.append((str(_lib), "torchvision"))
 for package in ("rapidocr", "uiautomation", "typesafe_sdk", "fastmcp"):
     package_datas, package_binaries, package_imports = collect_all(package)
     datas += package_datas
