@@ -72,8 +72,12 @@ def test_an_unpatched_session_call_refuses_instead_of_opening_one():
 
     for touch in (
         windows_session.enable_child_session,
+        windows_session.open_child_window,
         windows_session.connect_child_session,
+        lambda: windows_session._remember_credentials("user", "secret"),
+        lambda: windows_session.wait_for_child_explorer(lambda: None, 0, None),
         lambda: windows_session.launch_in_session("jev-session"),
+        windows_session.attach_input_desktop,
         lambda: windows_session.create_session_pipe("jev-session"),
         lambda: windows_session.attach_session_pipe("jev-session"),
         windows_session.in_console_session,

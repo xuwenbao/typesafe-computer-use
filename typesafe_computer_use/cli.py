@@ -32,6 +32,11 @@ def _prepare() -> None:
         sys.exit("TYPESAFE_API_KEY is not set (export it or put it in .env)")
 
 
+def child_argv(goal: str, passed: list[str]) -> list[str]:
+    """The child's arguments: the goal from the pipe, then the flags the launch command added."""
+    return [goal, *passed]
+
+
 def ask_user(question: str) -> str:
     """Read the user's reply to a question the run has just printed. An empty reply declines to answer.
 
@@ -49,6 +54,7 @@ def main(argv: list[str] | None = None) -> None:
     if args[:1] == ["session"]:
         if sys.platform != "win32":
             sys.exit("clicker session only runs on Windows")
+        config.load_dotenv(DOTENV)
         from .windows_session import run_controller
 
         run_controller(args[1:])
@@ -61,7 +67,8 @@ def main(argv: list[str] | None = None) -> None:
 
         refuse_if_console()
         goal, session_ask, session_done = child_startup()
-        argv = [goal] if argv is None else [goal, *argv]
+        extra = list(sys.argv[1:] if argv is None else argv)
+        argv = child_argv(goal, extra)
     config.load_dotenv(DOTENV)
     try:
         options = config.settings()

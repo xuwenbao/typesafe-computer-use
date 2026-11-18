@@ -558,6 +558,159 @@ def test_session_messages_and_a_cancel_aborts(monkeypatch):
     windows_session.reset_cancel()
 
 
+def test_the_picture_in_picture_opens_before_connect_and_launch_waits(monkeypatch):
+    order = []
+    client = object()
+    _patch_session(monkeypatch, order, client)
+
+    def wait(pump, deadline, got):
+        assert got is client
+        order.append("wait")
+        pump()
+
+    monkeypatch.setattr(windows_session, "wait_for_child_explorer", wait)
+
+    def host(relay, hwnd, pipe, pid):
+        relay.join(timeout=2)
+        order.append("host")
+        return "done"
+
+    monkeypatch.setattr(windows_session, "_host_until", host)
+    windows_session.run_controller(["open notepad"])
+    assert order.index("window") < order.index("connect") < order.index("wait") < order.index("launch")
+    assert order.index("launch") < order.index("relay") < order.index("host")
+    assert order.index("pump") < order.index("launch")
+    assert order[-1] == "close"
+
+
+def test_a_failed_window_does_not_launch_into_the_session(monkeypatch):
+    order = []
+    _patch_session(monkeypatch, order, object())
+
+    def connect(got):
+        order.append("connect")
+        raise OSError("no control")
+
+    monkeypatch.setattr(windows_session, "connect_child_session", connect)
+    with pytest.raises(SystemExit, match="did not start"):
+        windows_session.run_controller(["open notepad"])
+    assert "launch" not in order
+    assert "close" in order
+
+
+def test_the_relay_connects_before_it_writes_and_a_closed_window_cancels():
+    calls = []
+
+    def connect(pipe):
+        calls.append("connect")
+
+    def write(pipe, line):
+        calls.append(windows_session.decode(line)["type"])
+
+    windows_session._relay(
+        object(),
+        "goal",
+        connect=connect,
+        write=write,
+        read=lambda pipe: windows_session.encode("done", text="ok"),
+    )
+    assert calls == ["connect", "task"]
+    sent = []
+    windows_session._notify_closed(object(), write=lambda pipe, line: sent.append(windows_session.decode(line)["type"]))
+    assert sent == ["cancel"]
+
+
+def test_waiting_reports_a_disconnect_and_a_timeout_differently():
+    assert windows_session.child_wait_failure(1, False, False, 90, False) is None
+    gone = windows_session.child_wait_failure(1, False, False, 90, True)
+    late = windows_session.child_wait_failure(90, True, False, 90, True)
+    assert gone != late
+    assert "disconnected" in gone
+    assert "logging on" in late
+    assert windows_session.child_wait_failure(90, False, True, 90, False) is None
+    assert windows_session.host_stop(False, True, True) is None
+    assert windows_session.host_stop(True, True, True) == "done"
+    assert windows_session.host_stop(False, False, True) == "closed"
+    assert windows_session.host_stop(False, True, False) == "exited"
+
+
+def test_a_configured_password_is_remembered_and_the_desktop_stays_small(monkeypatch, clean_env):
+    remembered = []
+    monkeypatch.setattr(windows_session, "_remember_credentials", lambda user, password: remembered.append(user))
+    clean_env.setenv("CLICKER_SESSION_USERNAME", "Administrator")
+    clean_env.setenv("CLICKER_SESSION_PASSWORD", "secret-value")
+    client = _connection_client()
+    windows_session._prepare_connection(client)
+    assert remembered == ["Administrator"]
+    assert client.UserName == "Administrator"
+    assert client.ClearTextPassword == "secret-value"
+    assert client.FullScreen is False
+    assert client.SmartSizing is True
+    assert client.ContainerHandledFullScreen is True
+    # The desktop size is set to the frame's client area in open_child_window, not here.
+    assert not hasattr(client, "DesktopWidth")
+
+
+def test_without_a_password_the_control_is_not_given_a_user(monkeypatch, clean_env, tmp_path):
+    remembered = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(windows_session, "_remember_credentials", lambda user, password: remembered.append(user))
+    clean_env.delenv("CLICKER_SESSION_PASSWORD", raising=False)
+    clean_env.delenv("CLICKER_SESSION_USERNAME", raising=False)
+    client = _connection_client()
+    windows_session._prepare_connection(client)
+    assert remembered == []
+    assert not hasattr(client, "UserName")
+    assert client.FullScreen is False
+    assert client.SmartSizing is True
+
+
+def _connection_client():
+    class Settings:
+        def __init__(self):
+            self.AdvancedSettings9 = self
+
+    return Settings()
+
+
+def test_the_picture_window_is_the_small_frame():
+    assert (windows_session.FRAME_WIDTH, windows_session.FRAME_HEIGHT) == (800, 480)
+
+
+def test_the_child_session_is_launched_acting():
+    assert "--act" in windows_session.child_command(r"C:\Python\python.exe")
+    assert cli.child_argv("save it", ["--act"]) == ["save it", "--act"]
+
+
+def test_the_child_binds_the_input_desktop_before_it_starts():
+    source = windows_session._LAUNCHER
+    attached = source.index("attach_input_desktop()")
+    started = source.index("from typesafe_computer_use.cli import main")
+    assert attached < started < source.index("\n    main()")
+
+
+def test_attaching_the_input_desktop_is_refused_off_the_machine():
+    with pytest.raises(RuntimeError, match="real machine"):
+        windows_session.attach_input_desktop()
+
+
+def _patch_session(monkeypatch, order, client):
+    monkeypatch.setattr(
+        windows_session, "collect_facts", lambda: windows_session.SessionFacts("Professional", True, False, False)
+    )
+    monkeypatch.setattr(windows_session, "create_session_pipe", lambda name: object())
+    monkeypatch.setattr(windows_session, "enable_child_session", lambda: order.append("enable"))
+    monkeypatch.setattr(windows_session, "open_child_window", lambda: order.append("window") or (1, client))
+    monkeypatch.setattr(windows_session, "connect_child_session", lambda got: order.append("connect") if got is client else None)
+    monkeypatch.setattr(windows_session, "wait_for_child_explorer", lambda pump, deadline, got: order.append("wait"))
+    monkeypatch.setattr(windows_session, "launch_in_session", lambda name: order.append("launch") or 0)
+    monkeypatch.setattr(windows_session, "_relay", lambda pipe, goal: order.append("relay"))
+    monkeypatch.setattr(windows_session, "_host_until", lambda relay, hwnd, pipe, pid: "done")
+    monkeypatch.setattr(windows_session, "_close_window", lambda hwnd, got: order.append("close"))
+    monkeypatch.setattr(windows_session, "_pump_messages", lambda: order.append("pump"))
+    monkeypatch.setattr(windows_session, "_window_open", lambda hwnd: True)
+
+
 def test_clicker_session_on_this_platform_does_not_start_a_process():
     if __import__("sys").platform == "win32":
         pytest.skip("the refusal is the non-Windows path")

@@ -7,11 +7,13 @@ Nothing here falls back to driving the console desktop.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import queue
 import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -19,6 +21,22 @@ from .models import Abort
 
 KINDS = ("task", "log", "progress", "question", "answer", "cancel", "done")
 PIPE_NAME = "jev-session"
+TASK_NAME = "jev-child-session"
+RDP_PROGID = "MsTscAx.MsTscAx.10"  # a ProgID this machine registers; the interface name is not one
+# GetExtendedSettings and AdvancedSettings9 live on these, not on the control's default IDispatch.
+RDP_CLIENT_IIDS = (
+    "{28904001-04B6-436C-A55B-0AF1A0883DC9}",  # IMsRdpClient9
+    "{7ED92C39-EB38-4927-A70A-708AC5A59321}",  # IMsRdpClient10
+    "{B2A5B5CE-3461-444A-91D4-ADD26D070638}",  # IMsRdpClient7
+)
+RDP_EXTENDED_IID = "{302D8188-0052-4807-806A-362B628F9AC5}"  # IMsRdpExtendedSettings
+AX_WINDOW_CLASSES = ("AtlAxWin140", "AtlAxWin110", "AtlAxWin100", "AtlAxWin")
+WINDOW_TITLE = "jev child session"
+FRAME_X, FRAME_Y = 80, 80
+FRAME_WIDTH, FRAME_HEIGHT = 800, 480
+CHILD_LOGON_SECONDS = 90
+ERROR_PIPE_CONNECTED = 535
+STILL_ACTIVE = 259
 
 _cancelled = False
 
@@ -55,6 +73,41 @@ def rejection(facts: SessionFacts) -> str | None:
 def should_refuse_session(jev_session: bool, in_console: bool) -> bool:
     """A jev that was started for the child session must not keep running on the console desktop."""
     return bool(jev_session) and bool(in_console)
+
+
+def child_command(executable: str) -> str:
+    """jev inside the child session. `--act` is what makes it type and click."""
+    return f'"{executable}" -m typesafe_computer_use --act'
+
+
+def child_wait_failure(elapsed: float, connected: bool, found: bool, limit: float, seen_connected: bool) -> str | None:
+    """Why the wait for the child session's desktop should stop, or None to keep waiting.
+
+    `found` means explorer.exe is up in the child session, so the wait is over. A connection that
+    drops after it had come up is a different failure from a logon that never finishes.
+    """
+    if found:
+        return None
+    if seen_connected and not connected:
+        return "the picture-in-picture window disconnected before the child session logged on"
+    if elapsed >= limit:
+        return "the child session did not finish logging on"
+    return None
+
+
+def host_stop(relay_done: bool, window_open: bool, child_alive: bool = True) -> str | None:
+    """Why the parent should leave its message loop. None means keep pumping.
+
+    A closed window is the user's cancel. The relay finishing is a normal end. The child process
+    leaving first means it quit without saying it was done.
+    """
+    if not window_open:
+        return "closed"
+    if relay_done:
+        return "done"
+    if not child_alive:
+        return "exited"
+    return None
 
 
 def encode(kind: str, **payload) -> str:
@@ -133,15 +186,43 @@ def run_controller(argv: list[str]) -> None:
     if reason:
         sys.exit(reason)
     pipe = create_session_pipe(PIPE_NAME)
+    hwnd = None
+    client = None
     try:
         enable_child_session()
-        connect_child_session()
-        launch_in_session(PIPE_NAME)
-        _relay(pipe, " ".join(argv))
+        hwnd, client = open_child_window()
+        connect_child_session(client)
+        deadline = time.monotonic() + CHILD_LOGON_SECONDS
+
+        def pump() -> None:
+            _pump_messages()
+            if not _window_open(hwnd):
+                raise OSError("the picture-in-picture window was closed")
+
+        wait_for_child_explorer(pump, deadline, client)
+        pid = launch_in_session(PIPE_NAME)
+        errors: list[BaseException] = []
+
+        def relay_target() -> None:
+            try:
+                _relay(pipe, " ".join(argv))
+            except BaseException as exc:  # the host thread reports it; a thread must not sys.exit
+                errors.append(exc)
+
+        relay = threading.Thread(target=relay_target, name="jev-session-relay", daemon=True)
+        relay.start()
+        why = _host_until(relay, hwnd, pipe, pid)
+        if errors:
+            raise errors[0]
+        if why == "exited":
+            raise OSError("the child process exited before the run finished")
     except SystemExit:
         raise
     except Exception as e:
         sys.exit(f"the child session did not start: {e}")
+    finally:
+        _delete_launch_task()
+        _close_window(hwnd, client)
 
 
 def child_startup() -> tuple[str, Callable[[str], str], Callable[[str, str], None]]:
@@ -205,21 +286,648 @@ def enable_child_session() -> None:
         raise OSError(ctypes.get_last_error(), "WTSEnableChildSessions failed")
 
 
-def connect_child_session():
-    """Show the child session in a Remote Desktop window. No console-desktop fallback.
+_FRAME_CLASS = "JevChildFrame"
+_frame_wndproc = None
+_frame_hwnd = None
 
-    `ConnectToChildSession` is set before `Connect`, which is what makes the control attach to
-    the child session instead of opening a normal remote machine.
+
+def open_child_window():
+    """A normal small window with the Remote Desktop control hosted inside it. Returns (hwnd, client).
+
+    The frame is an ordinary overlapped window. The control lives in a child `AtlAxWin`, filling the
+    frame's client area, so connecting cannot replace this window with the control's own full-screen
+    frame. `AtlAxWinInit` registers the host class. The child window's text is the ProgID it instantiates.
     """
-    import win32com.client
+    import ctypes
+    from ctypes import wintypes
 
-    client = win32com.client.Dispatch("MsRdpClient9NotSafeForScripting")
-    client.Server = "localhost"
-    client.AdvancedSettings9.EnableCredSspSupport = True
-    extended = client.GetExtendedSettings()
-    extended.set_Property("ConnectToChildSession", True)
+    import pythoncom
+    import win32com.client
+    import win32con
+
+    pythoncom.CoInitialize()
+    atl = ctypes.WinDLL("atl", use_last_error=True)
+    atl.AtlAxWinInit.argtypes = ()
+    atl.AtlAxWinInit.restype = ctypes.c_bool
+    if not atl.AtlAxWinInit():
+        raise OSError("AtlAxWinInit failed")
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.CreateWindowExW.argtypes = (
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HWND,
+        wintypes.HMENU,
+        wintypes.HINSTANCE,
+        wintypes.LPVOID,
+    )
+    user32.CreateWindowExW.restype = wintypes.HWND
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetModuleHandleW.argtypes = (wintypes.LPCWSTR,)
+    kernel.GetModuleHandleW.restype = wintypes.HMODULE
+    hwnd = _create_frame()
+    instance = kernel.GetModuleHandleW("atl") or None
+    child_style = win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.WS_CLIPSIBLINGS
+    host = None
+    for klass in AX_WINDOW_CLASSES:
+        host = user32.CreateWindowExW(0, klass, RDP_PROGID, child_style, 0, 0, 1008, 601, hwnd, None, instance, None)
+        if host:
+            break
+    if not host:
+        raise OSError(ctypes.get_last_error(), f"CreateWindowExW failed for {list(AX_WINDOW_CLASSES)}")
+    _fit_hosted_control(hwnd)
+
+    atl.AtlAxGetControl.argtypes = (wintypes.HWND, ctypes.POINTER(ctypes.c_void_p))
+    atl.AtlAxGetControl.restype = ctypes.c_long
+    unknown = ctypes.c_void_p()
+    hr = atl.AtlAxGetControl(host, ctypes.byref(unknown))
+    if hr < 0 or not unknown.value:
+        raise OSError(f"AtlAxGetControl failed ({hr:#x})")
+    # The host hands back IUnknown. Its default IDispatch is the old scriptable interface:
+    # AdvancedSettings9 is on a later client interface, and ConnectToChildSession is a named
+    # property of IMsRdpExtendedSettings. This library has no GetExtendedSettings method.
+    import pywintypes
+
+    pointer = pythoncom.ObjectFromAddress(unknown.value)
+    client = None
+    last = None
+    for iid in RDP_CLIENT_IIDS:
+        try:
+            face = pointer.QueryInterface(pywintypes.IID(iid), pythoncom.IID_IDispatch)
+        except pythoncom.com_error as error:
+            last = error
+            continue
+        client = win32com.client.Dispatch(face)
+        break
+    if client is None:
+        raise OSError(f"the Remote Desktop control did not expose a client interface: {last}")
+    extended = pointer.QueryInterface(pywintypes.IID(RDP_EXTENDED_IID), pythoncom.IID_IDispatch)
+    _set_child_session(extended)
+    # Hardware presentation can cover the monitor even while this frame stays 800 by 480.
+    _try_extended_long(extended, "EnableHardwareMode", 0)
+    _try_extended_long(extended, "VideoPlaybackMode", 0)
+    _size_control_to_window(hwnd, client)
+    user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL: the frame stays a small overlapped window
+    user32.SetForegroundWindow(hwnd)
+    return hwnd, client
+
+
+def _create_frame():
+    """The ordinary top-level window. Resizing it resizes the hosted control with it."""
+    global _frame_hwnd, _frame_wndproc
+
+    import pywintypes
+    import win32api
+    import win32con
+    import win32gui
+
+    def wndproc(hwnd, msg, wparam, lparam):
+        if msg == 0x0046:  # WM_WINDOWPOSCHANGING: the control must not grow this frame to the monitor
+            _clamp_window_pos(lparam)
+            return 0
+        if msg == win32con.WM_SIZE:
+            _fit_hosted_control(hwnd)
+            return 0
+        if msg == win32con.WM_CLOSE:
+            win32gui.DestroyWindow(hwnd)
+            return 0
+        return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+    instance = win32api.GetModuleHandle(None)
+    _frame_wndproc = wndproc  # the class does not keep the callable alive by itself
+    window_class = win32gui.WNDCLASS()
+    window_class.hInstance = instance
+    window_class.lpszClassName = _FRAME_CLASS
+    window_class.lpfnWndProc = _frame_wndproc
+    window_class.hbrBackground = win32con.COLOR_WINDOW + 1
+    window_class.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+    try:
+        atom = win32gui.RegisterClass(window_class)
+    except pywintypes.error as error:
+        if error.winerror != 1410:  # CLASS_ALREADY_EXISTS: a previous run registered it
+            raise
+        atom = _FRAME_CLASS
+    _frame_hwnd = win32gui.CreateWindowEx(
+        win32con.WS_EX_TOPMOST,
+        atom,
+        WINDOW_TITLE,
+        win32con.WS_OVERLAPPEDWINDOW | win32con.WS_CLIPCHILDREN | win32con.WS_VISIBLE,
+        FRAME_X,
+        FRAME_Y,
+        FRAME_WIDTH,
+        FRAME_HEIGHT,
+        0,
+        0,
+        instance,
+        None,
+    )
+    return _frame_hwnd
+
+
+def _clamp_window_pos(lparam) -> None:
+    """Keep a resize from turning the frame into the full monitor."""
+    import ctypes
+    from ctypes import wintypes
+
+    class WindowPos(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("after", wintypes.HWND),
+            ("x", ctypes.c_int),
+            ("y", ctypes.c_int),
+            ("cx", ctypes.c_int),
+            ("cy", ctypes.c_int),
+            ("flags", wintypes.UINT),
+        ]
+
+    pos = ctypes.cast(lparam, ctypes.POINTER(WindowPos)).contents
+    if pos.flags & 0x0001:  # SWP_NOSIZE
+        return
+    if pos.cx > FRAME_WIDTH + 40 or pos.cy > FRAME_HEIGHT + 40:
+        pos.x, pos.y, pos.cx, pos.cy = FRAME_X, FRAME_Y, FRAME_WIDTH, FRAME_HEIGHT
+
+
+def _reveal_hosted_windows(hwnd, client) -> None:
+    """Show the control's view and put the frame back if the control tries to go full screen."""
+    import win32gui
+
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and win32gui.IsWindow(hwnd):
+        _show_descendants(hwnd)
+        with contextlib.suppress(Exception):
+            if client.FullScreen:
+                client.FullScreen = False
+        win32gui.SetWindowPos(hwnd, -1, FRAME_X, FRAME_Y, FRAME_WIDTH, FRAME_HEIGHT, 0x0040)
+        time.sleep(0.2)
+
+
+def _show_descendants(hwnd) -> None:
+    import win32con
+    import win32gui
+
+    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+    child = win32gui.GetWindow(hwnd, win32con.GW_CHILD)
+    while child:
+        _show_descendants(child)
+        child = win32gui.GetWindow(child, win32con.GW_HWNDNEXT)
+
+
+def _fit_hosted_control(hwnd) -> None:
+    """Stretch the ActiveX host, and the control window inside it, over the frame's client area."""
+    import win32con
+    import win32gui
+
+    host = win32gui.GetWindow(hwnd, win32con.GW_CHILD)
+    if not host:
+        return
+    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+    width, height = right - left, bottom - top
+    win32gui.MoveWindow(host, 0, 0, width, height, True)
+    inner = win32gui.GetWindow(host, win32con.GW_CHILD)
+    if inner:
+        win32gui.MoveWindow(inner, 0, 0, width, height, True)
+
+
+def _size_control_to_window(hwnd, client) -> None:
+    """Match the remote desktop to the frame's client area so the control renders in place.
+
+    A desktop larger than the window makes MsTscAx open its own full-screen frame. The hosted
+    control is stretched over the same rectangle, so the frame does not stay blank.
+    """
+    import win32gui
+
+    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+    width = max(int(right - left), 320)
+    height = max(int(bottom - top), 240)
+    with contextlib.suppress(Exception):
+        client.DesktopWidth = width
+        client.DesktopHeight = height
+    _fit_hosted_control(hwnd)
+
+
+def _com_address(unknown) -> int:
+    """The COM pointer pywin32 prints. This interface is not IDispatch, so Invoke cannot reach it."""
+    text = repr(unknown)
+    marker = "obj at "
+    start = text.find(marker)
+    if start < 0:
+        raise OSError("the COM object did not expose its address")
+    return int(text[start + len(marker) :].rstrip(">"), 16)
+
+
+def _set_child_session(extended) -> None:
+    """Set ConnectToChildSession on IMsRdpExtendedSettings.
+
+    The type library gives this interface a five-slot vtable: the three IUnknown methods, then
+    put_Property at slot 3 and get_Property at slot 4. Both take the name and a VARIANT pointer.
+    Treating the pointer as IDispatch calls the wrong slot and the flag stays off.
+    """
+    import ctypes
+
+    oleaut = ctypes.WinDLL("oleaut32", use_last_error=True)
+    oleaut.SysAllocString.argtypes = (ctypes.c_wchar_p,)
+    oleaut.SysAllocString.restype = ctypes.c_void_p
+    oleaut.SysFreeString.argtypes = (ctypes.c_void_p,)
+
+    class Variant(ctypes.Structure):
+        _fields_ = [
+            ("vt", ctypes.c_ushort),
+            ("r1", ctypes.c_ushort),
+            ("r2", ctypes.c_ushort),
+            ("r3", ctypes.c_ushort),
+            ("val", ctypes.c_longlong),
+        ]
+
+    address = _com_address(extended)
+    table = ctypes.cast(ctypes.cast(address, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
+    call = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(Variant))
+    name = oleaut.SysAllocString("ConnectToChildSession")
+    try:
+        value = Variant(vt=11, val=-1)  # VT_BOOL, VARIANT_TRUE
+        wrote = call(table[3])(address, name, ctypes.byref(value))
+        read = Variant()
+        got = call(table[4])(address, name, ctypes.byref(read))
+    finally:
+        oleaut.SysFreeString(name)
+    if wrote < 0 or got < 0 or read.vt != 11 or read.val & 0xFFFF != 0xFFFF:
+        raise OSError(
+            f"ConnectToChildSession was not set (put {wrote & 0xFFFFFFFF:#x}, get {got & 0xFFFFFFFF:#x}, "
+            f"vt {read.vt}, value {read.val & 0xFFFF:#x})"
+        )
+
+
+def _try_extended_long(extended, name: str, number: int) -> None:
+    """Set one extended integer property. An unknown name is ignored."""
+    import ctypes
+
+    oleaut = ctypes.WinDLL("oleaut32", use_last_error=True)
+    oleaut.SysAllocString.argtypes = (ctypes.c_wchar_p,)
+    oleaut.SysAllocString.restype = ctypes.c_void_p
+    oleaut.SysFreeString.argtypes = (ctypes.c_void_p,)
+
+    class Variant(ctypes.Structure):
+        _fields_ = [
+            ("vt", ctypes.c_ushort),
+            ("r1", ctypes.c_ushort),
+            ("r2", ctypes.c_ushort),
+            ("r3", ctypes.c_ushort),
+            ("val", ctypes.c_longlong),
+        ]
+
+    address = _com_address(extended)
+    table = ctypes.cast(ctypes.cast(address, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
+    call = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(Variant))
+    label = oleaut.SysAllocString(name)
+    try:
+        value = Variant(vt=3, val=number)  # VT_I4
+        call(table[3])(address, label, ctypes.byref(value))
+    finally:
+        oleaut.SysFreeString(label)
+
+
+_rdp_events = None
+
+
+def _reject_fullscreen(client) -> None:
+    """Refuse the control's request to cover the monitor. The frame stays the small window."""
+    global _rdp_events
+
+    class Handler:
+        def OnRequestGoFullScreen(self):
+            with contextlib.suppress(Exception):
+                client.FullScreen = False
+
+        def OnRemoteDesktopSizeChange(self, width, height):
+            with contextlib.suppress(Exception):
+                client.FullScreen = False
+
+    try:
+        import win32com.client
+
+        _rdp_events = win32com.client.WithEvents(client, Handler)
+    except Exception:
+        _rdp_events = None
+
+
+def connect_child_session(client) -> None:
+    """Attach `client` to the child session. No console-desktop fallback.
+
+    `ConnectToChildSession` was set when the window was built. A configured password is stored
+    for localhost before `Connect`, and the desktop is scaled into the small window.
+    The control creates its view hidden, which leaves the frame blank, so a side thread shows
+    those child windows while `Connect` runs.
+    """
+    if not _frame_hwnd:
+        raise OSError("the picture-in-picture window is not open")
+    _prepare_connection(client)
+    logon = _session_logon()
+    if logon is not None:
+        _apply_nonscriptable_logon(client, logon[1])
+    _reject_fullscreen(client)
+    threading.Thread(target=_reveal_hosted_windows, args=(_frame_hwnd, client), name="jev-session-reveal", daemon=True).start()
     client.Connect()
-    return client
+
+
+def _prepare_connection(client) -> None:
+    """Point the control at localhost, remember a configured password, and keep the desktop small."""
+    client.Server = "localhost"
+    client.FullScreen = False
+    client.ColorDepth = 16
+    # DesktopWidth/Height are set to the frame's client area in open_child_window. Full-screen
+    # requests come here and are refused, so the control does not cover the monitor itself.
+    client.AdvancedSettings9.EnableCredSspSupport = True
+    client.AdvancedSettings9.SmartSizing = True
+    client.AdvancedSettings9.ContainerHandledFullScreen = True
+    logon = _session_logon()
+    if logon is None:
+        return
+    username, password = logon
+    _remember_credentials(username, password)
+    client.Domain = os.environ.get("USERDOMAIN") or os.environ.get("COMPUTERNAME") or "."
+    client.UserName = username
+    # The scriptable setting is not the one the control logs on with. The nonscriptable
+    # interface takes the password and is told not to show the credential dialog.
+    client.AdvancedSettings9.ClearTextPassword = password
+
+
+def _session_logon() -> tuple[str, str] | None:
+    """The configured child-session logon, or None when no password is set."""
+    from pathlib import Path
+
+    from . import config
+
+    options = config.settings()
+    if not options.session_password:
+        config.load_dotenv(Path.cwd() / ".env")
+        options = config.settings()
+    password = options.session_password
+    if not password:
+        return None
+    username = options.session_username or os.environ.get("USERNAME") or "Administrator"
+    return username, password
+
+
+def _query_interface(unknown, iid: str) -> int:
+    """A raw COM pointer for `iid`. pywin32 has no wrapper for the nonscriptable RDP interfaces."""
+    import ctypes
+    import uuid
+    from ctypes import wintypes
+
+    class Guid(ctypes.Structure):
+        _fields_ = [
+            ("data1", wintypes.DWORD),
+            ("data2", wintypes.WORD),
+            ("data3", wintypes.WORD),
+            ("data4", wintypes.BYTE * 8),
+        ]
+
+    parsed = uuid.UUID(iid)
+    raw = parsed.bytes_le
+    guid = Guid(int.from_bytes(raw[0:4], "little"), int.from_bytes(raw[4:6], "little"), int.from_bytes(raw[6:8], "little"))
+    guid.data4[:] = raw[8:]
+    address = _com_address(unknown)
+    table = ctypes.cast(ctypes.cast(address, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
+    query = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(Guid), ctypes.POINTER(ctypes.c_void_p))
+    found = ctypes.c_void_p()
+    result = query(table[0])(address, ctypes.byref(guid), ctypes.byref(found))
+    if result < 0 or not found.value:
+        raise OSError(f"QueryInterface {iid} failed ({result & 0xFFFFFFFF:#x})")
+    return int(found.value)
+
+
+def _apply_nonscriptable_logon(client, password: str) -> None:
+    """Give the control the password and forbid its credential dialog.
+
+    `ClearTextPassword` and `AllowPromptingForCredentials` live on the nonscriptable vtable, not
+    on the dispatch used for `Connect`. A child session still shows the dialog when prompting is
+    left at its default.
+    """
+    import ctypes
+
+    oleaut = ctypes.WinDLL("oleaut32", use_last_error=True)
+    oleaut.SysAllocString.argtypes = (ctypes.c_wchar_p,)
+    oleaut.SysAllocString.restype = ctypes.c_void_p
+    oleaut.SysFreeString.argtypes = (ctypes.c_void_p,)
+    address = _query_interface(client._oleobj_, "{4f6996d5-d7b1-412c-b0ff-063718566907}")
+    table = ctypes.cast(ctypes.cast(address, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
+    put_text = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)
+    put_bool = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_short)
+    get_bool = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_short))
+    blob = oleaut.SysAllocString(password)
+    try:
+        wrote = put_text(table[3])(address, blob)  # IMsTscNonScriptable::put_ClearTextPassword
+    finally:
+        oleaut.SysFreeString(blob)
+    hid_prompt = put_bool(table[19])(address, 0)  # IMsRdpClientNonScriptable3::put_PromptForCredentials
+    hid_allow = put_bool(table[63])(address, 0)  # IMsRdpClientNonScriptable5::put_AllowPromptingForCredentials
+    shown = ctypes.c_short(-1)
+    read = get_bool(table[64])(address, ctypes.byref(shown))
+    if wrote < 0 or hid_prompt < 0 or hid_allow < 0 or read < 0 or shown.value != 0:
+        raise OSError(
+            f"the credential prompt was not disabled (password {wrote & 0xFFFFFFFF:#x}, "
+            f"prompt {hid_prompt & 0xFFFFFFFF:#x}, allow {hid_allow & 0xFFFFFFFF:#x}, "
+            f"read {read & 0xFFFFFFFF:#x}, value {shown.value})"
+        )
+
+
+def _remember_credentials(username: str, password: str) -> None:
+    """Store the logon for localhost the way Remote Desktop's 'remember me' does.
+
+    Credential Manager keeps it under TERMSRV/localhost, encrypted for this user, so later
+    runs reuse it. The password is not written anywhere else.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class FileTime(ctypes.Structure):
+        _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+
+    class Credential(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("Type", wintypes.DWORD),
+            ("TargetName", wintypes.LPWSTR),
+            ("Comment", wintypes.LPWSTR),
+            ("LastWritten", FileTime),
+            ("CredentialBlobSize", wintypes.DWORD),
+            ("CredentialBlob", ctypes.c_void_p),
+            ("Persist", wintypes.DWORD),
+            ("AttributeCount", wintypes.DWORD),
+            ("Attributes", ctypes.c_void_p),
+            ("TargetAlias", wintypes.LPWSTR),
+            ("UserName", wintypes.LPWSTR),
+        ]
+
+    blob = password.encode("utf-16-le")
+    buffer = ctypes.create_string_buffer(blob)
+    cred = Credential()
+    cred.Type = 2  # CRED_TYPE_DOMAIN_PASSWORD
+    cred.TargetName = "TERMSRV/localhost"
+    cred.CredentialBlobSize = len(blob)
+    cred.CredentialBlob = ctypes.addressof(buffer)
+    cred.Persist = 2  # CRED_PERSIST_LOCAL_MACHINE
+    cred.UserName = username
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi.CredWriteW.argtypes = (ctypes.POINTER(Credential), wintypes.DWORD)
+    advapi.CredWriteW.restype = wintypes.BOOL
+    if not advapi.CredWriteW(ctypes.byref(cred), 0):
+        raise OSError(ctypes.get_last_error(), "CredWriteW failed for TERMSRV/localhost")
+
+
+def wait_for_child_explorer(pump: Callable[[], None], deadline: float, client) -> None:
+    """Pump messages until the child session has an explorer, or fail with the reason.
+
+    The window stays alive only while its thread pumps. A credential prompt, if one appears, is
+    the user's to answer; this never types a password.
+    """
+    started = time.monotonic()
+    limit = max(0.0, deadline - started)
+    seen_connected = False
+    while True:
+        pump()
+        elapsed = time.monotonic() - started
+        connected = _control_connected(client)
+        seen_connected = seen_connected or connected
+        found = _child_explorer_present()
+        failure = child_wait_failure(elapsed, connected, found, limit, seen_connected)
+        if found:
+            return
+        if failure:
+            if "disconnected" in failure:
+                failure = f"{failure} ({_disconnect_detail(client)})"
+            raise OSError(failure)
+        time.sleep(0.2)
+
+
+def _disconnect_detail(client) -> str:
+    """The control's own reason for dropping the connection, when it will say."""
+    try:
+        extended = int(client.ExtendedDisconnectReason)
+    except Exception as error:
+        return f"no disconnect reason ({error})"
+    try:
+        text = client.GetErrorDescription(0, extended)
+    except Exception as error:
+        text = str(error)
+    return f"extended disconnect reason {extended}: {text}"
+
+
+def _control_connected(client) -> bool:
+    """Whether the control reports a connection. A missing property is not treated as a drop."""
+    try:
+        return int(client.Connected) != 0
+    except Exception:
+        return False
+
+
+def _child_explorer_present() -> bool:
+    """Whether the child session exists and its explorer.exe is running."""
+    import ctypes
+
+    wts = ctypes.WinDLL("wtsapi32", use_last_error=True)
+    if _child_session_id(wts) is None:
+        return False
+    try:
+        _explorer_pid(wts, _console_session_id())
+    except OSError:
+        return False
+    return True
+
+
+def _pump_messages() -> None:
+    import pythoncom
+
+    pythoncom.PumpWaitingMessages()
+
+
+def _window_open(hwnd) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.IsWindow.argtypes = (wintypes.HWND,)
+    user32.IsWindow.restype = wintypes.BOOL
+    return bool(user32.IsWindow(hwnd))
+
+
+def _host_until(relay: threading.Thread, hwnd, pipe, pid) -> str:
+    """Pump until the relay ends, the window closes, or the child process exits. Returns which."""
+    while True:
+        _pump_messages()
+        why = host_stop(not relay.is_alive(), _window_open(hwnd), _child_alive(pid))
+        if why == "closed":
+            _notify_closed(pipe)
+            relay.join(timeout=5)
+            return why
+        if why == "exited":
+            relay.join(timeout=2)
+            if relay.is_alive():
+                _notify_closed(pipe)
+                relay.join(timeout=2)
+            return why
+        if why == "done":
+            return why
+        time.sleep(0.05)
+
+
+def _close_window(hwnd, client) -> None:
+    """Disconnect the control and destroy the window. Failures here must not hide the real one."""
+    if client is not None:
+        with contextlib.suppress(Exception):
+            client.Disconnect()
+    if not hwnd:
+        return
+    with contextlib.suppress(Exception):
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.DestroyWindow.argtypes = (wintypes.HWND,)
+        user32.DestroyWindow.restype = wintypes.BOOL
+        user32.DestroyWindow(hwnd)
+
+
+def _notify_closed(pipe, write: Callable[..., None] | None = None) -> None:
+    """Tell the child the window went away, so its run takes the abort path."""
+    send = write or _write_line
+    with contextlib.suppress(Exception):
+        send(pipe, encode("cancel"))
+
+
+def _child_alive(pid: int | None) -> bool:
+    """Whether the launched process is still running. No pid means nothing to watch."""
+    if not pid:
+        return True
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    code = wintypes.DWORD()
+    try:
+        if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == STILL_ACTIVE
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def create_session_pipe(name: str):
@@ -269,39 +977,193 @@ def attach_session_pipe(name: str):
     )
 
 
-def launch_in_session(pipe_name: str) -> None:
-    """Start jev with the child session's explorer.exe token.
+def attach_input_desktop() -> None:
+    """Bind this process to the session's interactive desktop, WinSta0\\Default.
 
-    The new process gets `JEV_SESSION=1` and the pipe name. A failure raises. This never starts
-    jev in the console session instead.
+    The task scheduler starts jev in the child session on a desktop that is not receiving input,
+    so GetCursorPos and SendInput come back access-denied while a screen capture still works.
+    The thread must not have created a window yet, which is why the launcher calls this before
+    importing the rest of jev. The handles stay open: closing them detaches the thread again.
     """
     import ctypes
-    import sys
     from ctypes import wintypes
 
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
-    wts = ctypes.WinDLL("wtsapi32", use_last_error=True)
-    console = kernel.WTSGetActiveConsoleSessionId()
-    pid = _explorer_pid(wts, console)
-    process = kernel.OpenProcess(0x0400, False, pid)  # PROCESS_QUERY_INFORMATION
-    if not process:
-        raise OSError(ctypes.get_last_error(), "OpenProcess failed for explorer.exe")
-    token = wintypes.HANDLE()
-    if not advapi.OpenProcessToken(process, 0x0002, ctypes.byref(token)):  # TOKEN_DUPLICATE
-        raise OSError(ctypes.get_last_error(), "OpenProcessToken failed")
-    duplicated = wintypes.HANDLE()
-    if not advapi.DuplicateTokenEx(token, 0x10000000, None, 2, 1, ctypes.byref(duplicated)):
-        raise OSError(ctypes.get_last_error(), "DuplicateTokenEx failed")
-    env = os.environ.copy()
-    env["JEV_SESSION"] = "1"
-    env["JEV_SESSION_PIPE"] = pipe_name
-    block = "\0".join(f"{key}={value}" for key, value in env.items()) + "\0\0"
-    command = f'"{sys.executable}" -m typesafe_computer_use'
-    if not advapi.CreateProcessAsUserW(
-        duplicated, None, command, None, None, False, 0x00000400, block, None, _startup(), ctypes.byref(_process_info())
-    ):
-        raise OSError(ctypes.get_last_error(), "CreateProcessAsUser failed")
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    access = 0x02000000  # MAXIMUM_ALLOWED
+    user32.OpenWindowStationW.argtypes = (wintypes.LPCWSTR, wintypes.BOOL, wintypes.DWORD)
+    user32.OpenWindowStationW.restype = wintypes.HANDLE
+    user32.SetProcessWindowStation.argtypes = (wintypes.HANDLE,)
+    user32.SetProcessWindowStation.restype = wintypes.BOOL
+    user32.OpenInputDesktop.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    user32.OpenInputDesktop.restype = wintypes.HANDLE
+    user32.OpenDesktopW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    user32.OpenDesktopW.restype = wintypes.HANDLE
+    user32.SetThreadDesktop.argtypes = (wintypes.HANDLE,)
+    user32.SetThreadDesktop.restype = wintypes.BOOL
+
+    import time
+
+    station = user32.OpenWindowStationW("WinSta0", False, access)
+    if not station:
+        raise OSError(ctypes.get_last_error(), "OpenWindowStationW failed")
+    if not user32.SetProcessWindowStation(station):
+        raise OSError(ctypes.get_last_error(), "SetProcessWindowStation failed")
+    # The child session has no input desktop until its remote-desktop view is in place, so
+    # OpenInputDesktop is polled. Binding Default before input is active leaves GetCursorPos
+    # access-denied. Default is the last resort if input never becomes active.
+    deadline = time.monotonic() + CHILD_LOGON_SECONDS
+    input_desktop = 0
+    while time.monotonic() < deadline:
+        input_desktop = user32.OpenInputDesktop(0, False, access)
+        if input_desktop:
+            break
+        time.sleep(0.5)
+    desktop = input_desktop or user32.OpenDesktopW("Default", 0, False, access)
+    if not desktop:
+        raise OSError(ctypes.get_last_error(), "the input desktop could not be opened")
+    if not user32.SetThreadDesktop(desktop):
+        raise OSError(ctypes.get_last_error(), "SetThreadDesktop failed")
+    _record_desktop_attachment(user32, bool(input_desktop))
+
+
+def _record_desktop_attachment(user32, used_input_desktop: bool) -> None:
+    """Write what the binding actually did, so a failed run says which desktop jev landed on."""
+    import ctypes
+    import tempfile
+    from ctypes import wintypes
+
+    with contextlib.suppress(Exception):
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        session = wintypes.DWORD()
+        kernel.ProcessIdToSessionId(kernel.GetCurrentProcessId(), ctypes.byref(session))
+
+        def _name(handle) -> str:
+            buffer = ctypes.create_unicode_buffer(256)
+            need = wintypes.DWORD()
+            user32.GetUserObjectInformationW(handle, 2, buffer, 512, ctypes.byref(need))  # UOI_NAME
+            return buffer.value
+
+        user32.GetUserObjectInformationW.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        user32.GetProcessWindowStation.restype = wintypes.HANDLE
+        user32.GetThreadDesktop.restype = wintypes.HANDLE
+        user32.GetThreadDesktop.argtypes = (wintypes.DWORD,)
+        station = _name(user32.GetProcessWindowStation())
+        desktop = _name(user32.GetThreadDesktop(kernel.GetCurrentThreadId()))
+
+        class Point(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        point = Point()
+        probe = "ok" if user32.GetCursorPos(ctypes.byref(point)) else f"denied {ctypes.get_last_error()}"
+        line = (
+            f"session={session.value} winsta={station} desktop={desktop} "
+            f"input_desktop={used_input_desktop} cursor_probe={probe}\n"
+        )
+        path = os.path.join(tempfile.gettempdir(), "jev-session-desktop.log")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(line)
+
+
+_LAUNCHER = """\
+import os
+import sys
+import traceback
+
+pid_path = sys.argv[3]
+try:
+    os.environ["JEV_SESSION"] = "1"
+    os.environ["JEV_SESSION_PIPE"] = sys.argv[1]
+    os.chdir(sys.argv[2])
+    sys.path.insert(0, sys.argv[2])
+    from typesafe_computer_use.windows_session import attach_input_desktop
+
+    attach_input_desktop()
+    with open(pid_path, "w", encoding="utf-8") as handle:
+        handle.write(str(os.getpid()))
+    sys.argv = [sys.argv[0], "--act"]
+    from typesafe_computer_use.cli import main
+
+    main()
+except BaseException:
+    with open(pid_path + ".log", "w", encoding="utf-8") as handle:
+        traceback.print_exc(file=handle)
+    raise
+"""
+
+
+def launch_in_session(pipe_name: str) -> int:
+    """Start jev in the child session and return its process id.
+
+    `CreateProcessWithTokenW` stays in the caller's session, and `CreateProcessAsUser` into a
+    child session is access-denied. The task scheduler can run this user's interactive token
+    in a session id. The task command carries the pipe name and the repo path, not secrets;
+    jev reads `.env` after it changes to that path. A failure raises. This never starts jev
+    in the console session instead.
+    """
+    import ctypes
+    import tempfile
+
+    import win32com.client
+
+    session = _child_session_id(ctypes.WinDLL("wtsapi32", use_last_error=True))
+    if session is None:
+        raise OSError("the child session is not running")
+    directory = tempfile.gettempdir()
+    script = os.path.join(directory, "jev-session-launch.py")
+    pidfile = os.path.join(directory, "jev-session-pid.txt")
+    logfile = pidfile + ".log"
+    for path in (pidfile, logfile):
+        with contextlib.suppress(OSError):
+            os.remove(path)
+    with open(script, "w", encoding="utf-8") as handle:
+        handle.write(_LAUNCHER)
+    scheduler = win32com.client.Dispatch("Schedule.Service")
+    scheduler.Connect()
+    folder = scheduler.GetFolder("\\")
+    _delete_launch_task()
+    definition = scheduler.NewTask(0)
+    definition.Principal.UserId = os.environ.get("USERNAME", "")
+    definition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN, so no password is stored
+    definition.Principal.RunLevel = 1
+    action = definition.Actions.Create(0)
+    # python.exe opens a console on the child desktop and that window takes the focus. pythonw does not.
+    windowless = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    action.Path = windowless if os.path.exists(windowless) else sys.executable
+    action.Arguments = f'"{script}" {pipe_name} "{os.getcwd()}" "{pidfile}"'
+    action.WorkingDirectory = os.environ.get("USERPROFILE") or directory
+    folder.RegisterTaskDefinition(TASK_NAME, definition, 6, "", "", 3)  # TASK_CREATE_OR_UPDATE
+    folder.GetTask(TASK_NAME).RunEx(None, 4, int(session), "")  # TASK_RUN_USE_SESSION_ID
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        _pump_messages()
+        try:
+            with open(pidfile, encoding="utf-8") as handle:
+                text = handle.read().strip()
+        except OSError:
+            text = ""
+        if text.isdigit():
+            return int(text)
+        time.sleep(0.2)
+    detail = ""
+    with contextlib.suppress(OSError), open(logfile, encoding="utf-8") as handle:
+        detail = handle.read().strip()
+    raise OSError(detail or "jev did not start in the child session")
+
+
+def _delete_launch_task() -> None:
+    """Remove the one-shot task. Deleting a running task stops it, so this waits until the run is over."""
+    with contextlib.suppress(Exception):
+        import win32com.client
+
+        scheduler = win32com.client.Dispatch("Schedule.Service")
+        scheduler.Connect()
+        scheduler.GetFolder("\\").DeleteTask(TASK_NAME, 0)
 
 
 def _explorer_pid(wts, console: int) -> int:
@@ -329,53 +1191,6 @@ def _explorer_pid(wts, console: int) -> int:
     finally:
         wts.WTSFreeMemory(listed)
     raise OSError("the child session has no explorer.exe")
-
-
-def _startup():
-    import ctypes
-    from ctypes import wintypes
-
-    class Startup(ctypes.Structure):
-        _fields_ = [
-            ("cb", wintypes.DWORD),
-            ("lpReserved", wintypes.LPWSTR),
-            ("lpDesktop", wintypes.LPWSTR),
-            ("lpTitle", wintypes.LPWSTR),
-            ("dwX", wintypes.DWORD),
-            ("dwY", wintypes.DWORD),
-            ("dwXSize", wintypes.DWORD),
-            ("dwYSize", wintypes.DWORD),
-            ("dwXCountChars", wintypes.DWORD),
-            ("dwYCountChars", wintypes.DWORD),
-            ("dwFillAttribute", wintypes.DWORD),
-            ("dwFlags", wintypes.DWORD),
-            ("wShowWindow", wintypes.WORD),
-            ("cbReserved2", wintypes.WORD),
-            ("lpReserved2", ctypes.c_void_p),
-            ("hStdInput", wintypes.HANDLE),
-            ("hStdOutput", wintypes.HANDLE),
-            ("hStdError", wintypes.HANDLE),
-        ]
-
-    info = Startup()
-    info.cb = ctypes.sizeof(Startup)
-    info.lpDesktop = "winsta0\\default"
-    return info
-
-
-def _process_info():
-    import ctypes
-    from ctypes import wintypes
-
-    class Info(ctypes.Structure):
-        _fields_ = [
-            ("hProcess", wintypes.HANDLE),
-            ("hThread", wintypes.HANDLE),
-            ("dwProcessId", wintypes.DWORD),
-            ("dwThreadId", wintypes.DWORD),
-        ]
-
-    return Info()
 
 
 def _edition() -> str:
@@ -457,20 +1272,53 @@ def _smart_card_logon() -> bool:
         return False
 
 
-def _child_running() -> bool:
+def _console_session_id() -> int:
+    import ctypes
+
+    return int(ctypes.WinDLL("kernel32", use_last_error=True).WTSGetActiveConsoleSessionId())
+
+
+def _child_session_id(wts) -> int | None:
+    """The child session, if this logon has one. The only argument is the out id."""
     import ctypes
     from ctypes import wintypes
 
-    wts = ctypes.WinDLL("wtsapi32", use_last_error=True)
-    session = wintypes.DWORD()
-    return bool(wts.WTSGetChildSessionId(0, ctypes.byref(session)))
+    wts.WTSGetChildSessionId.argtypes = (ctypes.POINTER(wintypes.ULONG),)
+    wts.WTSGetChildSessionId.restype = wintypes.BOOL
+    session = wintypes.ULONG()
+    if not wts.WTSGetChildSessionId(ctypes.byref(session)):
+        return None
+    return int(session.value)
 
 
-def _relay(pipe, goal: str) -> None:
-    """Send the task, then print whatever the child sends until it is done."""
-    _write_line(pipe, encode("task", goal=goal))
+def _child_running() -> bool:
+    import ctypes
+
+    return _child_session_id(ctypes.WinDLL("wtsapi32", use_last_error=True)) is not None
+
+
+def _connect_pipe(pipe) -> None:
+    """Wait until the child opens the pipe. A child that already has is a success, not an error."""
+    import pywintypes
+    import win32pipe
+
+    try:
+        win32pipe.ConnectNamedPipe(pipe, None)
+    except pywintypes.error as error:
+        if error.winerror != ERROR_PIPE_CONNECTED:
+            raise
+
+
+def _relay(pipe, goal: str, connect=None, write=None, read=None, ask=None) -> None:
+    """Connect the pipe, send the task, then print whatever the child sends until it is done."""
+    connect = connect or _connect_pipe
+    write = write or _write_line
+    read = read or _read_line
+    ask = ask or input
+    connect(pipe)
+    write(pipe, encode("task", goal=goal))
     while True:
-        message = decode(_read_line(pipe))
+        message = decode(read(pipe))
         kind = message["type"]
         if kind == "log":
             print(message.get("text", ""), flush=True)
@@ -479,10 +1327,10 @@ def _relay(pipe, goal: str) -> None:
         elif kind == "question":
             print(message.get("text", ""), flush=True)
             try:
-                reply = input("  > ")
+                reply = ask("  > ")
             except EOFError:
                 reply = ""
-            _write_line(pipe, encode("answer", text=reply))
+            write(pipe, encode("answer", text=reply))
         elif kind == "done":
             print(message.get("text", ""), flush=True)
             return

@@ -58,6 +58,8 @@ class Settings(BaseSettings):
 
     browser: str = "Google Chrome"  # 用来干活的浏览器
     email: str | None = None  # 有值才提供 type_email。把这个地址填进聚焦的文本框
+    session_username: str | None = None  # 子会话登录名。不设时用 USERNAME，再没有就用 Administrator
+    session_password: str | None = None  # 子会话登录密码。有值才写入凭据管理器；不设就靠子会话自己登录
 
     writer_api: Literal["anthropic", "openai"] = "openai"  # 写手端点的协议。默认 OpenAI 的 Chat Completions
     writer_base_url: str | None = None  # 写手端点。OpenAI 不设就用官方。Anthropic 不设就交给 SDK。完整请求地址和根地址都可以

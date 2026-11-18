@@ -53,7 +53,7 @@ if _absent("Quartz"):
     _stub("Quartz").kCGHIDEventTap = 0
 if not REAL_ACCESSIBILITY:
     _stub("ApplicationServices")
-for _windows_module in ("psutil", "uiautomation", "win32api", "win32con", "win32gui", "win32process"):
+for _windows_module in ("psutil", "pywintypes", "uiautomation", "win32api", "win32con", "win32gui", "win32process"):
     if _absent(_windows_module):
         _stub(_windows_module)
 
@@ -127,8 +127,12 @@ def no_real_machine(monkeypatch):
         monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))
     for name in (
         "enable_child_session",
+        "open_child_window",
         "connect_child_session",
+        "_remember_credentials",
+        "wait_for_child_explorer",
         "launch_in_session",
+        "attach_input_desktop",
         "create_session_pipe",
         "attach_session_pipe",
         "in_console_session",

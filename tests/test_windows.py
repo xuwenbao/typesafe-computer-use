@@ -17,6 +17,7 @@ from typesafe_computer_use.windows import (
     pressable,
     role_for,
     unicode_events,
+    unsigned_pid,
     wheel_delta,
 )
 
@@ -60,6 +61,12 @@ def test_the_legacy_pattern_alone_is_not_pressable():
 
 
 # ------------------------------------------------------------------ which window is the app
+
+
+def test_a_window_process_id_keeps_its_high_bit():
+    assert unsigned_pid(4) == 4
+    assert unsigned_pid(-1504199776) == 2790767520
+    assert unsigned_pid(0) == 0
 
 
 def test_an_app_matches_its_own_process_exactly():

@@ -22,6 +22,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import psutil
+import pywintypes
 import uiautomation as auto
 import win32api
 import win32con
@@ -335,16 +336,23 @@ def scroll(lines: int, at: tuple[float, float] | None = None) -> None:
 # ------------------------------------------------------------------ apps and windows
 
 
+def unsigned_pid(raw: int) -> int:
+    """A process id from the window manager. The API returns a DWORD, which arrives signed."""
+    return int(raw) & 0xFFFFFFFF
+
+
 def _process_name(pid: int) -> str:
+    if pid <= 0:
+        return ""
     try:
         return psutil.Process(pid).name()
-    except psutil.Error:
+    except (psutil.Error, ValueError):
         return ""
 
 
 def _window_pid(hwnd: int) -> int:
     _, pid = win32process.GetWindowThreadProcessId(hwnd)
-    return pid
+    return unsigned_pid(pid)
 
 
 def frontmost_app() -> str:
@@ -429,9 +437,12 @@ def frontmost_window_bounds(pid: int | None = None) -> tuple[float, float, float
     to that process rather than one that grabbed focus since.
     """
     hwnd = win32gui.GetForegroundWindow()
-    if pid is not None and _window_pid(hwnd) != pid:
+    if not hwnd or (pid is not None and _window_pid(hwnd) != pid):
         return None
-    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    except pywintypes.error:
+        return None
     w, h = float(right - left), float(bottom - top)
     if w > MIN_WINDOW_SIDE_PT and h > MIN_WINDOW_SIDE_PT:
         return float(left), float(top), w, h
