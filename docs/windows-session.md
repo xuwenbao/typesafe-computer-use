@@ -3,8 +3,12 @@
 `clicker session` runs a task in a Windows child session. The console desktop keeps its own
 input and focus. jev's screenshots and keystrokes stay in the child session. The parent only
 shows a Remote Desktop window onto that session and relays a named pipe. That window is the
-picture-in-picture: a normal foreground window, 800 by 480, not fullscreen, with the remote
-desktop control hosted as a child of that window and scaled to fit it. Closing it cancels the run.
+picture-in-picture: a normal foreground window whose client area is 1280 by 800, not fullscreen,
+with the remote desktop control hosted as a child of that window. The child session's own desktop
+is also 1280 by 800, the same size as that client area. The title bar and borders sit outside it.
+A larger desktop makes the control present its own view outside that window. The control's
+`EnableHardwareMode` is turned off so it uses the GDI presenter; its DirectX presenter would paint
+a surface over the whole monitor. Closing it cancels the run.
 
 The child-session logon uses `CLICKER_SESSION_USERNAME` and `CLICKER_SESSION_PASSWORD`. When
 both are set, the controller stores them in Credential Manager as `TERMSRV/localhost`, gives

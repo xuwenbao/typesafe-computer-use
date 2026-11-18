@@ -647,8 +647,7 @@ def test_a_configured_password_is_remembered_and_the_desktop_stays_small(monkeyp
     assert client.FullScreen is False
     assert client.SmartSizing is True
     assert client.ContainerHandledFullScreen is True
-    # The desktop size is set to the frame's client area in open_child_window, not here.
-    assert not hasattr(client, "DesktopWidth")
+    assert (client.DesktopWidth, client.DesktopHeight) == (1280, 800)
 
 
 def test_without_a_password_the_control_is_not_given_a_user(monkeypatch, clean_env, tmp_path):
@@ -674,7 +673,10 @@ def _connection_client():
 
 
 def test_the_picture_window_is_the_small_frame():
-    assert (windows_session.FRAME_WIDTH, windows_session.FRAME_HEIGHT) == (800, 480)
+    assert (windows_session.FRAME_WIDTH, windows_session.FRAME_HEIGHT) == (1280, 800)
+    assert (windows_session.DESKTOP_WIDTH, windows_session.DESKTOP_HEIGHT) == (1280, 800)
+    assert windows_session.desktop_oversized(1920, 1080)
+    assert not windows_session.desktop_oversized(1280, 800)
 
 
 def test_the_child_session_is_launched_acting():

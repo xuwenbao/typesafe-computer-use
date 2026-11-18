@@ -33,7 +33,10 @@ RDP_EXTENDED_IID = "{302D8188-0052-4807-806A-362B628F9AC5}"  # IMsRdpExtendedSet
 AX_WINDOW_CLASSES = ("AtlAxWin140", "AtlAxWin110", "AtlAxWin100", "AtlAxWin")
 WINDOW_TITLE = "jev child session"
 FRAME_X, FRAME_Y = 80, 80
-FRAME_WIDTH, FRAME_HEIGHT = 800, 480
+# Client area of the frame, and the child session's own pixels. The title bar and borders sit
+# outside this rectangle. A desktop larger than the client makes the control present its own view.
+FRAME_WIDTH, FRAME_HEIGHT = 1280, 800
+DESKTOP_WIDTH, DESKTOP_HEIGHT = FRAME_WIDTH, FRAME_HEIGHT
 CHILD_LOGON_SECONDS = 90
 ERROR_PIPE_CONNECTED = 535
 STILL_ACTIVE = 259
@@ -336,7 +339,9 @@ def open_child_window():
     child_style = win32con.WS_CHILD | win32con.WS_VISIBLE | win32con.WS_CLIPSIBLINGS
     host = None
     for klass in AX_WINDOW_CLASSES:
-        host = user32.CreateWindowExW(0, klass, RDP_PROGID, child_style, 0, 0, 1008, 601, hwnd, None, instance, None)
+        host = user32.CreateWindowExW(
+            0, klass, RDP_PROGID, child_style, 0, 0, FRAME_WIDTH, FRAME_HEIGHT, hwnd, None, instance, None
+        )
         if host:
             break
     if not host:
@@ -369,9 +374,9 @@ def open_child_window():
         raise OSError(f"the Remote Desktop control did not expose a client interface: {last}")
     extended = pointer.QueryInterface(pywintypes.IID(RDP_EXTENDED_IID), pythoncom.IID_IDispatch)
     _set_child_session(extended)
-    # Hardware presentation can cover the monitor even while this frame stays 800 by 480.
-    _try_extended_long(extended, "EnableHardwareMode", 0)
-    _try_extended_long(extended, "VideoPlaybackMode", 0)
+    # The DirectX presenter paints its own surface over the monitor and reads back black to a GDI
+    # grab. Force the GDI presenter so the picture stays inside this window.
+    _set_extended_bool(extended, "EnableHardwareMode", False)
     _size_control_to_window(hwnd, client)
     user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
     user32.ShowWindow.restype = wintypes.BOOL
@@ -417,15 +422,16 @@ def _create_frame():
         if error.winerror != 1410:  # CLASS_ALREADY_EXISTS: a previous run registered it
             raise
         atom = _FRAME_CLASS
+    x, y, width, height = frame_outer()
     _frame_hwnd = win32gui.CreateWindowEx(
         win32con.WS_EX_TOPMOST,
         atom,
         WINDOW_TITLE,
         win32con.WS_OVERLAPPEDWINDOW | win32con.WS_CLIPCHILDREN | win32con.WS_VISIBLE,
-        FRAME_X,
-        FRAME_Y,
-        FRAME_WIDTH,
-        FRAME_HEIGHT,
+        x,
+        y,
+        width,
+        height,
         0,
         0,
         instance,
@@ -453,21 +459,29 @@ def _clamp_window_pos(lparam) -> None:
     pos = ctypes.cast(lparam, ctypes.POINTER(WindowPos)).contents
     if pos.flags & 0x0001:  # SWP_NOSIZE
         return
-    if pos.cx > FRAME_WIDTH + 40 or pos.cy > FRAME_HEIGHT + 40:
-        pos.x, pos.y, pos.cx, pos.cy = FRAME_X, FRAME_Y, FRAME_WIDTH, FRAME_HEIGHT
+    x, y, width, height = frame_outer()
+    if pos.cx > width + 8 or pos.cy > height + 8:
+        pos.x, pos.y, pos.cx, pos.cy = x, y, width, height
 
 
 def _reveal_hosted_windows(hwnd, client) -> None:
-    """Show the control's view and put the frame back if the control tries to go full screen."""
+    """Show the control's view, keep the frame small, and keep the remote view inside it."""
     import win32gui
 
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline and win32gui.IsWindow(hwnd):
+    applied = False
+    while win32gui.IsWindow(hwnd):
         _show_descendants(hwnd)
+        _clamp_view_to_client(hwnd)
         with contextlib.suppress(Exception):
             if client.FullScreen:
                 client.FullScreen = False
-        win32gui.SetWindowPos(hwnd, -1, FRAME_X, FRAME_Y, FRAME_WIDTH, FRAME_HEIGHT, 0x0040)
+        if not applied:
+            with contextlib.suppress(Exception):
+                if int(client.Connected) == 1:
+                    _set_desktop_resolution(client, live=True)
+                    applied = True
+        x, y, width, height = frame_outer()
+        win32gui.SetWindowPos(hwnd, -1, x, y, width, height, 0x0040)
         time.sleep(0.2)
 
 
@@ -480,6 +494,96 @@ def _show_descendants(hwnd) -> None:
     while child:
         _show_descendants(child)
         child = win32gui.GetWindow(child, win32con.GW_HWNDNEXT)
+
+
+def frame_outer() -> tuple[int, int, int, int]:
+    """Outer size whose client area is the 1280 by 800 desktop. The title bar sits outside it."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    rect = wintypes.RECT(0, 0, DESKTOP_WIDTH, DESKTOP_HEIGHT)
+    style = 0x00CF0000 | 0x02000000  # WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN
+    exstyle = 0x00000008  # WS_EX_TOPMOST
+    dpi = 96
+    get_dpi = getattr(user32, "GetDpiForSystem", None)
+    if get_dpi is not None:
+        get_dpi.restype = ctypes.c_uint
+        dpi = int(get_dpi()) or 96
+    adjust = getattr(user32, "AdjustWindowRectExForDpi", None)
+    ok = False
+    if adjust is not None:
+        adjust.argtypes = (
+            ctypes.POINTER(wintypes.RECT),
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+            ctypes.c_uint,
+        )
+        adjust.restype = wintypes.BOOL
+        ok = bool(adjust(ctypes.byref(rect), style, False, exstyle, dpi))
+    if not ok:
+        user32.AdjustWindowRectEx.argtypes = (
+            ctypes.POINTER(wintypes.RECT),
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        )
+        user32.AdjustWindowRectEx.restype = wintypes.BOOL
+        user32.AdjustWindowRectEx(ctypes.byref(rect), style, False, exstyle)
+    return FRAME_X, FRAME_Y, int(rect.right - rect.left), int(rect.bottom - rect.top)
+
+
+def desktop_oversized(width: int, height: int) -> bool:
+    """The session picked a resolution larger than the desktop this window is built for."""
+    return int(width) > DESKTOP_WIDTH + 8 or int(height) > DESKTOP_HEIGHT + 8
+
+
+_desktop_apply_at = 0.0
+
+
+def _set_desktop_resolution(client, *, live: bool) -> None:
+    """Set the child desktop to DESKTOP_WIDTH by DESKTOP_HEIGHT.
+
+    DesktopWidth applies before Connect. Once the session is up, a child session often keeps the
+    monitor's resolution anyway, so UpdateSessionDisplaySettings asks it to change. A session
+    that ignores the request must not be asked again on every size event.
+    """
+    global _desktop_apply_at
+
+    with contextlib.suppress(Exception):
+        client.DesktopWidth = DESKTOP_WIDTH
+        client.DesktopHeight = DESKTOP_HEIGHT
+    if not live:
+        return
+    now = time.monotonic()
+    if now - _desktop_apply_at < 1:
+        return
+    _desktop_apply_at = now
+    with contextlib.suppress(Exception):
+        client.UpdateSessionDisplaySettings(DESKTOP_WIDTH, DESKTOP_HEIGHT, DESKTOP_WIDTH, DESKTOP_HEIGHT, 0, 100, 100)
+
+
+def _clamp_view_to_client(hwnd) -> None:
+    """Resize any remote view that is larger than its parent. That view is the fullscreen surface."""
+    import win32con
+    import win32gui
+
+    def walk(parent) -> None:
+        left, top, right, bottom = win32gui.GetClientRect(parent)
+        width, height = right - left, bottom - top
+        if width <= 0 or height <= 0:
+            return
+        child = win32gui.GetWindow(parent, win32con.GW_CHILD)
+        while child:
+            rect = win32gui.GetWindowRect(child)
+            if rect[2] - rect[0] > width + 2 or rect[3] - rect[1] > height + 2:
+                win32gui.MoveWindow(child, 0, 0, width, height, True)
+            walk(child)
+            child = win32gui.GetWindow(child, win32con.GW_HWNDNEXT)
+
+    with contextlib.suppress(Exception):
+        walk(hwnd)
 
 
 def _fit_hosted_control(hwnd) -> None:
@@ -499,19 +603,12 @@ def _fit_hosted_control(hwnd) -> None:
 
 
 def _size_control_to_window(hwnd, client) -> None:
-    """Match the remote desktop to the frame's client area so the control renders in place.
+    """Give the child session the frame's client resolution and stretch the control over the frame.
 
-    A desktop larger than the window makes MsTscAx open its own full-screen frame. The hosted
-    control is stretched over the same rectangle, so the frame does not stay blank.
+    A desktop larger than this client makes MsTscAx build a view of that size and present it
+    outside the frame. The hosted control is stretched over the frame, so the frame does not stay blank.
     """
-    import win32gui
-
-    left, top, right, bottom = win32gui.GetClientRect(hwnd)
-    width = max(int(right - left), 320)
-    height = max(int(bottom - top), 240)
-    with contextlib.suppress(Exception):
-        client.DesktopWidth = width
-        client.DesktopHeight = height
+    _set_desktop_resolution(client, live=False)
     _fit_hosted_control(hwnd)
 
 
@@ -566,8 +663,15 @@ def _set_child_session(extended) -> None:
         )
 
 
-def _try_extended_long(extended, name: str, number: int) -> None:
-    """Set one extended integer property. An unknown name is ignored."""
+def _set_extended_bool(extended, name: str, enabled: bool) -> None:
+    """Set one write-only VT_BOOL property on IMsRdpExtendedSettings through the vtable put slot.
+
+    `EnableHardwareMode` is the one that matters: True (its default) selects the DirectX presenter,
+    whose surface covers the monitor and reads back black to a GDI screen grab. False forces the
+    GDI presenter, so the picture stays inside this window. The property is write-only, so there is
+    no get to confirm it; only the put HRESULT is checked. A VT_I4 here is the wrong type and the
+    put is dropped, which is the bug that left hardware mode on.
+    """
     import ctypes
 
     oleaut = ctypes.WinDLL("oleaut32", use_last_error=True)
@@ -589,10 +693,12 @@ def _try_extended_long(extended, name: str, number: int) -> None:
     call = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(Variant))
     label = oleaut.SysAllocString(name)
     try:
-        value = Variant(vt=3, val=number)  # VT_I4
-        call(table[3])(address, label, ctypes.byref(value))
+        value = Variant(vt=11, val=-1 if enabled else 0)  # VT_BOOL, VARIANT_TRUE / VARIANT_FALSE
+        wrote = call(table[3])(address, label, ctypes.byref(value))
     finally:
         oleaut.SysFreeString(label)
+    if wrote < 0:
+        raise OSError(f"{name} was not set (put {wrote & 0xFFFFFFFF:#x})")
 
 
 _rdp_events = None
@@ -610,6 +716,8 @@ def _reject_fullscreen(client) -> None:
         def OnRemoteDesktopSizeChange(self, width, height):
             with contextlib.suppress(Exception):
                 client.FullScreen = False
+            if desktop_oversized(width, height):
+                _set_desktop_resolution(client, live=True)
 
     try:
         import win32com.client
@@ -643,8 +751,9 @@ def _prepare_connection(client) -> None:
     client.Server = "localhost"
     client.FullScreen = False
     client.ColorDepth = 16
-    # DesktopWidth/Height are set to the frame's client area in open_child_window. Full-screen
-    # requests come here and are refused, so the control does not cover the monitor itself.
+    # The child desktop stays at DESKTOP_WIDTH by DESKTOP_HEIGHT, which fits the frame's client.
+    # Full-screen requests are refused below.
+    _set_desktop_resolution(client, live=False)
     client.AdvancedSettings9.EnableCredSspSupport = True
     client.AdvancedSettings9.SmartSizing = True
     client.AdvancedSettings9.ContainerHandledFullScreen = True
