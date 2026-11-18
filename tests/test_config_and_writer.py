@@ -302,6 +302,8 @@ def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
     assert "do not tell it to repeat a click" in ANSWER_SYSTEM
     assert "click the heading that shows the month and year" in ANSWER_SYSTEM
     assert "offscreen_controls lists controls on this page" in ANSWER_SYSTEM
+    assert "shows none of them left" in ANSWER_SYSTEM
+    assert "give_up and say in the reason what is missing" in DRIVE_SYSTEM
 
 
 def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_env):

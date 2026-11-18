@@ -27,7 +27,14 @@ from typesafe_computer_use.uia_patterns import PATTERN_IDS
 from typesafe_computer_use.waa import tree
 from typesafe_computer_use.waa.desktop import WAADesktop, _operate_element
 from typesafe_computer_use.waa.walk_vm import LiveElement, walk
-from typesafe_computer_use.writer import DriveStep, WriterError, _drive_batch, compose_drive_step
+from typesafe_computer_use.writer import (
+    DRIVE_ACTIONS,
+    DriveStep,
+    WriterError,
+    _drive_batch,
+    _drive_properties,
+    compose_drive_step,
+)
 
 PACKAGE = Path(__file__).resolve().parent.parent / "typesafe_computer_use"
 # Captured before the machine guard replaces it, so the test can drive the real function
@@ -93,9 +100,11 @@ def test_windows_reads_enabled_disabled_and_unknown(monkeypatch):
 
 
 def test_macos_reports_presence_and_visibility_but_not_enabled(monkeypatch):
-    monkeypatch.setattr(macos.AS, "AXUIElementCopyAttributeValue", lambda *args: (0, "AXButton"))
+    # Replace the module. The stand-in raises from __getattr__, which setattr cannot patch one name of.
+    bridge = SimpleNamespace(AXUIElementCopyAttributeValue=lambda *args: (0, "AXButton"), kAXRoleAttribute="AXRole")
+    monkeypatch.setattr(macos, "AS", bridge)
     assert _MAC_ELEMENT_STATE(object()) == ElementState(True, True, None)
-    monkeypatch.setattr(macos.AS, "AXUIElementCopyAttributeValue", lambda *args: (-1, None))
+    bridge.AXUIElementCopyAttributeValue = lambda *args: (-1, None)
     assert _MAC_ELEMENT_STATE(object()) is None
 
 
@@ -193,6 +202,47 @@ def test_a_batch_parses_and_a_done_in_the_middle_or_an_overlong_list_does_not():
         _drive_batch({"reason": "next", "actions": [{"action": "done"}, {"action": "wait"}]}, 3)
     with pytest.raises(WriterError, match="batch"):
         _drive_batch({"reason": "next", "actions": [{"action": "wait"}] * 4}, 3)
+
+
+def test_a_reply_without_an_action_name_quotes_the_entry_and_a_type_name_is_accepted():
+    raw = {"item": "3", "label": "Save"}
+    with pytest.raises(WriterError, match="action name") as caught:
+        _drive_batch({"reason": "next", "actions": [raw]}, 3)
+    assert json.dumps(raw) in str(caught.value)
+    named = _drive_batch({"reason": "next", "actions": [{"type": "click", "item": "3"}]}, 3)
+    assert [(move.action, move.item) for move in named] == [("click", "3")]
+    by_name = _drive_batch({"reason": "next", "actions": [{"name": "give_up"}]}, 1)
+    assert by_name[0].action == "give_up"
+
+
+def test_the_takeover_schema_names_every_action(screen, monkeypatch):
+    monkeypatch.setenv("CLICKER_WRITER_VISION", "false")
+    seen = []
+
+    def create(**kwargs):
+        seen.append(kwargs["output_config"]["format"]["schema"])
+        payload = {"reason": "next", "actions": [{"action": "wait"}]}
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+    compose_drive_step(
+        SimpleNamespace(messages=SimpleNamespace(create=create)),
+        "set it",
+        screen,
+        [],
+        [],
+        "stuck",
+        [],
+        [],
+        None,
+        3,
+        None,
+        batch=3,
+    )
+    actions = seen[0]["properties"]["actions"]
+    assert actions["minItems"] == 1 and actions["maxItems"] == 3
+    assert actions["items"]["properties"]["action"]["enum"] == list(DRIVE_ACTIONS)
+    assert actions["items"]["additionalProperties"] is False
+    assert _drive_properties(1)["actions"]["maxItems"] == 1
 
 
 def test_the_model_sees_controls_and_the_classifier_does_not_gain_set_value(screen, monkeypatch):

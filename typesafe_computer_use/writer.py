@@ -355,7 +355,9 @@ ANSWER_SYSTEM = (
     "Plain text, no markdown, four sentences at most. Set achieved to true only when the screen "
     "itself shows the goal reached, every part of it: check each thing the goal names, such as "
     "which item, where it goes, and what value it takes, and when the screen shows something done "
-    "but not one of those parts, the goal is not reached.\n\n"
+    "but not one of those parts, the goal is not reached. When the goal is to move, delete, or "
+    "archive every file of one kind, it is not reached until the place they started shows none of "
+    "them left. A folder that already holds some of them does not count.\n\n"
     "When the goal is not reached you may keep the run going, in one of two ways and never both. "
     "Set focus to send the classifier back to work: one short imperative sentence naming the next "
     "step in terms of what this screen shows, quoting the text of the item to use when there is "
@@ -477,7 +479,9 @@ DRIVE_SYSTEM = (
     "to close it, then press the shortcut.\n"
     "When the app you need is not on the screen, press start, type its name into the search box, "
     "and open it. Do not give_up because one way failed: try another. Give up when the app has no "
-    "such feature and the goal cannot be done, and say in the reason what is missing.\n"
+    "such feature and the goal cannot be done, and say in the reason what is missing. When what "
+    "the goal assumes is not on the screen, such as a file that is playing or something that is "
+    "there to be found, give_up and say in the reason what is missing. Do not keep clicking.\n"
     "A spinner, a number box, or one part of a time takes its value from type with item set to "
     "it. When a menu is open and the choice you need is not on the screen, press up or down and "
     "then return. Do not click the menu itself again.\n"
@@ -568,10 +572,7 @@ def compose_drive_step(
         writer,
         system=DRIVE_SYSTEM,
         packet=packet,
-        properties={  # the reason is written before the actions are chosen
-            "reason": {"type": "string"},
-            "actions": {"type": "array"},
-        },
+        properties=_drive_properties(limit),  # the reason is written before the actions are chosen
         max_tokens=2048,
         answering=True,
         image=picture if settings().writer_vision else None,
@@ -580,18 +581,71 @@ def compose_drive_step(
     return _drive_batch(data, limit)
 
 
+def _drive_properties(limit: int) -> dict:
+    """The takeover reply. Each action names its fields, so an endpoint that only reads the schema
+    as text still returns an action name."""
+    fields = {
+        "action": {"type": "string", "enum": list(DRIVE_ACTIONS)},
+        "item": {"type": "string"},
+        "text": {"type": "string"},
+        "key": {"type": "string"},
+        "modifier": {"type": "string"},
+        "to": {"type": "string"},
+        "dx": {"type": "string"},
+        "dy": {"type": "string"},
+        "achieved": {"type": "boolean"},
+    }
+    return {
+        "reason": {"type": "string"},
+        "actions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": limit,
+            "items": {
+                "type": "object",
+                "properties": fields,
+                "required": list(fields),
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _shown(raw: object) -> str:
+    """A reply fragment short enough to log beside the reason it was refused."""
+    try:
+        text = json.dumps(raw)
+    except TypeError:
+        text = repr(raw)
+    return text[:400]
+
+
+def _action_name(raw: dict) -> str | None:
+    """The action this entry names. `type` or `name` counts only when `action` itself is absent."""
+    named = raw.get("action")
+    if isinstance(named, str) and named.strip():
+        return named.strip().lower()
+    for key in ("type", "name"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip().lower() in DRIVE_ACTIONS:
+            return value.strip().lower()
+    return None
+
+
 def _drive_batch(data: dict, limit: int) -> list[DriveStep]:
     """The reply's action list, or an error when the list itself is not usable."""
     actions = data["actions"]
     if not actions or len(actions) > limit:
-        raise WriterError(f"the driver replied with {len(actions)} actions; the batch allows 1 to {limit}")
+        raise WriterError(f"the driver replied with {len(actions)} actions; the batch allows 1 to {limit}: {_shown(actions)}")
     steps: list[DriveStep] = []
     for raw in actions:
-        if not isinstance(raw, dict) or not isinstance(raw.get("action"), str):
-            raise WriterError("each driver action needs an action name")
-        action = raw["action"].strip().lower()
+        if not isinstance(raw, dict):
+            raise WriterError(f"each driver action needs an action name: {_shown(raw)}")
+        action = _action_name(raw)
+        if action is None:
+            raise WriterError(f"each driver action needs an action name: {_shown(raw)}")
         if action not in DRIVE_ACTIONS:
-            raise WriterError(f"{action!r} is not a driver action")
+            raise WriterError(f"{action!r} is not a driver action: {_shown(raw)}")
         steps.append(
             DriveStep(
                 reason=data["reason"].strip(),
@@ -607,7 +661,7 @@ def _drive_batch(data: dict, limit: int) -> list[DriveStep]:
             )
         )
     if any(step.action in ("done", "give_up") for step in steps[:-1]):
-        raise WriterError("done and give_up come last")
+        raise WriterError(f"done and give_up come last: {_shown(actions)}")
     return steps
 
 
