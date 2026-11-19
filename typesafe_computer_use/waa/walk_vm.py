@@ -59,7 +59,8 @@ def _control_facts(node):
     patterns = list(node.pattern_ids()) if callable(getattr(node, "pattern_ids", None)) else []
     checked = node.checked() if callable(getattr(node, "checked", None)) else None
     expanded = node.expanded() if callable(getattr(node, "expanded", None)) else None
-    return {"enabled": enabled, "patterns": patterns, "checked": checked, "expanded": expanded}
+    selected = node.selected() if callable(getattr(node, "selected", None)) else None
+    return {"enabled": enabled, "patterns": patterns, "checked": checked, "expanded": expanded, "selected": selected}
 
 
 def empty(reason):
@@ -309,6 +310,14 @@ class LiveElement:
         pattern = self._pattern(_pattern_table()["expand_collapse"])
         try:
             return int(pattern.CurrentExpandCollapseState) != 0 if pattern is not None else None
+        except Exception:
+            return None
+
+    def selected(self):
+        """SelectionItem.CurrentIsSelected. An element without that pattern cannot say."""
+        pattern = self._pattern(_pattern_table()["selection_item"])
+        try:
+            return bool(pattern.CurrentIsSelected) if pattern is not None else None
         except Exception:
             return None
 

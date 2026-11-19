@@ -8,23 +8,23 @@ from __future__ import annotations
 
 import json
 import string
-from dataclasses import asdict, replace
+from dataclasses import asdict
 
 from .actions import (
     WAIT_SECONDS,
-    _menu_blocks,
-    _paste_lands_on_itself,
-    _return_opens,
+    _paste_note,
+    _return_note,
     add_item,
     click_item,
     clipboard_line,
     fill_field,
     focus_landed,
+    noted,
 )
 from .calls import MeteredWriter
 from .models import AxNode, Item, Missed, Screen, signature
 from .parse.marks import marks
-from .perception import ocr_region, pixels_changed
+from .perception import ocr_region
 from .platform_adapter import desktop
 from .writer import DriveStep, WriterError, compose_drive_step, denied_listed_names, looks_credential
 
@@ -53,6 +53,8 @@ KEYS = (
 # 只在列表里移动的键。连续按它们是正常翻页，不计入“同一个动作重复”的闸。
 NAVIGATION_KEYS = ("up", "down", "left", "right", "pageup", "pagedown", "home", "end")
 MAX_SAME_ACTION = 4  # 同一个动作连续这么多次就停下，不论这几张屏幕像不像
+MAX_REVISITS = 3  # 这次接管里，同一屏幕上同一个动作累计这么多次就换路，中间夹了别的动作也算
+NOTES_LIMIT = 400  # 记给下一步的事实最长这么多字；更长的截掉
 DENIED_SHORTCUTS = ("q", "w", "h", "m")  # 这四个快捷键会退出、关闭、隐藏或最小化窗口，所以不让模型按
 QUIET_SHORTCUTS = ("c", "x")  # 复制和剪切只改剪贴板。屏幕可以不变，不能据此说这一步没效果
 # 允许的 Cmd/Ctrl 组合：小写字母和数字，去掉上面四个。
@@ -74,7 +76,9 @@ MAX_UNUSABLE = 2  # 连续两次回复都读不成一个动作就停。一次还
 PREFIX = "driver: "  # 每一行都带这个前缀，后面能分清是分类器做的还是接管做的
 UNUSABLE = "the model's reply was unusable"  # 写进历史的英文句子，下一步模型会读到
 UNMARKED = ("wait", "type")  # 等待本来就不改屏幕，输入会自己读回文本框，这两种不加“屏幕没变”
-DEAD = "refused: this did nothing on this screen before; try another way"  # 这个动作在当前屏幕上做过且没效果，拒绝再做
+DONE_BEFORE = "this did nothing on this screen before"  # 这个动作在当前屏幕上做过且没效果。照做，结果行带上这句提醒
+BANNED = "refused: this is the way that just looped; try another way"  # 换路之后，打转的动作在那一屏上不再执行
+MAX_REROUTES = 1  # 一次接管里止损最多逼它换几次路；再触发就停
 
 # 接管结束时告诉写手的英文说明。写手用它向用户解释这次是怎么停的，所以保持英文。
 TOOK_OVER = "the classifier stopped short of the goal for good, a stronger model took over the actions, and "
@@ -91,7 +95,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
     """从第 `first` 步开始接管，直到模型说完成、放弃、卡住，或把自己的步数用完。
 
     返回 False 表示根本没开始：接管关着（步数为 0），或者没有写手可问。
-    步数是接管自己的 `driver_steps`，不从分类器剩下的 `--steps` 里扣。
+    步数是接管自己的 `driver_steps`，不从分类器剩下的 `--steps` 里扣。每一步只问一个动作，做完再看新截图。
     真正开始之后，`state.outcome` 会改成上面 STOPPED 里的一种，做过的动作都在 `state.history` 里，每行以 `driver: ` 开头。
     """
     from . import runner  # runner 会调用本模块，顶层互相导入会成环，所以用到时再导入
@@ -102,30 +106,36 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
         return False
 
     # 目标：记下分类器为什么停下，并准备接管自己的计数。
-    # 完成：日志写出最多几步；空转和重复从 0 计；结局先写成“步数用完”，中途完成或卡住再改。
+    # 完成：日志写出最多几步；空转、重复和换路从 0 计；结局先写成“步数用完”，中途完成或卡住再改。
     writer = ctx.writer.as_driver() if isinstance(ctx.writer, MeteredWriter) else ctx.writer
     stopped = runner.STOPPED[state.outcome]
     log(f"\nthe driver takes over, {budget} actions at most: {stopped}")
-    state.idle = state.repeats = 0
+    state.idle = state.repeats = state.reroutes = 0
+    state.banned = set()
+    state.banned_on = state.change_course = None
     state.outcome = "driver step limit"
     unusable = 0
     cursor = first
     calls = 0
     same_streak = 0
     same_sig: str | None = None
+    last_sig = ""
+    started = len(state.seen)  # 累计重复只数这次接管做的动作，分类器做过的不算
 
     try:
         while cursor < first + budget:
             desktop.check_abort()
 
-            # 目标：拿到这一步要看的屏幕。完成：连续没变化就定为卡住并返回，不再问模型。
+            # 目标：拿到这一步要看的屏幕。完成：连续没变化时第一次逼模型换路，第二次定为卡住并返回。
             seen = runner.look(cfg, ctx, state, log)
             if seen is None:
-                state.outcome = "driver stalled"
-                return True
+                if _loop(state, f"the last {runner.MAX_IDLE} actions changed nothing on screen", last_sig, log):
+                    return True
+                same_streak, same_sig = 0, None
+                seen = state.view
 
             # 目标：把当前屏幕交给模型，并留下这一步的截图。
-            # 完成：标出元素、存下发出去的图，并带上之前的屏幕、停下记录和还剩几步。
+            # 完成：标出元素、存下发出去的图，并带上之前的屏幕、停下记录、还剩几步和换路说明。
             _mark_tried(state)
             screen, items = seen
             picture = marks(screen.image, items, ocr_region(screen))
@@ -133,34 +143,31 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
             prefix.with_name(prefix.name + "-sent.png").write_bytes(picture.png)
             earlier = runner.earlier_screens(state, signature(screen, items))
             earlier_stops = runner.stops_so_far(state)
+            change = state.change_course
+            state.change_course = None
 
             try:
-                # 目标：让模型选出下一批动作。完成：得到若干 DriveStep；读不成则进入下面的失败处理。
-                moves = _ask(
-                    writer, cfg, state, screen, items, stopped, earlier, earlier_stops, first + budget - cursor, picture.image()
+                # 目标：让模型选出下一个动作。完成：得到一个 DriveStep；读不成则进入下面的失败处理。
+                move = _ask(
+                    writer,
+                    cfg,
+                    state,
+                    screen,
+                    items,
+                    stopped,
+                    earlier,
+                    earlier_stops,
+                    first + budget - cursor,
+                    picture.image(),
+                    change=change,
                 )
-            except WriterError as e:
-                # 目标：处理读不成动作的回复。完成：记进历史；连续两次把结局写成失败并停下，一次则再问。
                 calls += 1
-                unusable += 1
-                log(f"  the model's reply was unusable: {e}")
-                _record(state, PREFIX + UNUSABLE)
-                state.markable = False
-                _write_call(prefix, cursor, calls, [{"step": cursor, "did": UNUSABLE, "error": str(e)}])
-                cursor += 1
-                if unusable >= MAX_UNUSABLE:
-                    state.outcome = "driver failed"
-                    return True
-                continue
-
-            calls += 1
-            # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准，第一批不执行。
-            reasked = None
-            reached = bool(moves) and all(move.action == "done" and move.achieved for move in moves)
-            denied = denied_listed_names(moves[0].reason, False, items) if moves and not reached else []
-            if denied:
-                try:
-                    moves = _ask(
+                # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准，第一个回复不执行。
+                reasked = None
+                reached = move.action == "done" and move.achieved
+                denied = [] if reached else denied_listed_names(move.reason, False, items)
+                if denied:
+                    move = _ask(
                         writer,
                         cfg,
                         state,
@@ -172,109 +179,72 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                         first + budget - cursor,
                         None,
                         denied,
+                        change=change,
                     )
-                except WriterError as e:
                     calls += 1
-                    unusable += 1
-                    log(f"  the model's reply was unusable: {e}")
-                    _record(state, PREFIX + UNUSABLE)
-                    state.markable = False
-                    _write_call(prefix, cursor, calls, [{"step": cursor, "did": UNUSABLE, "error": str(e)}], denied)
-                    cursor += 1
-                    if unusable >= MAX_UNUSABLE:
-                        state.outcome = "driver failed"
-                        return True
-                    continue
+                    reasked = denied
+            except WriterError as e:
+                # 目标：处理读不成动作的回复。完成：记进历史；连续两次把结局写成失败并停下，一次则再问。
                 calls += 1
-                reasked = denied
-
-            # 目标：按顺序执行这一批。完成：每个执行了的动作占一行历史和一个预算；提前停下时说明原因。
-            unusable = 0
-            taken: list[dict] = []
-            stop_note = None
-            before = screen.image
-            for index, move in enumerate(moves):
-                if index:
-                    _refresh_file_selection(screen, items)
-                if cursor >= first + budget:
-                    stop_note = "the action budget is used"
-                    break
-                # 放弃是对着这一批开始时的画面做的。前面的动作可能已经换了画面，先看新画面再决定放不放弃。
-                if index and move.action in ("done", "give_up") and not (move.action == "done" and move.achieved):
-                    stop_note = "the screen has not been seen since the earlier actions"
-                    break
-                log(
-                    f"\ndriver step {cursor}: app={screen.app!r} items={len(items)} action={move.action} {_target(move)}\n  {move.reason}"
-                )
-                entry = {"step": cursor, **asdict(move), "did": None}
-                if move.action == "done":
-                    state.outcome = "driver done" if move.achieved else "driver gave up"
-                    if move.achieved:
-                        state.driver_done = move.reason
-                    entry["did"] = state.outcome
-                    taken.append(entry)
-                    _write_call(prefix, cursor if not taken else taken[0]["step"], calls, taken, reasked)
-                    return True
-                if move.action == "give_up":
-                    state.outcome = "driver gave up"
-                    entry["did"] = state.outcome
-                    taken.append(entry)
-                    _write_call(prefix, taken[0]["step"], calls, taken, reasked)
-                    return True
-                barred = _barred(move, index, screen, items)
-                state.quiet = False
-                what = barred if barred is not None else _take(move, screen, items, state)
-                entry["did"] = what
-                taken.append(entry)
-                clipboard = "to the clipboard" in what
-                state.view = None
-                _record(state, PREFIX + what)
-                state.markable = (
-                    move.action not in UNMARKED
-                    and move.action != "set_value"
-                    and not what.startswith("refused:")
-                    and not clipboard
-                )
-                state.quiet = clipboard
-                log(f"  did: {what}")
+                unusable += 1
+                log(f"  the model's reply was unusable: {e}")
+                _record(state, PREFIX + UNUSABLE)
+                state.markable = False
+                _write_call(prefix, cursor, calls, {"step": cursor, "did": UNUSABLE, "error": str(e)})
                 cursor += 1
-                if _repeat(state, _signature(move, items, screen.offscreen), move.action == "wait", log):
-                    _write_call(prefix, taken[0]["step"], calls, taken, reasked)
+                if unusable >= MAX_UNUSABLE:
+                    state.outcome = "driver failed"
                     return True
+                continue
+
+            # 目标：执行模型选的动作，或在它宣布结束时停下来。
+            # 完成：done / give_up 只改结局；其它动作占一行历史和一个预算，打转时先换路、再卡住。
+            unusable = 0
+            if move.notes.strip():
+                state.driver_notes = move.notes.strip()[:NOTES_LIMIT]
+            log(
+                f"\ndriver step {cursor}: app={screen.app!r} items={len(items)} action={move.action} {_target(move)}\n  {move.reason}"
+            )
+            entry = {"step": cursor, **asdict(move), "did": None}
+            if move.action in ("done", "give_up"):
+                reached = move.action == "done" and move.achieved
+                state.outcome = "driver done" if reached else "driver gave up"
+                if reached:
+                    state.driver_done = move.reason
+                entry["did"] = state.outcome
+                _write_call(prefix, cursor, calls, entry, reasked)
+                return True
+
+            state.quiet = False
+            what = _take(move, screen, items, state)
+            entry["did"] = what
+            _write_call(prefix, cursor, calls, entry, reasked)
+            # 复制、剪切只改剪贴板，屏幕不变不能记成空转。
+            clipboard = "to the clipboard" in what
+            state.view = None
+            _record(state, PREFIX + what)
+            state.markable = move.action not in UNMARKED and move.action != "set_value" and not _refused(what) and not clipboard
+            state.quiet = clipboard
+            log(f"  did: {what}")
+            cursor += 1
+
+            sig = _signature(move, items, screen.offscreen)
+            last_sig = sig
+            if _repeat(state, sig, move.action == "wait", log):
+                if _loop(state, f"{runner.MAX_REPEATS} actions in a row were already taken on this screen", sig, log):
+                    return True
+                same_streak, same_sig = 0, None
+            elif move.action != "wait" and _revisited(state, started, sig):
+                if _loop(state, f"this action was already taken {MAX_REVISITS} times on this screen", sig, log):
+                    return True
+                same_streak, same_sig = 0, None
+            else:
                 same_streak, same_sig = _advance_same_action(same_streak, same_sig, move, items, screen.offscreen)
                 if same_streak >= MAX_SAME_ACTION:
-                    log(f"  the same action was taken {MAX_SAME_ACTION} times in a row; stopping")
-                    state.outcome = "driver stalled"
-                    _write_call(prefix, taken[0]["step"], calls, taken, reasked)
-                    return True
-                if "refused" in what:
-                    if index + 1 < len(moves):
-                        stop_note = what
-                    break
-                # 双击会打开另一张画面。这一批剩下的动作是对着旧画面排的，留到看见新画面再决定。
-                if move.action == "double_click" and index + 1 < len(moves):
-                    stop_note = "a double-click opens another screen"
-                    break
-                # 剪切、复制、粘贴、输入和 F2 改变的是选择、剪贴板或正在编辑的名字。后面的动作仍按旧画面排的。
-                ending = _batch_ending(move, what, screen)
-                if ending is not None and index + 1 < len(moves):
-                    stop_note = ending
-                    break
-                # 先等这一步的延迟，再截图比对。菜单和动画在延迟之内画出来，不会被当成没变化。
-                if _comparable(move, what) and index + 1 < len(moves):
-                    desktop.sleep_watching(cfg.delay)
-                    after = desktop.screenshot()
-                    if not pixels_changed(before, after):
-                        stop_note = "the screen did not change"
-                        break
-                    before = after
-                else:
-                    desktop.sleep_watching(cfg.delay)
-            if stop_note is not None:
-                _record(state, PREFIX + f"stopped the rest of the batch: {stop_note}")
-                state.markable = False
-            if taken:
-                _write_call(prefix, taken[0]["step"], calls, taken, reasked)
+                    if _loop(state, f"the same action was taken {MAX_SAME_ACTION} times in a row", sig, log):
+                        return True
+                    same_streak, same_sig = 0, None
+            desktop.sleep_watching(cfg.delay)
 
         # 目标：步数用完时收尾。完成：保留一开始写下的 driver step limit，并返回 True。
         log(f"  the driver used all {budget} of its actions")
@@ -284,44 +254,42 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
         state.driver_calls = calls
 
 
-def _refresh_file_selection(screen: Screen, items: list[Item]) -> None:
-    """把文件行的选中状态改成无障碍树现在报告的。读不到就保持看屏时的值。"""
-    for index, item in enumerate(items):
-        if item.role != "cell" or "selection_item" not in item.controls:
-            continue
-        ref = screen.ax_refs.get(item.index)
-        if ref is None:
-            continue
-        selected = desktop.ax_selected(ref)
-        if selected is None or selected == item.selected:
-            continue
-        items[index] = replace(item, selected=selected)
+def _refused(what: str) -> bool:
+    """这一行说的是没做成的动作：机器保持原样。"""
+    return what.startswith("refused") or "refused:" in what
 
 
-def _batch_ending(move: DriveStep, what: str, screen: Screen) -> str | None:
-    """这一步做成之后，同一批剩下的动作不再对着这张画面。没做成的不在这里停。"""
-    if "refused" in what:
-        return None
-    field = screen.field
-    if (
-        field is not None
-        and field.role == "AXMenuBarItem"
-        and move.action == "key"
-        and move.key in ("up", "down", "left", "right")
-        and what.startswith("pressed ")
-    ):
-        return "the highlight moved in the open menu"
-    if move.action == "shortcut" and move.key == "x" and what.startswith("pressed "):
-        return "a cut changes the clipboard"
-    if move.action == "shortcut" and move.key == "c" and what.startswith("pressed "):
-        return "a copy changes the clipboard"
-    if move.action == "shortcut" and move.key == "v" and what.startswith("pressed "):
-        return "a paste changes the screen it lands on"
-    if move.action == "type" and what.startswith("typed "):
-        return "typing changes the field"
-    if move.action == "key" and move.key == "f2" and what.startswith("pressed "):
-        return "rename starts on the selected row"
-    return None
+def _loop(state, why: str, sig: str, log) -> bool:
+    """止损触发了。第一次逼模型换路并返回 False；这次接管里已经换过路，就定为卡住并返回 True。
+
+    换路时把打转的动作记进 banned，此后只要回到打转的那一屏就拒绝它；空转、重复的计数清零，下一次提问带上换路说明。"""
+    if state.reroutes >= MAX_REROUTES:
+        log(f"  {why}; it already changed course, so it stops")
+        state.outcome = "driver stalled"
+        return True
+    state.reroutes += 1
+    state.banned = {sig} if sig else set()
+    state.banned_on = state.last
+    state.change_course = {
+        "why": why,
+        "do_not_repeat": sorted(state.banned),
+        "tried_on_this_screen": _tried_report(state),
+    }
+    state.idle = state.repeats = 0
+    state.outcome = "driver step limit"
+    log(f"  {why}; changing course")
+    _record(state, PREFIX + f"changed course: {why}")
+    state.markable = False
+    return False
+
+
+def _banned_here(state, sig: str) -> bool:
+    """这个动作是换路时打转的那一个，而现在又回到了打转的那一屏。两个页面来回跳时，回到原处也认得出来。"""
+    from . import runner
+
+    if sig not in state.banned or state.banned_on is None or state.last is None:
+        return False
+    return runner.same_screen(state.last, state.banned_on)
 
 
 def _record(state, line: str) -> None:
@@ -332,7 +300,7 @@ def _record(state, line: str) -> None:
     report_action(line)
 
 
-def _ask(writer, cfg, state, screen, items, stopped, earlier, earlier_stops, steps_left, image, denied=None):
+def _ask(writer, cfg, state, screen, items, stopped, earlier, earlier_stops, steps_left, image, denied=None, change=None):
     """问驱动下一步。`image` 为空就是不带截图再判一次。"""
     return compose_drive_step(
         writer,
@@ -347,14 +315,15 @@ def _ask(writer, cfg, state, screen, items, stopped, earlier, earlier_stops, ste
         steps_left,
         image,
         _tried_report(state),
-        cfg.driver_batch,
         denied=denied,
+        change_course=change,
+        notes=state.driver_notes,
     )
 
 
-def _write_call(prefix, step: int, call: int, actions: list[dict], reasked: list[str] | None = None) -> None:
-    """一次模型调用一份记录。文件名用这批第一个动作的序号。再判一次时记下被否定的名字。"""
-    body = {"step": step, "call": call, "actions": actions}
+def _write_call(prefix, step: int, call: int, action: dict, reasked: list[str] | None = None) -> None:
+    """一次模型调用一份记录，里面只有一个动作。再判一次时记下被否定的名字。"""
+    body = {"step": step, "call": call, "actions": [action]}
     if reasked:
         body["reasked"] = reasked
     prefix.with_name(prefix.name + "-driver.json").write_text(json.dumps(body, indent=2), encoding="utf-8")
@@ -366,41 +335,6 @@ def load_driver_record(path) -> dict:
     if "call" in data and isinstance(data.get("actions"), list):
         return data
     return {"step": data.get("step"), "call": 1, "actions": [data]}
-
-
-_POINTED = set(CLICKS) | {"type", "drag", "set_value", "scroll_down", "scroll_up"}
-
-
-def _named_item(move: DriveStep, items: list[Item]) -> Item | None:
-    """动作点名的那一项。按键、等待和没有编号的动作不指向某一项。"""
-    if move.action not in _POINTED or not move.item:
-        return None
-    return next((it for it in items if str(it.index) == move.item), None)
-
-
-def _barred(move: DriveStep, index: int, screen: Screen, items: list[Item]) -> str | None:
-    """这一动作现在能不能做。没有元素句柄的只允许排在第一个；树里的项要还在、还看得见、没有明确不可用。"""
-    item = _named_item(move, items)
-    if item is None:
-        return None
-    ref = screen.ax_refs.get(item.index)
-    if ref is None:
-        if index > 0:
-            return f"refused: {item.text!r} is not an accessibility item, so it cannot follow another action"
-        return None
-    found = desktop.element_state(ref)
-    if found is None:
-        return None
-    if not found.present or not found.visible or found.enabled is False:
-        return f"refused: {item.text!r} is no longer available"
-    return None
-
-
-def _comparable(move: DriveStep, what: str) -> bool:
-    """这一动作做完后，能不能用分块比较判断屏幕变了没有。等待、输入、赋值、复制和剪切都不比。"""
-    if "refused" in what or move.action in ("wait", "type", "set_value"):
-        return False
-    return not (move.action == "shortcut" and move.key in QUIET_SHORTCUTS)
 
 
 def _mark_tried(state) -> None:
@@ -477,10 +411,14 @@ def _signature(move: DriveStep, items: list[Item], offscreen: list[AxNode] | Non
 
 
 def _take(move: DriveStep, screen: Screen, items: list[Item], state) -> str:
-    """执行这一步。如果它在当前屏幕上已经做过且没效果，直接拒绝，不再碰机器。"""
-    if _signature(move, items, screen.offscreen) in _dead(state):
-        return DEAD
-    return act(move, screen, items)
+    """执行这一步。换路后在打转那一屏上又做打转的动作，就拒绝；在这一屏做过且没效果的照做，结果行带上提醒。"""
+    sig = _signature(move, items, screen.offscreen)
+    if _banned_here(state, sig):
+        return BANNED
+    what = act(move, screen, items)
+    if sig in _dead(state) and not _refused(what):
+        return noted(what, DONE_BEFORE)
+    return what
 
 
 def _advance_same_action(
@@ -496,8 +434,24 @@ def _advance_same_action(
     return (streak + 1, sig) if sig == previous else (1, sig)
 
 
+def _revisited(state, started: int, sig: str) -> bool:
+    """这次接管里，当前这一屏上这个动作是不是已经做满了 MAX_REVISITS 次。
+
+    连续重复由 `_repeat` 管。这里数的是中间夹了别的动作的情况：两个标签来回切时，每一步的屏幕都变了，
+    连续计数一直是 0，但同一个动作在同一屏上已经出现了好几次。"""
+    from . import runner
+
+    if not sig or state.last is None:
+        return False
+    count = 0
+    for seen, what in state.seen[started:]:
+        if what and what.removesuffix(runner.UNCHANGED) == sig and runner.same_screen(seen, state.last):
+            count += 1
+    return count >= MAX_REVISITS
+
+
 def _repeat(state, sig: str, waiting: bool, log) -> bool:
-    """用和分类器同一条规则数重复。返回 True 表示接管因此卡住并停下。
+    """用和分类器同一条规则数重复。返回 True 表示打转了，由 `_loop` 决定换路还是停下。
 
     重复指的是：当前屏幕上这个动作以前做过。换到另一张屏幕不会把计数清掉，所以两个页面来回跳，绕第二圈时就会停。
     等待不算重复，连续等待由“屏幕没变”那条规则去限制。"""
@@ -508,13 +462,12 @@ def _repeat(state, sig: str, waiting: bool, log) -> bool:
         state.seen.append((state.last, None))
         return False
 
-    # 目标：数这个动作在当前屏幕上连续重复了几次。完成：够次数就把结局写成卡住并停下，否则记入已尝试并继续。
+    # 目标：数这个动作在当前屏幕上连续重复了几次。完成：够次数返回 True，否则记入已尝试并继续。
     prior = [what.removesuffix(runner.UNCHANGED) for what in runner.tried_here(state)]
     state.repeats = state.repeats + 1 if sig in prior else 0
     state.seen.append((state.last, sig))
     if state.repeats >= runner.MAX_REPEATS:
-        log(f"  {runner.MAX_REPEATS} actions in a row already taken on the same screen; stopping")
-        state.outcome = "driver stalled"
+        log(f"  {runner.MAX_REPEATS} actions in a row already taken on the same screen")
         return True
     return False
 
@@ -561,24 +514,18 @@ def act(move: DriveStep, screen: Screen, items: list[Item]) -> str:
         # 目标：只按名单里的单个键。完成：名单内按下并记下键名，名单外拒绝。
         if move.key not in KEYS:
             return f"key refused: {move.key!r} is not one of {', '.join(KEYS)}"
-        if move.key == "return":
-            refused = _return_opens(screen)
-            if refused is not None:
-                return refused
+        note = _return_note(screen) if move.key == "return" else None
         desktop.press(move.key)
-        return f"pressed {move.key}"
+        return noted(f"pressed {move.key}", note)
     if move.action == "shortcut":
         # 目标：按一个允许的 Cmd/Ctrl 组合。完成：禁止退出类快捷键；复制和剪切在结果里标明屏幕可以不变。
         if move.key not in SHORTCUTS:
             return f"shortcut refused: {move.key!r} is not one of {', '.join(SHORTCUTS)}"
-        if move.key == "v":
-            refused = _paste_lands_on_itself(items)
-            if refused is not None:
-                return refused
         if move.key in QUIET_SHORTCUTS:
             return clipboard_line(move.key, items)
+        note = _paste_note(items) if move.key == "v" else None
         desktop.press(move.key, command=True)
-        return f"pressed command+{move.key}"
+        return noted(f"pressed command+{move.key}", note)
     if move.action in ("scroll_down", "scroll_up"):
         return _scroll(move, screen, items)
     if move.action == "set_value":
@@ -634,7 +581,7 @@ def _scroll(move: DriveStep, screen: Screen, items: list[Item]) -> str:
 
 
 def _type(move: DriveStep, screen: Screen, items: list[Item]) -> str:
-    """打字。没点名项目时，打进当前聚焦的文本框，并读回来核对。
+    """打字。没点名项目时，打进当前聚焦的文本框，并读回来核对；没看到文本框也照样送按键，结果行带提醒。
 
     数字旋钮、数字框、时间的某一格不是文本框。模型点了那一项，就先点它再送按键。这条路不读回，下一张截图才会显示有没有打进去。
     看起来像密码或密钥的文字，两种路都不打。
@@ -659,10 +606,13 @@ def _type(move: DriveStep, screen: Screen, items: list[Item]) -> str:
         desktop.type_text(text)
         return f"typed {text!r} into {item.text!r} (keystrokes, not read back)"
 
-    # 目标：没点名项目时，打进当前聚焦的文本框。完成：没有文本框或像密码就拒绝；否则打入并读回来核对。
+    # 目标：没点名项目时，打进当前聚焦的文本框。完成：像密码就拒绝；没看到文本框也照样送按键，结果行带提醒；有文本框就打入并读回来核对。
     field = screen.field
     if field is None or not field.is_text:
-        return "type refused: no text field is focused"
+        if looks_credential(text):
+            return "type refused: the text looks like a credential"
+        desktop.type_text(text)
+        return noted(f"typed {text!r} (keystrokes, not read back)", "no text field was seen focused")
     if looks_credential(field.label) or looks_credential(field.placeholder) or looks_credential(text):
         return f"type refused: {field.label!r} or the text looks like a credential"
     return f"typed {text!r} into {field.label!r} {fill_field(field, text)}"
@@ -791,9 +741,6 @@ def _click(move: DriveStep, screen: Screen, items: list[Item]) -> str:
     modifier = _modifier(move.modifier)
     if modifier not in MODIFIERS:
         return f"click refused: {move.modifier!r} is not a modifier"
-    blocked = _menu_blocks(item, screen)
-    if blocked is not None:
-        return blocked
     # 目标：普通单击走分类器同一条路径。追加选择走 AddToSelection，不靠按住 Control 再点一个很矮的文件名。
     # 完成：返回点击结果；双击、右键和带 Shift 的点击改走下面。
     if move.action == "click" and not move.modifier:

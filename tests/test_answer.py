@@ -424,7 +424,9 @@ def test_a_writer_who_disagrees_with_a_finished_driver_is_asked_once_more(tmp_pa
 def test_the_writer_is_not_asked_again_when_there_is_no_disagreement(driver_done, achieved, tmp_path, screen):
     fake = Replies([{"achieved": achieved, "answer": "the screen decides", "missing": []}])
     state = RunState(
-        outcome="driver done" if driver_done else "driver gave up", driver_done=driver_done, view=(screen, file_rows("Doc01.docx"))
+        outcome="driver done" if driver_done else "driver gave up",
+        driver_done=driver_done,
+        view=(screen, file_rows("Doc01.docx")),
     )
     _, log = logged()
 
@@ -474,6 +476,47 @@ def test_a_driver_route_ends_the_classifier_and_the_driver_may_take_over(tmp_pat
     assert state.handoffs == [] and state.route == "driver"
     assert wants_driver(cfg, context(fake), state)
     assert "route driver" in lines[0]
+
+
+@pytest.mark.parametrize("state", ["absent", "still_here"])
+def test_an_end_route_that_names_a_gap_goes_to_the_driver(state, screen):
+    answer = compose_answer(
+        FakeWriter(
+            {
+                "achieved": False,
+                "answer": "not done",
+                "route": "end",
+                "missing": [{"name": "example.txt", "state": state}],
+            }
+        ),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+    assert answer.route == "driver"
+    assert answer.missing == (("example.txt", state),)
+
+
+def test_an_end_route_for_something_only_the_user_can_do_stays_end(screen):
+    answer = compose_answer(
+        FakeWriter(
+            {
+                "achieved": False,
+                "answer": "Only the user can sign in.",
+                "route": "end",
+                "missing": [{"name": "password", "state": "other"}],
+            }
+        ),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+    assert answer.route == "end"
+    assert answer.missing == (("password", "other"),)
 
 
 def test_an_end_route_short_of_the_goal_does_not_call_the_driver(tmp_path, screen):

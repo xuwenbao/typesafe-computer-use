@@ -80,7 +80,6 @@ class RunConfig:
     delay: float = field(default_factory=lambda: settings().delay)  # 每个动作后等几秒再截图
     handoffs: int = field(default_factory=lambda: settings().handoffs)  # 写手最多能让分类器“继续干”几次；0 表示一停就结束
     driver_steps: int = 0  # 接管模型最多执行多少个动作；0 表示不接管
-    driver_batch: int = field(default_factory=lambda: settings().driver_batch)  # 一次回复最多几个动作
     image: Path | None = None  # 用一张保存的截图重放（只读不操作）
     app: str | None = None  # 重放时假装的前台应用名
     url: str | None = None  # 重放时假装的浏览器网址
@@ -131,6 +130,11 @@ class RunState:
     driver_actions: int = 0  # 接管实际执行的动作数，含被拒绝的
     driver_calls: int = 0  # 接管问模型的次数
     driver_done: str = ""  # 接管判定完成时给出的理由；空表示它没有这么判定
+    reroutes: int = 0  # 这次接管里止损已经逼它换过几次路；再触发一次就停
+    banned: set[str] = field(default_factory=set)  # 换路时打转的动作签名；在打转的那一屏上不许再做
+    banned_on: Signature | None = None  # 打转的那一屏；只在这一屏上拒绝 banned 里的动作
+    change_course: dict | None = None  # 下一次问接管模型时带上的换路说明；问过一次就清掉
+    driver_notes: str = ""  # 接管上次写下的事实；空的回复表示沿用，下一步原样带回
 
 
 def run(cfg: RunConfig, ctx_factory) -> RunState:

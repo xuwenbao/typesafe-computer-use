@@ -555,21 +555,6 @@ def changed_tiles(
     return [tile for tile in tiles if tile_changed(thumb, previous, tile, divisor, threshold)]
 
 
-def pixels_changed(before: Image.Image, after: Image.Image) -> bool:
-    """Whether two captures differ by the same tile test a step uses, without reading any text.
-
-    A batch of driver actions uses this between two of them. It does not run OCR or the icon detector.
-    """
-    if before.size != after.size or not before.width or not before.height:
-        return True
-    width, height = before.size
-
-    def thumb(image: Image.Image) -> Image.Image:
-        return image.convert("L").resize((max(1, width // THUMB_DIVISOR), max(1, height // THUMB_DIVISOR)))
-
-    return bool(changed_tiles(thumb(before), thumb(after), tiles_in((0, 0, width, height))))
-
-
 def tile_clusters(changed: list[Box], tile: float = TILE_PX) -> list[list[Box]]:
     """The changed tiles grouped into blobs that touch along a side or at a corner.
 

@@ -198,12 +198,14 @@ def _actions(node: dict) -> AxFacts:
         enabled = None
     checked = node.get("checked")
     expanded = node.get("expanded")
+    selected = node.get("selected")
     return AxFacts(
         tuple(names),
         enabled=enabled,
         checked=checked if isinstance(checked, bool) else None,
         expanded=expanded if isinstance(expanded, bool) else None,
         current=node.get("value") or None,
+        selected=selected if isinstance(selected, bool) else None,
     )
 
 

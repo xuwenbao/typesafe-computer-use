@@ -9,12 +9,14 @@ from typesafe_computer_use import config, macos, windows
 from typesafe_computer_use.actions import Context, perform
 from typesafe_computer_use.decide import Decision
 from typesafe_computer_use.driver import (
-    DEAD,
+    BANNED,
+    DONE_BEFORE,
     KEYS,
+    MAX_REVISITS,
     MAX_SAME_ACTION,
+    NOTES_LIMIT,
     SHORTCUTS,
     _advance_same_action,
-    _batch_ending,
     _signature,
     _take,
     act,
@@ -22,7 +24,7 @@ from typesafe_computer_use.driver import (
 from typesafe_computer_use.models import AxNode, Field, Item, signature
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import UNCHANGED, RunState, screen_moved
-from typesafe_computer_use.writer import DriveStep, WriterError, _last_action, checked
+from typesafe_computer_use.writer import DriveStep, WriterError, _drive_step, _last_action, checked
 
 
 @pytest.fixture
@@ -72,8 +74,14 @@ def test_a_number_that_is_not_on_the_screen_clicks_nothing(screen, machine):
     assert machine == []
 
 
-def test_typing_needs_a_focused_text_field(screen, machine):
-    assert act(move("type", text="Kyoto"), screen, ITEMS) == "type refused: no text field is focused"
+def test_typing_with_no_focused_text_field_still_types_and_says_so(screen, machine):
+    line = act(move("type", text="Kyoto"), screen, ITEMS)
+    assert line == "typed 'Kyoto' (keystrokes, not read back) (note: no text field was seen focused)"
+    assert machine == [("type", "Kyoto")]
+
+
+def test_a_credential_is_not_typed_without_a_focused_field_either(screen, machine):
+    assert act(move("type", text="my api key is abc"), screen, ITEMS) == "type refused: the text looks like a credential"
     assert machine == []
 
 
@@ -107,35 +115,18 @@ def test_a_double_click_a_right_click_and_a_modified_click_reach_the_adapter(scr
     ]
 
 
-def test_a_click_outside_an_open_menu_is_refused(screen, machine):
+def test_a_click_outside_an_open_menu_still_lands(screen, machine):
     button = Item(1, "新建", 1.0, 40, 0, 80, 20, role="button", source="ax")
     live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
-    line = act(move("click", item="1", target="新建"), live, [button])
-    assert (
-        line
-        == "click refused: '文件夹' is highlighted in the open menu; press return to choose it, or up or down to move the highlight"
-    )
-    assert machine == []
+    assert act(move("click", item="1", target="新建"), live, [button]) == "clicked '新建'"
+    assert machine == [("click", (30.0, 5.0), "left", 1, None)]
 
 
-def test_a_different_menu_item_is_refused_while_one_is_focused(screen, machine):
+def test_a_different_menu_item_is_clicked_while_one_is_focused(screen, machine):
     other = Item(2, "DOCX 文档", 1.0, 0, 40, 40, 60, role="menu", source="ax")
-    live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20), ax_refs={2: "docx"})
-    line = act(move("click", item="2", target="DOCX 文档"), live, [other])
-    assert (
-        line
-        == "click refused: '文件夹' is highlighted in the open menu; press return to choose it, or up or down to move the highlight"
-    )
-    assert machine == []
-
-
-def test_a_menu_arrow_ends_the_batch_and_another_focus_does_not(screen):
-    menu = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
-    button = replace(screen, field=Field("AXButton", "新建", "", "", 0, 0, 20, 20))
-    assert _batch_ending(move("key", key="down"), "pressed down", menu) == "the highlight moved in the open menu"
-    assert _batch_ending(move("key", key="down"), "pressed down", button) is None
-    assert _batch_ending(move("key", key="down"), "pressed down", screen) is None
-    assert _batch_ending(move("key", key="down"), "key refused: 'down' is not one of the keys", menu) is None
+    live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
+    assert act(move("click", item="2", target="DOCX 文档"), live, [other]) == "clicked 'DOCX 文档'"
+    assert machine == [("click", (10.0, 25.0), "left", 1, None)]
 
 
 def _press_enter(screen):
@@ -144,12 +135,12 @@ def _press_enter(screen):
     return perform(decision, screen, [], ctx)
 
 
-def test_return_on_a_file_row_is_refused(screen, machine):
+def test_return_on_a_file_row_is_pressed_with_a_note(screen, machine):
     live = replace(screen, field=Field("AXRow", "Doc02.docx", "", "", 0, 0, 20, 20))
     line = act(move("key", key="return"), live, [file_row(0, "Doc02.docx", True)])
-    assert line == "return refused: Return opens 'Doc02.docx'"
-    assert _press_enter(live) == "return refused: Return opens 'Doc02.docx'"
-    assert machine == []
+    assert line == "pressed return (note: Return on the row opens 'Doc02.docx')"
+    assert _press_enter(live) == "pressed Return (note: Return on the row opens 'Doc02.docx')"
+    assert machine == [("press", "return", False)] * 2
 
 
 def test_return_on_a_menu_a_button_and_a_text_field_is_pressed(screen, machine):
@@ -178,14 +169,25 @@ def test_a_click_modifier_the_model_invented_clicks_nothing(screen, machine):
     assert machine == []
 
 
-def test_a_plain_click_does_not_replace_two_selected_files(screen, machine, monkeypatch):
+def test_a_plain_click_that_replaces_two_selected_files_lands_with_a_note(screen, machine, monkeypatch):
     rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True), file_row(2, "Archive")]
-    called = []
-    monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: called.append(args) or False)
+    monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: False)
     line = act(move("click", item="2", target="Archive"), screen, rows)
-    assert line == "click refused: Doc01.docx and Doc02.docx are selected; a plain click on 'Archive' would replace them"
-    assert called == []
-    assert machine == []
+    assert line == (
+        "clicked 'Archive' (note: Doc01.docx and Doc02.docx were selected; this plain click on 'Archive' replaces them)"
+    )
+    assert [entry[0] for entry in machine] == ["click"]
+
+
+def test_a_disabled_control_is_clicked_with_a_note(screen, machine):
+    off = [replace(ITEMS[0], enabled=False)]
+    assert act(move("click", item="0", target="Archive"), screen, off) == (
+        "clicked 'Archive' (note: the tree says 'Archive' is disabled)"
+    )
+    assert act(move("click", item="0", target="Archive", modifier="add"), screen, off) == (
+        "clicked 'Archive' with add (note: the tree says 'Archive' is disabled)"
+    )
+    assert [entry[0] for entry in machine] == ["click", "click"]
 
 
 def test_a_click_on_one_of_the_selected_files_narrows_the_selection(screen, machine, monkeypatch):
@@ -212,10 +214,25 @@ def test_a_single_selected_file_can_be_replaced_by_another(screen, machine, monk
     assert machine == []
 
 
-def test_a_cut_with_no_file_selected_does_not_press(screen, machine):
+def test_a_cut_with_no_file_selected_presses_with_a_note(screen, machine):
     rows = [file_row(0, "Doc01.docx"), file_row(1, "Doc02.docx")]
-    assert act(move("shortcut", key="x"), screen, rows) == "shortcut refused: no file is selected"
-    assert machine == []
+    line = act(move("shortcut", key="x"), screen, rows)
+    assert line == "pressed command+x (to the clipboard; the screen need not change) (note: no file was selected)"
+    assert machine == [("press", "x", True)]
+
+
+def test_a_cut_goes_ahead_when_the_selection_cannot_be_read(screen, machine):
+    rows = [replace(file_row(0, "Doc01.docx"), selected=None), replace(file_row(1, "Doc02.docx"), selected=None)]
+    line = act(move("shortcut", key="x"), screen, rows)
+    assert line == "pressed command+x (to the clipboard; the screen need not change)"
+    assert machine == [("press", "x", True)]
+
+
+def test_paste_and_select_all_carry_no_note_for_an_empty_selection(screen, machine):
+    rows = [file_row(0, "Doc01.docx"), file_row(1, "Doc02.docx")]
+    assert act(move("shortcut", key="v"), screen, rows).startswith("pressed command+v")
+    assert act(move("shortcut", key="a"), screen, rows).startswith("pressed command+a")
+    assert machine == [("press", "v", True), ("press", "a", True)]
 
 
 def test_a_cut_names_the_selected_files(screen, machine):
@@ -333,12 +350,13 @@ def _paste(screen, items):
     return perform(decision, screen, items, ctx)
 
 
-def test_a_paste_of_files_already_in_this_folder_is_refused(screen, machine, monkeypatch):
+def test_a_paste_of_files_already_in_this_folder_is_pressed_with_a_note(screen, machine, monkeypatch):
     monkeypatch.setattr(desktop, "clipboard_files", lambda: ("Doc01.docx", "Doc02.docx"))
     rows = [file_row(0, "Doc01.docx"), file_row(1, "Doc02.docx")]
-    assert act(move("shortcut", key="v"), screen, rows) == "paste refused: Doc01.docx, Doc02.docx are already in this folder"
-    assert _paste(screen, rows) == "paste refused: Doc01.docx, Doc02.docx are already in this folder"
-    assert machine == []
+    noted = "pressed command+v (note: Doc01.docx, Doc02.docx were already in this folder)"
+    assert act(move("shortcut", key="v"), screen, rows) == noted
+    assert _paste(screen, rows) == noted
+    assert machine == [("press", "v", True)] * 2
 
 
 def test_a_paste_goes_ahead_when_a_file_is_missing_or_the_clipboard_cannot_be_read(screen, machine, monkeypatch):
@@ -378,7 +396,7 @@ def test_an_item_without_a_target_is_refused_and_a_bare_action_is_not(screen, ma
     assert any(entry[0] == "sleep" for entry in machine)
 
 
-def test_a_second_cut_of_files_already_on_the_clipboard_is_refused(screen, machine, monkeypatch):
+def test_a_second_cut_of_files_already_on_the_clipboard_presses_with_a_note(screen, machine, monkeypatch):
     rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True)]
     held = {"files": ()}
 
@@ -389,8 +407,8 @@ def test_a_second_cut_of_files_already_on_the_clipboard_is_refused(screen, machi
     monkeypatch.setattr(desktop, "press", press)
     monkeypatch.setattr(desktop, "clipboard_files", lambda: held["files"])
     assert "to the clipboard:" in act(move("shortcut", key="x"), screen, rows)
-    refused = "shortcut refused: Doc01.docx, Doc02.docx are already on the clipboard; paste them in the destination"
-    assert act(move("shortcut", key="x"), screen, rows) == refused
+    note = "(note: Doc01.docx, Doc02.docx were already on the clipboard; paste them in the destination)"
+    assert act(move("shortcut", key="x"), screen, rows).endswith(note)
     decision = Decision(
         kind=SimpleNamespace(choice="shortcut"),
         item=None,
@@ -398,8 +416,8 @@ def test_a_second_cut_of_files_already_on_the_clipboard_is_refused(screen, machi
         key=SimpleNamespace(choice="x"),
     )
     ctx = Context(goal="move the files", browser="", email=None, typesafe=None, writer=None, history=[])
-    assert perform(decision, screen, rows, ctx) == refused
-    assert machine == [("press", "x", True)]
+    assert perform(decision, screen, rows, ctx).endswith(note)
+    assert machine == [("press", "x", True)] * 3
 
 
 def test_a_cut_goes_ahead_when_the_key_the_files_or_the_clipboard_change(screen, machine, monkeypatch):
@@ -495,11 +513,19 @@ def test_the_last_action_says_whether_it_was_refused():
     assert _last_action(["driver: type refused: no text field is focused"])["refused"] is True
 
 
-def test_an_action_that_already_did_nothing_here_is_not_taken_again(screen, machine):
+def test_an_action_that_already_did_nothing_here_is_taken_with_a_note(screen, machine):
     seen = signature(screen, ITEMS)
     state = RunState(last=seen, seen=[(seen, f"click 'Archive'{UNCHANGED}")])
-    assert _take(move("click", item="0"), screen, ITEMS, state) == DEAD
-    assert machine == []
+    assert _take(move("click", item="0", target="Archive"), screen, ITEMS, state) == f"clicked 'Archive' (note: {DONE_BEFORE})"
+    assert [entry[0] for entry in machine] == ["click"]
+
+
+def test_the_action_that_looped_is_refused_after_a_change_of_course(screen, machine):
+    here = signature(screen, ITEMS)
+    state = RunState(last=here, banned={"click 'Archive'"}, banned_on=here)
+    assert _take(move("click", item="0", target="Archive"), screen, ITEMS, state) == BANNED
+    assert _take(move("key", key="tab"), screen, ITEMS, state) == "pressed tab"
+    assert machine == [("press", "tab", False)]
 
 
 def test_an_action_the_model_made_up_does_nothing(screen, machine):
@@ -577,7 +603,14 @@ def test_the_driver_stops_when_return_repeats_across_screens_that_keep_changing(
     )
 
     assert state.outcome == "driver stalled"
-    assert world.log == ["enter"] * MAX_SAME_ACTION
+    assert world.log == ["enter"] * (MAX_SAME_ACTION + 4)
+    course = f"driver: changed course: the same action was taken {MAX_SAME_ACTION} times in a row"
+    assert course in state.history
+    asked = writer.drive_packets[MAX_SAME_ACTION]["change_course"]
+    assert asked["why"] == f"the same action was taken {MAX_SAME_ACTION} times in a row"
+    assert asked["do_not_repeat"] == ["key return"]
+    assert all("change_course" not in packet for packet in writer.drive_packets[:MAX_SAME_ACTION])
+    assert "change_course" not in writer.drive_packets[MAX_SAME_ACTION + 1]
 
 
 def test_direction_keys_may_repeat_while_the_screen_changes(monkeypatch, tmp_path):
@@ -599,3 +632,100 @@ def test_direction_keys_may_repeat_while_the_screen_changes(monkeypatch, tmp_pat
 
     assert state.outcome == "driver step limit"
     assert world.log == ["down"] * 6
+
+
+def test_notes_are_carried_to_the_next_question_and_an_empty_reply_keeps_them(monkeypatch, tmp_path):
+    from world import FakeWriter, Page, World, drive
+
+    pages = [
+        Page(name="a", items=["A"], app="Notes", on={"tab": "b"}),
+        Page(name="b", items=["B"], app="Notes", on={"escape": "a"}),
+    ]
+    counted = "example appears 19 times"
+    writer = FakeWriter(
+        reviews=[{"achieved": False}, {"achieved": False}],
+        drives=[
+            {"action": "key", "key": "tab", "notes": counted + "x" * NOTES_LIMIT},
+            {"action": "key", "key": "escape", "notes": "   "},
+            {"action": "key", "key": "tab", "notes": "Archive exists"},
+            {"action": "give_up"},
+        ],
+    )
+
+    state = drive(
+        World(pages),
+        lambda state, questions: ("none", None),
+        goal="count example",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=6,
+    )
+
+    assert state.outcome == "driver gave up"
+    assert writer.drive_packets[0]["your_notes"] == ""
+    assert writer.drive_packets[1]["your_notes"] == (counted + "x" * NOTES_LIMIT)[:NOTES_LIMIT]
+    assert writer.drive_packets[2]["your_notes"] == writer.drive_packets[1]["your_notes"]
+    assert writer.drive_packets[3]["your_notes"] == "Archive exists"
+    assert state.driver_notes == "Archive exists"
+
+
+def test_the_same_action_on_the_same_screen_changes_course_at_the_third_visit(monkeypatch, tmp_path):
+    from world import FakeWriter, Page, World, drive
+
+    def to_mid(world: World) -> str:
+        world.i += 1
+        return f"m{world.i}"
+
+    home = Page(name="home", items=["File"], app="Files", on={"click:File": to_mid})
+    mids = [Page(name=f"m{i}", items=["Go", f"marker {i}"], app="Files", on={"click:Go": "home"}) for i in range(1, 5)]
+    writer = FakeWriter(
+        reviews=[{"achieved": False}, {"achieved": False}],
+        drives=[{"action": "click", "item": "File"}, {"action": "click", "item": "Go"}] * 4,
+    )
+    world = World([home, *mids])
+    world.i = 0
+
+    state = drive(
+        world,
+        lambda state, questions: ("none", None),
+        goal="open the file",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert state.outcome == "driver stalled"
+    assert world.log == ["click:File", "click:Go"] * 3
+    why = f"this action was already taken {MAX_REVISITS} times on this screen"
+    assert f"driver: changed course: {why}" in state.history
+    assert state.history[-1] == f"driver: {BANNED}"
+    assert writer.drive_packets[5]["change_course"]["why"] == why
+    assert writer.drive_packets[5]["change_course"]["do_not_repeat"] == ["click 'File'"]
+
+
+def test_run_and_start_named_as_the_action_are_pressed_as_keys(monkeypatch, tmp_path):
+    opened = _drive_step({"reason": "open notepad", "action": "run"})
+    assert (opened.action, opened.key) == ("key", "run")
+    menu = _drive_step({"reason": "open the menu", "action": "Start"})
+    assert (menu.action, menu.key) == ("key", "start")
+    with pytest.raises(WriterError, match="not a driver action"):
+        _drive_step({"reason": "no", "action": "run", "key": "tab"})
+
+    from world import FakeWriter, Page, World, drive
+
+    writer = FakeWriter(reviews=[{"achieved": False}, {"achieved": False}], drives=[{"action": "run"}, {"action": "give_up"}])
+    state = drive(
+        world := World([Page(name="desktop", items=["Desktop"], app="explorer")]),
+        lambda state, questions: ("none", None),
+        goal="open notepad",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=4,
+    )
+
+    assert world.log == ["run"]
+    assert state.outcome == "driver gave up"
+    assert any(line.startswith("driver: pressed run") for line in state.history)

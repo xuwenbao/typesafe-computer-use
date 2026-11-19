@@ -56,40 +56,26 @@ def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context)
     return handler(decision, screen, items, ctx)
 
 
-def _menu_blocks(item: Item, screen: Screen) -> str | None:
-    """A menu item has the keyboard. Return takes it. A click on anything else picks a different command."""
-    field = screen.field
-    if field is None or field.role != "AXMenuBarItem":
-        return None
-    if item.role == "menu" and item.text == field.label:
-        return None
-    return (
-        f"click refused: {field.label!r} is highlighted in the open menu; "
-        "press return to choose it, or up or down to move the highlight"
-    )
+def noted(line: str, note: str | None) -> str:
+    """An action that was taken, with a doubt about it for the next step to check. No note, no change."""
+    return f"{line} (note: {note})" if note else line
 
 
-def _return_opens(screen: Screen) -> str | None:
-    """Return on a file row opens the file. A menu item, a button, and a text field still take Return."""
+def _return_note(screen: Screen) -> str | None:
+    """Return on a file row opens the file. A menu item, a button, and a text field take Return as usual."""
     field = screen.field
     if field is None or field.role != "AXRow" or field.is_text:
         return None
-    return f"return refused: Return opens {field.label!r}"
+    return f"Return on the row opens {field.label!r}"
 
 
 def _press_enter(decision, screen, items, ctx) -> str:
-    refused = _return_opens(screen)
-    if refused is not None:
-        return refused
     desktop.press("return")
-    return "pressed Return"
+    return noted("pressed Return", _return_note(screen))
 
 
 def open_item(item: Item, screen: Screen) -> str:
     """Open an item by double-clicking it. A single click only selects a file or a folder."""
-    refused = _menu_blocks(item, screen)
-    if refused is not None:
-        return refused
     try:
         desktop.click_at(screen.to_points(item), count=2)
     except Missed as e:
@@ -98,9 +84,9 @@ def open_item(item: Item, screen: Screen) -> str:
 
 
 def _disabled(item: Item) -> str | None:
-    """A refusal when the tree said this control cannot be used. Unknown is not disabled."""
+    """A note when the tree said this control cannot be used. Unknown is not disabled."""
     if item.enabled is False:
-        return f"click refused: {item.text!r} is disabled"
+        return f"the tree says {item.text!r} is disabled"
     return None
 
 
@@ -125,14 +111,14 @@ def _selected_file_names(items: list[Item] | None) -> list[str]:
 
 
 def _replacing_click(item: Item, items: list[Item] | None) -> str | None:
-    """A plain click on a different file row would drop a selection of two or more files."""
+    """A note when a plain click on a different file row drops a selection of two or more files."""
     names = _selected_file_names(items)
     if len(names) < 2 or item.text in names:
         return None
     if item.role != "cell" or "selection_item" not in item.controls:
         return None
     listed = f"{names[0]} and {names[1]}" if len(names) == 2 else ", ".join(names[:-1]) + f" and {names[-1]}"
-    return f"click refused: {listed} are selected; a plain click on {item.text!r} would replace them"
+    return f"{listed} were selected; this plain click on {item.text!r} replaces them"
 
 
 def click_item(item: Item, screen: Screen, items: list[Item] | None = None) -> str:
@@ -141,13 +127,14 @@ def click_item(item: Item, screen: Screen, items: list[Item] | None = None) -> s
     A press goes to the control itself, so it lands even when the center of the box is covered by
     a sticky header, a cookie banner, or a tooltip. An element that refuses still has a location.
     A click there would land on a popup in front of the item, so that popup is closed first.
-    A control the tree says is disabled is not clicked at all.
     A row that can be selected is not invoked: Invoke on a file opens it, and a click only selects.
-    A plain click on a different file row is refused while two or more file rows are already selected.
+    A control the tree says is disabled, or a plain click that replaces a selection of two or more
+    file rows, is still clicked; the line carries a note about it.
     """
-    refused = _disabled(item) or _menu_blocks(item, screen) or _replacing_click(item, items)
-    if refused is not None:
-        return refused
+    return noted(_click(item, screen), _disabled(item) or _replacing_click(item, items))
+
+
+def _click(item: Item, screen: Screen) -> str:
     ref = screen.ax_refs.get(item.index)
     # A file row lists both. Invoke is the double-click, so a click must not take it.
     selectable = "selection_item" in item.controls
@@ -176,9 +163,10 @@ def click_item(item: Item, screen: Screen, items: list[Item] | None = None) -> s
 
 def add_item(item: Item, screen: Screen) -> str:
     """Add an item to the selection. Select() would replace it, and Invoke would open a file."""
-    refused = _disabled(item) or _menu_blocks(item, screen)
-    if refused is not None:
-        return refused
+    return noted(_add(item, screen), _disabled(item))
+
+
+def _add(item: Item, screen: Screen) -> str:
     ref = screen.ax_refs.get(item.index)
     if ref is not None and desktop.ax_operate(ref, "add_select"):
         desktop.ax_focus(ref)
@@ -384,30 +372,33 @@ def forget_clipboard() -> None:
 def clipboard_line(key: str, items: list[Item] | None = None) -> str:
     """Press Control (Command on a Mac) with `key`, and name the files the clipboard holds afterward.
 
-    A file list with nothing selected is not cut: the key would act on whatever else looked selected.
+    The key is always pressed. When every file row is known to be unselected, or the same files
+    were just put on the clipboard with the same key, the line carries a note about it. A row whose
+    selection could not be read is not unselected.
     None from the platform means it cannot read the clipboard, so that part of the line stays unmarked.
     An empty or unchanged clipboard is said outright: a quiet success would send the next step to paste.
     """
+    rows = _file_rows(items)
     names = _selected_file_names(items)
-    if _file_rows(items) and not names:
-        return "shortcut refused: no file is selected"
+    note = None
+    if key in ("x", "c") and rows and all(row.selected is False for row in rows):
+        note = "no file was selected"
     before = desktop.clipboard_files()
     if _already_on_clipboard(key, names, before):
-        shown = ", ".join(names)
-        return f"shortcut refused: {shown} are already on the clipboard; paste them in the destination"
+        note = f"{', '.join(names)} were already on the clipboard; paste them in the destination"
     desktop.press(key, command=True)
     after = desktop.clipboard_files()
     _remember_clipboard(key, before, after)
     line = f"pressed command+{key}"
     chosen = f"{', '.join(names)}; " if names else ""
     if after is None:
-        return f"{line} ({chosen}to the clipboard; the screen need not change)"
+        return noted(f"{line} ({chosen}to the clipboard; the screen need not change)", note)
     shown = ", ".join(after)
     if not after:
-        return f"{line} ({chosen}the clipboard has no files)"
+        return noted(f"{line} ({chosen}the clipboard has no files)", note)
     if before == after:
-        return f"{line} ({chosen}the clipboard is unchanged: {shown})"
-    return f"{line} ({chosen}to the clipboard: {shown}; the screen need not change)"
+        return noted(f"{line} ({chosen}the clipboard is unchanged: {shown})", note)
+    return noted(f"{line} ({chosen}to the clipboard: {shown}; the screen need not change)", note)
 
 
 def _already_on_clipboard(key: str, names: list[str], before: tuple[str, ...] | None) -> bool:
@@ -426,14 +417,14 @@ def _remember_clipboard(key: str, before: tuple[str, ...] | None, after: tuple[s
         _last_clipboard = (key, frozenset(after))
 
 
-def _paste_lands_on_itself(items: list[Item] | None) -> str | None:
-    """A paste whose every clipboard file is already a row in this folder. None means the platform cannot say."""
+def _paste_note(items: list[Item] | None) -> str | None:
+    """A note when every clipboard file is already a row in this folder. None when not, or the platform cannot say."""
     held = desktop.clipboard_files()
     if not held:
         return None
     rows = {it.text for it in _file_rows(items)}
     if rows and all(name in rows for name in held):
-        return f"paste refused: {', '.join(held)} are already in this folder"
+        return f"{', '.join(held)} were already in this folder"
     return None
 
 
@@ -442,14 +433,11 @@ def _shortcut(decision: Decision, screen: Screen, items: list[Item], ctx: Contex
     allowed = ", ".join(SHORTCUT_KEYS)
     if key not in SHORTCUT_KEYS:
         return f"shortcut refused: {key!r} is not one of {allowed}"
-    if key == "v":
-        refused = _paste_lands_on_itself(items)
-        if refused is not None:
-            return refused
     if key in _CLIPBOARD_KEYS:
         return clipboard_line(key, items)
+    note = _paste_note(items) if key == "v" else None
     desktop.press(key, command=True)
-    return f"pressed command+{key}"
+    return noted(f"pressed command+{key}", note)
 
 
 def _key(name: str, description: str, command: bool = False):

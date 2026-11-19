@@ -14,7 +14,7 @@ import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
 from typesafe_computer_use import driver
-from typesafe_computer_use.driver import DEAD
+from typesafe_computer_use.driver import BANNED, DONE_BEFORE
 from typesafe_computer_use.runner import MAX_REPEATS, MAX_STALLS, STOPPED, UNCHANGED
 
 GOAL = "buy a ticket to the next show"
@@ -2125,12 +2125,17 @@ def test_l61_a_driver_whose_actions_change_nothing_stops_as_stalled(monkeypatch,
 
     assert state.outcome == "driver stalled" and not state.answer.achieved
     # The takeover's first look sees the screen the classifier stopped on, so two idle presses make three.
-    assert world.log == ["click:Doc01.docx", "tab"]
+    # That changes course. The next tab is the third on this screen, so the takeover stops instead of
+    # refusing it a second time.
+    assert world.log == ["click:Doc01.docx", "tab", "tab"]
     assert state.history[1:] == [
         f"driver: pressed tab{UNCHANGED}",
-        f"driver: {DEAD}",
+        f"driver: pressed tab (note: {DONE_BEFORE}){UNCHANGED}",
+        "driver: changed course: the last 3 actions changed nothing on screen",
+        f"driver: {BANNED}",
     ]
     assert writer.drive_packets[1]["actions_taken"][-1] == f"driver: pressed tab{UNCHANGED}"
+    assert writer.drive_packets[2]["change_course"]["do_not_repeat"] == ["key tab"]
 
 
 def test_l62_the_driver_takes_no_more_actions_than_it_is_allowed(monkeypatch, tmp_path):
@@ -2236,7 +2241,11 @@ def test_l66_a_driver_that_loops_between_two_screens_stalls(monkeypatch, tmp_pat
     )
 
     assert state.outcome == "driver stalled"
-    assert world.log == ["click:Tools", "click:Cancel", "click:Tools", "click:Cancel", "click:Tools"]
+    # Tools twice in a row changes course. The next Cancel is the third on the menu, and a takeover
+    # that already changed course stops there. The click still lands; the banned Tools click is not reached.
+    assert world.log == ["click:Tools", "click:Cancel"] * 3
+    assert state.history[-1] == "driver: clicked 'Cancel'"
+    assert any(line.startswith("driver: changed course:") for line in state.history)
 
 
 def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
@@ -2249,7 +2258,7 @@ def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
 
         def _create(self, **request):
             asked = set(request["output_config"]["format"]["schema"]["properties"])
-            if "actions" in asked and self.left:
+            if "modifier" in asked and self.left:
                 self.left -= 1
                 return type("R", (), {"content": [type("B", (), {"type": "text", "text": "not json"})()]})()
             return inner._create(**request)

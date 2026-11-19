@@ -403,6 +403,8 @@ ANSWER_SYSTEM = (
     "on this screen; or the next step needs a key the classifier does not have. Leave focus empty. "
     "Set route to end when the goal is reached, when the next step is one only the user should "
     "take, such as a login or a payment, or when no action would help. Leave focus empty. "
+    "When missing still names a part as absent or still_here, do not set route to end: set it "
+    "to driver. "
     "Never conclude from "
     "memory that a setting, feature, or page does not exist: apps move and rename them between "
     "versions. While the screen still shows a place to look, such as a search result, a row "
@@ -422,16 +424,19 @@ ANSWER_SYSTEM = (
 ROUTES = ("classifier", "driver", "end")
 
 
-def _settled_route(raw: str, achieved: bool, focus: str) -> str:
-    """One of classifier, driver, or end. A reached goal ends. A classifier with no focus is the driver."""
+def _settled_route(raw: str, achieved: bool, focus: str, missing: tuple[tuple[str, str], ...] = ()) -> str:
+    """One of classifier, driver, or end. A reached goal ends. A classifier with no focus is the driver.
+
+    End while a named part is still absent or still here is the driver: the run has somewhere to go.
+    """
     if achieved:
         return "end"
     route = raw.strip().lower()
-    if route == "classifier":
-        return "classifier" if focus else "driver"
-    if route in ("driver", "end"):
-        return route
-    return "classifier" if focus else "driver"
+    if route == "classifier" or route not in ("driver", "end"):
+        route = "classifier" if focus else "driver"
+    if route == "end" and any(state in ("absent", "still_here") for _, state in missing):
+        return "driver"
+    return route
 
 
 OFFSCREEN_LIMIT = 40  # controls named to the writer; the rest stay on the page for a later step
@@ -600,20 +605,11 @@ DRIVE_SYSTEM = (
     "paste them back into the same folder. When listed_names_the_previous_reply_denied is present, "
     "those names are on this screen and the previous reply said they were not. Judge again from "
     "on_screen. There is no capture this time.\n\n"
-    "Work out how the goal can be done from this screen, then give the next actions, at most batch_size "
-    "of them, in the order they should happen. Only list actions that do not need you to see the screen "
-    "in between. A cut, a copy, a paste, typing, F2, or a double-click is the last action in a batch: "
-    "each changes the clipboard, the open folder, or the name being edited, and the rest of the batch "
-    "is dropped. Select and add may come before that last action. Select all and any other key wait "
-    "until the next screen is seen. When selected_files lists two or more files, do not plain-click "
-    "another row: that click is refused and the rest of the batch is dropped. An action after the first must name "
-    "a numbered item that came from the accessibility "
-    "tree. Put done or give_up last, and nowhere else, to stop. A give_up, or a done that says the goal "
-    "is not reached, has to be the only action in the batch: it is decided from the screen you have "
-    "seen, and actions before it are taken without it. Choose each action from these, and fill "
-    "only the fields it uses. When an action names a screen item in item, set target to that "
-    "item's text, copied from screen_items. Leave target empty when item is empty. An action whose "
-    "target does not match the item is refused:\n"
+    "Work out how the goal can be done from this screen, then give the one next action. You see the "
+    "screen again after it. Choose the action from these, and fill only the fields it uses. When the "
+    "action names a screen item in item, set target to that item's text, copied from screen_items. "
+    "Leave target empty when item is empty. An action whose target does not match the item is "
+    "refused:\n"
     "click: click item number `item`, one of the numbers on the screen now. Set `modifier` to add "
     "to add the item to the selection (Control, or Command on a Mac), range to extend the selection "
     "to it (Shift), or leave modifier empty for a plain click.\n"
@@ -648,9 +644,15 @@ DRIVE_SYSTEM = (
     "done: the screen itself shows the goal reached, every part of it. Set achieved to true.\n"
     "give_up: no action of yours would get closer, or the next step is one only the user should "
     "take, such as a login or a payment. Set achieved to false.\n\n"
-    "A line that starts with 'refused' or contains 'refused:' was not taken, and the actions listed "
-    "after it in that batch were not taken either. Do not treat it as done, and do not describe it "
-    "as something that already happened. last_action says the same about the most recent line.\n"
+    "A line that starts with 'refused' or contains 'refused:' was not taken. Do not treat it as "
+    "done, and do not describe it as something that already happened. last_action says the same "
+    "about the most recent line. A line with '(note: ...)' was taken: the note is a doubt about "
+    "it, such as a selection it may have replaced or a field that may not have had the focus. "
+    "Check the note against this screen before the next action.\n"
+    "When change_course is present, the way you were going looped: why says how. Do not take any "
+    "action in do_not_repeat; it is refused. Take another way to the same part of the goal: a "
+    "different entry point, a different control, the keyboard or a menu instead of a click, or "
+    "another page of the same settings.\n"
     "When what you need is not on the screen, look at the page you are on, then scroll the pane "
     "that holds it. Change page or view only after that. Do not switch back and forth between two "
     "views. offscreen_controls are on this page, only out of view. When the goal needs one, scroll "
@@ -662,6 +664,10 @@ DRIVE_SYSTEM = (
     "terminal or console that is already open on the desktop.\n"
     "A shortcut reaches only the frontmost window. When a menu or a dialog is open, press escape "
     "to close it, then press the shortcut.\n"
+    "your_notes is what you wrote last time. notes is for facts the next screen may not show but a "
+    "later step needs: a number you counted, a name you found, or the part of the goal already done. "
+    "Write every fact that still holds, including ones from your_notes. Leave notes empty to keep "
+    "your_notes as they are.\n"
     "When the app you need is not on the screen, open it from the Run dialog: press run, type the "
     "app's name, and press return. On a Mac, press start and type its name into Spotlight. If the "
     "Start menu search box is open but its results list never appears, do not keep pressing return "
@@ -672,7 +678,7 @@ DRIVE_SYSTEM = (
     "A spinner, a number box, or one part of a time takes its value from type with item set to "
     "it. highlighted_menu_item is the item Return would choose right now. When it is the one you "
     "need, press return. Do not press up or down first. When it is not, press up or down once and "
-    "look at the next screen before you decide. A click on any other item is refused. Do not click "
+    "look at the next screen before you decide. A click on another item takes that item. Do not click "
     "the menu itself again. When the choice you need is not on the screen, press up or down once "
     "and look at the next screen.\n"
     "After selecting files, do not press escape until the selection has been used. To select "
@@ -681,7 +687,7 @@ DRIVE_SYSTEM = (
     "The destination may sit beside the current folder; type its path into the address bar. "
     "selected_files lists the file rows in the selection now. An item with selected set is one of "
     "them. A plain click replaces that selection and modifier add keeps it. When selected_files "
-    "already has two or more names, a plain click on a different file row is refused. A cut or a "
+    "already has two or more names, use modifier add, not a plain click, on another file row. A cut or a "
     "copy names the files on the clipboard. When that line says the "
     "clipboard has no files, or is unchanged, the shortcut did not take: select the file and cut "
     "again. Do not paste until the line names every file that should move. Select and add only "
@@ -710,6 +716,7 @@ class DriveStep:
     dx: str = ""  # a drag's horizontal pixels, when it does not end on an item
     dy: str = ""  # a drag's vertical pixels
     achieved: bool = False  # for done
+    notes: str = ""  # facts the next screen may not show; empty means keep the previous notes
 
 
 def _last_action(history: list[str]) -> dict:
@@ -731,13 +738,13 @@ def compose_drive_step(
     steps_left: int,
     picture: Image.Image | None,
     tried: list[dict] | None = None,
-    batch: int | None = None,
     *,
     denied: list[str] | None = None,
-) -> list[DriveStep]:
-    """The next actions after the classifier stopped for good. The model reads the whole story of
-    the run and the screen now, numbered as the capture shows it, and may name several actions."""
-    limit = settings().driver_batch if batch is None else batch
+    change_course: dict | None = None,
+    notes: str = "",
+) -> DriveStep:
+    """The next action after the classifier stopped for good. The model reads the whole story of
+    the run and the screen now, numbered as the capture shows it."""
     packet = {
         "goal": goal,
         **(guidance.state() if guidance else {}),
@@ -747,8 +754,9 @@ def compose_drive_step(
         "why_the_classifier_stopped": stopped,
         **({"earlier_screens": earlier} if earlier else {}),
         "actions_left": steps_left,
-        "batch_size": limit,
         "already_tried_on_this_screen": tried or [],
+        "your_notes": notes,
+        **({"change_course": change_course} if change_course else {}),
         "on_screen": _on_screen(items),
         **({"listed_names_the_previous_reply_denied": denied} if denied else {}),
         "selected_files": _selected_files(items),
@@ -778,44 +786,32 @@ def compose_drive_step(
         writer,
         system=DRIVE_SYSTEM,
         packet=packet,
-        properties=_drive_properties(limit),  # the reason is written before the actions are chosen
+        properties=DRIVE_PROPERTIES,  # the reason is written before the action is chosen
         max_tokens=2048,
         answering=True,
         image=picture if settings().writer_vision else None,
         model=settings().resolved_driver_model,
+        defaults={"achieved": False, "notes": ""},
     )
-    return _drive_batch(data, limit)
+    return _drive_step(data)
 
 
-def _drive_properties(limit: int) -> dict:
-    """The takeover reply. Each action names its fields, so an endpoint that only reads the schema
-    as text still returns an action name."""
-    fields = {
-        "action": {"type": "string", "enum": list(DRIVE_ACTIONS)},
-        "item": {"type": "string"},
-        "target": {"type": "string"},
-        "text": {"type": "string"},
-        "key": {"type": "string"},
-        "modifier": {"type": "string"},
-        "to": {"type": "string"},
-        "dx": {"type": "string"},
-        "dy": {"type": "string"},
-        "achieved": {"type": "boolean"},
-    }
-    return {
-        "reason": {"type": "string"},
-        "actions": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": limit,
-            "items": {
-                "type": "object",
-                "properties": fields,
-                "required": list(fields),
-                "additionalProperties": False,
-            },
-        },
-    }
+# The takeover reply. Each field is named, so an endpoint that only reads the schema as text still
+# returns an action name.
+DRIVE_PROPERTIES = {
+    "reason": {"type": "string"},
+    "action": {"type": "string", "enum": list(DRIVE_ACTIONS)},
+    "item": {"type": "string"},
+    "target": {"type": "string"},
+    "text": {"type": "string"},
+    "key": {"type": "string"},
+    "modifier": {"type": "string"},
+    "to": {"type": "string"},
+    "dx": {"type": "string"},
+    "dy": {"type": "string"},
+    "achieved": {"type": "boolean"},
+    "notes": {"type": "string"},
+}
 
 
 def _shown(raw: object) -> str:
@@ -839,38 +835,35 @@ def _action_name(raw: dict) -> str | None:
     return None
 
 
-def _drive_batch(data: dict, limit: int) -> list[DriveStep]:
-    """The reply's action list, or an error when the list itself is not usable."""
-    actions = data["actions"]
-    if not actions or len(actions) > limit:
-        raise WriterError(f"the driver replied with {len(actions)} actions; the batch allows 1 to {limit}: {_shown(actions)}")
-    steps: list[DriveStep] = []
-    for raw in actions:
-        if not isinstance(raw, dict):
-            raise WriterError(f"each driver action needs an action name: {_shown(raw)}")
-        action = _action_name(raw)
-        if action is None:
-            raise WriterError(f"each driver action needs an action name: {_shown(raw)}")
-        if action not in DRIVE_ACTIONS:
-            raise WriterError(f"{action!r} is not a driver action: {_shown(raw)}")
-        steps.append(
-            DriveStep(
-                reason=data["reason"].strip(),
-                action=action,
-                item=str(raw.get("item") or "").strip(),
-                target=str(raw.get("target") or "").strip(),
-                text=str(raw.get("text") or ""),
-                key=str(raw.get("key") or "").strip().lower(),
-                modifier=str(raw.get("modifier") or "").strip().lower(),
-                to=str(raw.get("to") or "").strip(),
-                dx=str(raw.get("dx") or "").strip(),
-                dy=str(raw.get("dy") or "").strip(),
-                achieved=bool(raw.get("achieved", False)),
-            )
-        )
-    if any(step.action in ("done", "give_up") for step in steps[:-1]):
-        raise WriterError(f"done and give_up come last: {_shown(actions)}")
-    return steps
+# The prompt says "press run" and "press start". A reply that puts either name in `action`, with no
+# key of its own, means that key.
+KEY_AS_ACTION = frozenset({"run", "start"})
+
+
+def _drive_step(data: dict) -> DriveStep:
+    """The reply's action, or an error when it names none the driver has."""
+    action = _action_name(data)
+    if action is None:
+        raise WriterError(f"the driver's reply needs an action name: {_shown(data)}")
+    key = str(data.get("key") or "").strip().lower()
+    if action in KEY_AS_ACTION and not key:
+        action, key = "key", action
+    if action not in DRIVE_ACTIONS:
+        raise WriterError(f"{action!r} is not a driver action: {_shown(data)}")
+    return DriveStep(
+        reason=str(data.get("reason") or "").strip(),
+        action=action,
+        item=str(data.get("item") or "").strip(),
+        target=str(data.get("target") or "").strip(),
+        text=str(data.get("text") or ""),
+        key=key,
+        modifier=str(data.get("modifier") or "").strip().lower(),
+        to=str(data.get("to") or "").strip(),
+        dx=str(data.get("dx") or "").strip(),
+        dy=str(data.get("dy") or "").strip(),
+        achieved=bool(data.get("achieved", False)),
+        notes=str(data.get("notes") or "").strip(),
+    )
 
 
 def compose_answer(
@@ -948,11 +941,12 @@ def compose_answer(
     )
     focus = data["focus"].strip()
     achieved = bool(data["achieved"])
+    missing = _missing_parts(data.get("missing"), achieved)
     return Answer(
         text=data["answer"].strip(),
         achieved=achieved,
         focus=focus,
         question=data["question"].strip(),
-        route=_settled_route(str(data.get("route", "")), achieved, focus),
-        missing=_missing_parts(data.get("missing"), achieved),
+        route=_settled_route(str(data.get("route", "")), achieved, focus, missing),
+        missing=missing,
     )

@@ -272,7 +272,7 @@ def test_a_timed_out_request_is_a_writer_error(clean_env):
 def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env):
     clean_env.setenv("CLICKER_WRITER_VISION", "false")
     sent: list[int] = []
-    drive = {"reason": "The screen is idle.", "actions": [{"action": "wait"}]}
+    drive = {"reason": "The screen is idle.", "action": "wait"}
     answer = {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
 
     def create(**kwargs):
@@ -324,8 +324,16 @@ def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
     assert "Set route to classifier" in ANSWER_SYSTEM
     assert "Set route to driver" in ANSWER_SYSTEM
     assert "Set route to end" in ANSWER_SYSTEM
+    assert "do not set route to end" in ANSWER_SYSTEM
     assert "cannot right-click, double-click" not in ANSWER_SYSTEM
     assert "give_up and say in the reason what is missing" in DRIVE_SYSTEM
+    assert "give the one next action" in DRIVE_SYSTEM
+    assert "batch" not in DRIVE_SYSTEM
+    assert "'(note: ...)' was taken" in DRIVE_SYSTEM
+    assert "When change_course is present" in DRIVE_SYSTEM
+    assert "do_not_repeat" in DRIVE_SYSTEM
+    assert "your_notes is what you wrote last time" in DRIVE_SYSTEM
+    assert "Leave notes empty to keep" in DRIVE_SYSTEM
 
 
 def test_a_highlighted_menu_item_is_named_and_a_plain_focus_is_not(screen, clean_env):
@@ -335,8 +343,8 @@ def test_a_highlighted_menu_item_is_named_and_a_plain_focus_is_not(screen, clean
     def create(**kwargs):
         seen.append(json.loads(kwargs["messages"][0]["content"][-1]["text"]))
         asked = set(kwargs["output_config"]["format"]["schema"]["properties"])
-        if "actions" in asked:
-            payload = {"reason": "next", "actions": [{"action": "wait"}]}
+        if "modifier" in asked:
+            payload = {"reason": "next", "action": "wait"}
         else:
             payload = {"achieved": False, "answer": "not yet", "focus": "", "question": "", "route": "driver"}
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
@@ -362,7 +370,7 @@ def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_en
     def create(**kwargs):
         seen.append(json.loads(kwargs["messages"][0]["content"][0]["text"]))
         payload = (
-            {"reason": "next", "actions": [{"action": "wait"}]}
+            {"reason": "next", "action": "wait"}
             if len(seen) == 1
             else {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
         )

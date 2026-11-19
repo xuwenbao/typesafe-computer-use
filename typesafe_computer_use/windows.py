@@ -36,6 +36,9 @@ from .models import Abort, AxNode, ElementState, Field, Missed
 from .uia_patterns import OPERATION_PATTERN, PATTERN_IDS
 from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
 from .uia_roles import focused_role, pressable, role_for
+from .wheel import LINES_PER_NOTCH as LINES_PER_NOTCH
+from .wheel import WHEEL_DELTA as WHEEL_DELTA
+from .wheel import wheel_delta
 
 with suppress(AttributeError, OSError):  # pre-8.1 Windows without shcore, or awareness set by the host process
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
@@ -43,8 +46,6 @@ with suppress(AttributeError, OSError):  # pre-8.1 Windows without shcore, or aw
 MIN_WINDOW_SIDE_PT = 50.0  # anything smaller is a palette or a shadow, not the window being worked in
 EVENT_GAP = 0.04  # seconds between synthetic events, as on macOS
 CLICK_TOLERANCE_PX = 1  # how far the cursor may land from its target before a click is refused
-WHEEL_DELTA = 120  # one notch of the wheel
-LINES_PER_NOTCH = 3  # the Windows default; the actions ask for lines, as on macOS
 
 # The role table itself lives in uia_roles.py, shared with the WAA VM walk. The names below are
 # re-exported so this module still answers `role_for` and `pressable`.
@@ -150,11 +151,6 @@ def unicode_events(text: str) -> list[tuple[int, int]]:
     data = text.encode("utf-16-le")
     units = [int.from_bytes(data[i : i + 2], "little") for i in range(0, len(data), 2)]
     return [(unit, flags) for unit in units for flags in (KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]
-
-
-def wheel_delta(lines: int) -> int:
-    """The wheel delta that scrolls `lines` lines; positive scrolls up, as on macOS."""
-    return round(lines * WHEEL_DELTA / LINES_PER_NOTCH)
 
 
 def landed(target: tuple[int, int], actual: tuple[float, float]) -> bool:

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import busy_page
 
+from typesafe_computer_use.uia_patterns import PATTERN_IDS
 from typesafe_computer_use.waa import tree
 from typesafe_computer_use.waa.desktop import WAADesktop
 
@@ -187,7 +188,7 @@ def test_a_wait_stands_alone_and_a_pause_between_inputs_stays_in_their_code():
     assert desktop.actions[1].splitlines() == [
         "pyautogui.click(12, 100)",
         "pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace')",
-        "pyautogui.scroll(-10, x=720, y=450)",
+        "pyautogui.scroll(-400, x=720, y=450)",
         "time.sleep(0.5)",
         "pyautogui.press('enter')",
     ]
@@ -197,7 +198,7 @@ def test_a_wait_stands_alone_and_a_pause_between_inputs_stays_in_their_code():
 def test_a_scroll_aimed_at_an_item_uses_that_point():
     desktop = over()
     desktop.scroll(-10, at=(12.4, 99.6))
-    assert desktop.actions == ["pyautogui.scroll(-10, x=12, y=100)"]
+    assert desktop.actions == ["pyautogui.scroll(-400, x=12, y=100)"]
 
 
 def test_with_no_tree_nothing_is_known_but_the_screenshot():
@@ -211,7 +212,7 @@ def test_with_no_tree_nothing_is_known_but_the_screenshot():
     assert image.size == DISPLAY and image.mode == "RGB"
     assert desktop.display_scale(image) == 1.0
     desktop.scroll(5)
-    assert desktop.actions == ["pyautogui.scroll(5)"]
+    assert desktop.actions == ["pyautogui.scroll(200)"]
 
 
 def _explorer(title: str) -> dict:
@@ -265,6 +266,17 @@ def test_a_focus_of_an_unknown_role_searches_by_name_alone():
     ast.parse("import pyautogui; import time; pyautogui.FAILSAFE = False; " + code)
     assert "30003" not in code
     assert repr("Find") in code
+
+
+def test_a_queued_selection_is_not_read_back_before_the_next_screen():
+    handed: list = []
+    desktop = over(handed, observation(), _explorer("Documents"), None)
+    doc1 = {"role": "AXRow", "name": "Doc01.docx", "patterns": [PATTERN_IDS["selection_item"]]}
+
+    assert desktop.ax_operate(doc1, "select") is True
+    assert desktop.ax_selected(doc1) is None
+    desktop.screenshot()
+    assert handed
 
 
 def test_a_folder_window_list_item_stays_a_click():

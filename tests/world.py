@@ -27,7 +27,7 @@ from typesafe_computer_use.actions import Context
 from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import RunConfig, RunState, run
-from typesafe_computer_use.writer import WriterError
+from typesafe_computer_use.writer import DRIVE_PROPERTIES, WriterError
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -546,7 +546,7 @@ class FakeWriter:
                 "missing": [],
                 **scripted,
             }
-        elif asked == {"reason", "actions"}:
+        elif asked == set(DRIVE_PROPERTIES):
             self.drive_packets.append(packet)
             scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
             scripted = scripted(packet) if callable(scripted) else dict(scripted)
@@ -566,7 +566,8 @@ class FakeWriter:
                 "scroll_up",
             ):
                 scripted["item"] = numbers.get(raw_item, raw_item)
-            action = {
+            reply = {
+                "reason": "scripted",
                 "action": "give_up",
                 "item": "",
                 "target": "",
@@ -577,9 +578,9 @@ class FakeWriter:
                 "dx": "",
                 "dy": "",
                 "achieved": False,
+                "notes": "",
                 **scripted,
             }
-            reply = {"reason": "scripted", "actions": [action]}
         elif asked == {"action", "executable", "id", "reason"}:
             if self.host_fails:
                 raise WriterError("the host could not be asked")

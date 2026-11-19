@@ -163,7 +163,7 @@ on the app, and the node and time caps bind first on a big tree: Notes and Chrom
 
 | key | does |
 |---|---|
-| `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one. On Windows the press tries Invoke, then a named default action, then Toggle, SelectionItem.Select, and ExpandCollapse, and only then the mouse. A control the tree says is disabled is refused, including the mouse. Double-click, right-click, and a modified click stay pointer clicks |
+| `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one. On Windows the press tries Invoke, then a named default action, then Toggle, SelectionItem.Select, and ExpandCollapse, and only then the mouse. A control the tree says is disabled is still clicked, and the line notes it. Double-click, right-click, and a modified click stay pointer clicks |
 | `open_item` | double-click that same item, to open a file, a folder, or a list entry a single click only selects. Offered only while the frontmost app is not the browser and the screen has no URL |
 | `press_offscreen` | `AXPress` a labelled control the app exposes but does not show, chosen from the off-screen list; offered only when that list is not empty, and a refusal counts as a no-op since there is no pixel to fall back on. On Windows a control that supports ScrollItem is scrolled into view first |
 | `use_browser` | go to the browser, showing the website the `site` answer names: `none` brings it forward on the page already open there, a `SITES` catalog key opens that URL through AppleScript `open location`, and `other` opens a URL the writer proposes |
@@ -283,12 +283,12 @@ Some stops have no way back: a third stall, a focus the classifier takes no acti
 the hand-offs spent, a composite control (a time picker, a calendar, a canvas) the classifier
 cannot score with confidence, and so does using up `--steps`. `CLICKER_DRIVER` defaults to on, so
 such a run is not over while the writer says the goal is not reached. A stronger model, `CLICKER_DRIVER_MODEL`
-(the answer model by default), takes over and may name up to `CLICKER_DRIVER_BATCH` actions
-per reply (3 by default; `1` is one action per reply). It sees the whole
-story: the goal, every action taken with its "did not change" marks, every earlier stop and
-the focus given at it, why the classifier stopped, the text of the earlier screens, and the
-marked capture with its numbered items. An action after the first has to name an item that
-came from the accessibility tree. `done` and `give_up` come last.
+(the answer model by default), takes over and names one action per reply; the next action is
+chosen from a new capture. It sees the whole story: the goal, every action taken with its "did
+not change" marks, every earlier stop and the focus given at it, why the classifier stopped,
+the text of the earlier screens, and the marked capture with its numbered items. It also sees
+`your_notes`, the facts it wrote on the previous step, and writes `notes` back: a count, a name,
+or the part of the goal already done. An empty `notes` keeps the previous ones.
 
 It picks from a whitelist, and code checks every move before anything reaches the machine:
 
@@ -297,7 +297,7 @@ It picks from a whitelist, and code checks every move before anything reaches th
 | `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift. `control`, `ctrl`, `command`, and `cmd` are read as `add`, and `shift` as `range` |
 | `double_click` | the same item, clicked twice, so a file or folder opens |
 | `right_click` | the same item, with the right button |
-| `type` | the text is 1 to 2000 characters and looks like no credential. With `item`, the item is clicked and the text is typed there. Without `item`, a text field is focused |
+| `type` | the text is 1 to 2000 characters and looks like no credential. With `item`, the item is clicked and the text is typed there. Without `item`, the focused text field takes it and is read back; with no text field seen focused, the keystrokes are still sent and the line says so |
 | `set_value` | set `item` to `text`. A slider uses RangeValue, checked against its minimum and maximum and read back; a text value uses the existing value write and is read back. A password, a read-only control, or a control that accepts neither is refused. The classifier does not gain this action |
 | `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5, and Start, which opens the Start menu on Windows and Spotlight on a Mac |
 | `shortcut` | Cmd/Ctrl with a letter or a digit, except Q, W, H, and M, which quit, close, hide, or minimize |
@@ -307,36 +307,38 @@ It picks from a whitelist, and code checks every move before anything reaches th
 | `wait` | always |
 | `done`, `give_up` | stop |
 
-Each action is checked, then checked again against the live element when it came from the
-accessibility tree: still present, still visible, and not explicitly disabled. macOS does not
-report enabled, so that part is skipped. Before the next action of a batch, file rows are
-read again for whether they are selected, so a later click sees the selection this batch just
-made. A read that cannot answer leaves the captured value. A refusal, a failed check, a
-double-click, a successful cut, copy, paste, type, or F2, an action that leaves the screen
-unchanged, or `done` / `give_up` drops the rest of the batch. A `give_up`, or a `done` that says the
-goal is not reached, is not taken when other actions came before it in the same batch: those
-actions may have changed the screen, so the next look decides. A `done` that says the goal is
-reached still ends the takeover. A cut, copy, or paste changes the
-clipboard, typing changes the field, F2 starts a rename, and a double-click opens another screen,
-so each of those is the last action. Select and add may come before it. The unchanged test is the
-existing tile comparison and does not run OCR or the icon models. `wait`, `type`, `set_value`,
-copy, and cut are not compared. An item with no element handle is allowed only as the first
-action of a batch.
+The checks fall into three kinds.
+
+Safety checks refuse the move and leave the machine alone: a number that is not on this screen,
+a `target` that is not that item's text, a key or shortcut outside the lists, Q, W, H, or M, a
+credential, text over 2000 characters, a drag that leaves the screen or goes past 600 pixels, a
+modifier or an action that does not exist.
+
+State checks do not refuse. They read facts that may already be stale, so the move is taken and
+the line ends with `(note: ...)` for the next step to check against the new screen: a plain
+click that replaces two or more selected files, a control the tree says is disabled, a cut or a
+copy with every file row known unselected or of files the clipboard already holds, a paste of
+files already in this folder, Return on a file row, typing with no text field seen focused, and
+an action that already changed nothing on this screen. The classifier's clicks, Return, and
+shortcuts carry the same notes.
+
+Loop checks are the classifier's stall rules: three actions in a row that left the screen as it
+was, two repeats of an action already taken on this screen, and the same action four times in a
+row. The same action on the same screen also counts when other actions come between them: the
+third time it happens in one takeover is a loop, and only actions this takeover took are counted.
+The first time one fires in a takeover, the takeover does not end. It writes
+`driver: changed course: ...`, clears the counts, and the next question carries `change_course`:
+why it looped, the action in `do_not_repeat`, and what was tried on this screen. Back on the
+screen it looped on, that action is refused. The second time one fires, the takeover stalls.
 
 A refused move goes into the history as refused and costs an action. `done` and `give_up` do
-not. An action that already changed nothing on this screen is refused without being taken again,
-and two repeats of an action already taken on this screen stall the takeover the way they stall
-the classifier, which is what stops a loop through two screens. A reply that is not a usable
-batch is recorded and the takeover continues; the second such reply in a row ends it. A missing
-`achieved` counts as false. The takeover ends on `done` or `give_up`, on the same stall rules
-as the classifier, or after `CLICKER_DRIVER_STEPS` (20) executed actions, which do not come out
+not. A reply with no usable action is recorded and the takeover continues; the second such
+reply in a row ends it. A missing `achieved` counts as false. The takeover ends on `done` or
+`give_up`, on a second loop, or after `CLICKER_DRIVER_STEPS` (20) actions, which do not come out
 of `--steps`; then the writer answers once more on the final screen. History lines start with
-`driver: `. Actions that were not executed are not written; a batch that stops early adds one
-line, `driver: stopped the rest of the batch: ...`. One model call writes one
-`step-NNN-driver.json`, named for the first action of that call, with the call index and each
-action's result. `run.json` records the action count and the call count separately. An older
-file with no call index is read as one call and one action. On WindowsAgentArena each action
-is still its own VM step: the batch saves model calls, not VM steps.
+`driver: `. One model call writes one `step-NNN-driver.json` with the call index and the action's
+result. `run.json` records the action count and the call count separately. An older file with
+no call index is read as one call and one action.
 
 ## Who did the work
 

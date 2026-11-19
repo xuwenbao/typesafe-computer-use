@@ -23,6 +23,7 @@ from ..config import settings
 from ..models import AxNode, ElementState, Field
 from ..uia_patterns import ID_TO_NAME, OPERATION_PATTERN, OPERATIONS, PATTERN_IDS, VALUE
 from ..uia_roles import ROLE_TO_CONTROL_TYPE_ID
+from ..wheel import wheel_delta
 from . import tree
 
 NextObs = Callable[[list[str]], dict]
@@ -170,16 +171,21 @@ class WAADesktop:
         self._do("pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace')")
 
     def scroll(self, lines: int, at: tuple[float, float] | None = None) -> None:
-        """Scroll under the pointer: on `at`, or over the active window's center when the tree gives it."""
+        """Scroll under the pointer: on `at`, or over the active window's center when the tree gives it.
+
+        The actions ask for lines. pyautogui on Windows sends that number as a wheel delta, and one
+        notch is 120, so the lines are converted first. Ten lines is a few notches, not a twelfth.
+        """
+        delta = wheel_delta(lines)
         if at is not None:
-            self._do(f"pyautogui.scroll({int(lines)}, x={round(at[0])}, y={round(at[1])})")
+            self._do(f"pyautogui.scroll({delta}, x={round(at[0])}, y={round(at[1])})")
             return
         window = self._current().window
         if window is None:
-            self._do(f"pyautogui.scroll({int(lines)})")
+            self._do(f"pyautogui.scroll({delta})")
             return
         x, y, w, h = window
-        self._do(f"pyautogui.scroll({int(lines)}, x={round(x + w / 2)}, y={round(y + h / 2)})")
+        self._do(f"pyautogui.scroll({delta}, x={round(x + w / 2)}, y={round(y + h / 2)})")
 
     def frontmost_app_and_pid(self) -> tuple[str, int]:
         view = self._view()
@@ -295,7 +301,7 @@ class WAADesktop:
         return None
 
     def ax_selected(self, ref) -> bool | None:
-        """The benchmark observation is not refreshed between actions of one batch."""
+        """Each step reads the selection from its own tree; nothing is read between steps."""
         return None
 
     def clipboard_files(self) -> tuple[str, ...] | None:

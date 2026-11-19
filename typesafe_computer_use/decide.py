@@ -49,10 +49,7 @@ def fixed_actions(browser: str, email: str | None, typing: bool = True) -> dict[
             "continue with. This is the only way to reach a website: never click the address bar, a URL, "
             "or a search box to get there. Works from any app, including this one."
         ),
-        "press_enter": (
-            "Press Return to submit the focused form or field. When a menu item is focused, Return takes "
-            "that item; do not click a different menu item."
-        ),
+        "press_enter": ("Press Return to submit the focused form or field. When a menu item is focused, Return takes that item."),
         "press_escape": "Press Escape to dismiss a dialog, menu, or popup.",
         "go_back": (
             "Go back to the previous page or screen, as the browser's Back button does. Use when the last "
