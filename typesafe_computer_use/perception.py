@@ -113,6 +113,7 @@ def capture(
             frontmost = app or frontmost
     with phase(timing, "window"):
         window = None if replay else desktop.frontmost_window_bounds(pid)
+        popups = () if replay else desktop.owned_popup_bounds(pid)
     with phase(timing, "field"):
         if replay or brought is not None:
             field = None if brought is None else brought[1]
@@ -125,7 +126,7 @@ def capture(
             page_url = None if brought is None else brought[2]
         else:
             page_url = _bounded(timing, "url", URL_WAIT, desktop.browser_url, browser, absent=None)
-    return Screen(image=image, scale=scale, app=frontmost, field=field, url=page_url, pid=pid, window=window)
+    return Screen(image=image, scale=scale, app=frontmost, field=field, url=page_url, pid=pid, window=window, popups=popups)
 
 
 def _bounded(timing: dict[str, float] | None, name: str, seconds: float, fn, *args, absent=None):
@@ -462,9 +463,11 @@ def ocr_region(screen: Screen) -> Box:
     """The part of the capture worth reading, in capture pixels.
 
     The frontmost window with a margin, joined with the menu bar strip over the same columns and
-    clamped to the display. Text on the desktop and in background windows is noise to the decision,
-    so it is left unread. Clipping the strip to the window's x-range is what makes the crop worth
-    anything on a full-height window, whose own rectangle already reaches the bottom of the display.
+    clamped to the display. A popup owned by that window, or the focused control's own window, is
+    joined in too, so a menu that opens beside the window stays in the picture. Text on the desktop
+    and in background windows is noise to the decision, so it is left unread. Clipping the strip to
+    the window's x-range is what makes the crop worth anything on a full-height window, whose own
+    rectangle already reaches the bottom of the display.
 
     The cost is that status items to the right of the window, the clock and the menu extras, go
     unread. They stay clickable: the accessibility tree lists them as AXMenuBarItem controls.
@@ -475,8 +478,13 @@ def ocr_region(screen: Screen) -> Box:
     x, y, w, h = screen.window
     scale, margin = screen.scale, REGION_MARGIN_PT
     window = ((x - margin) * scale, (y - margin) * scale, (x + w + margin) * scale, (y + h + margin) * scale)
-    joined = (window[0], min(window[1], 0.0), window[2], max(window[3], MENU_BAR_PT * scale))
-    clamped = (max(0.0, joined[0]), max(0.0, joined[1]), min(width, joined[2]), min(height, joined[3]))
+    left, top, right, bottom = window[0], min(window[1], 0.0), window[2], max(window[3], MENU_BAR_PT * scale)
+    for px, py, pw, ph in screen.popups:
+        left = min(left, (px - margin) * scale)
+        top = min(top, (py - margin) * scale)
+        right = max(right, (px + pw + margin) * scale)
+        bottom = max(bottom, (py + ph + margin) * scale)
+    clamped = (max(0.0, left), max(0.0, top), min(width, right), min(height, bottom))
     return clamped if clamped[2] > clamped[0] and clamped[3] > clamped[1] else (0.0, 0.0, width, height)
 
 
@@ -798,6 +806,7 @@ def _carried_item(item: Item) -> dict:
         "enabled": item.enabled,
         "checked": item.checked,
         "expanded": item.expanded,
+        "selected": item.selected,
         "current": item.current,
         "low": item.low,
         "high": item.high,
@@ -812,6 +821,7 @@ def _carried(node: AxNode) -> dict:
         "enabled": node.enabled,
         "checked": node.checked,
         "expanded": node.expanded,
+        "selected": node.selected,
         "current": node.current,
         "low": node.low,
         "high": node.high,

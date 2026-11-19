@@ -428,6 +428,8 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
         log(f"  offscreen ({decision.offscreen.confidence:.2f}):")
         for key, p in top(decision.offscreen, 3):
             log(f"  {p:5.2f}  [{key}] {screen.offscreen[int(key)].label!r}")
+    if decision.shortcutting:
+        log(f"  key ({decision.key.confidence:.2f}): {decision.key.choice}")
 
     keep_going = resolve(cfg, ctx, state, screen, items, decision, timing, log)
     timing.setdefault("act", 0.0)
@@ -458,6 +460,8 @@ def _lead_covers(decision: Decision, floor: float) -> bool:
         return decision.kind.confidence >= floor and _leads(decision.item, floor)
     if decision.pressing_offscreen:
         return decision.kind.confidence >= floor and _leads(decision.offscreen, floor)
+    if decision.shortcutting:
+        return decision.kind.confidence >= floor and _leads(decision.key, floor)
     return _leads(decision.kind, floor)
 
 
@@ -503,12 +507,14 @@ def resolve(
     state.quiet = False
     with phase(timing, "act"):
         what = perform(decision, screen, items, ctx)
+    clipboard = "to the clipboard" in what
+    state.quiet = clipboard
     state.view = None
     state.history.append(what)
     from .windows_session import report_action
 
     report_action(what)
-    state.markable = decision.kind.choice not in UNMARKED
+    state.markable = decision.kind.choice not in UNMARKED and not clipboard
     log(f"  did: {what}")
     return not repeating(state, what, decision.kind.choice == "wait", log)
 
@@ -584,6 +590,9 @@ def answers(
         "site_probabilities": decision.site.probabilities,
         "offscreen": decision.offscreen.choice if decision.offscreen else None,
         "offscreen_probabilities": decision.offscreen.probabilities if decision.offscreen else None,
+        "key": decision.key.choice if decision.key else None,
+        "key_confidence": decision.key.confidence if decision.key else None,
+        "key_probabilities": decision.key.probabilities if decision.key else None,
         "offscreen_controls": offscreen_records(screen.offscreen),
         "chosen": decision.chosen,
         "confidence": decision.confidence,

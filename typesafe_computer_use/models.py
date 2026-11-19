@@ -152,6 +152,7 @@ class Item:
     enabled: bool | None = None  # None when the tree did not say; False refuses the action
     checked: bool | None = None
     expanded: bool | None = None
+    selected: bool | None = None  # True when the app reports this row in the selection
     current: str | None = None  # the control's value, when it has one
     low: float | None = None  # RangeValue minimum
     high: float | None = None  # RangeValue maximum
@@ -192,6 +193,7 @@ class AxNode:
     low: float | None = None
     high: float | None = None
     writable: bool | None = None
+    selected: bool | None = None
 
     @property
     def role_word(self) -> str:
@@ -268,6 +270,7 @@ class Screen:
     url: str | None
     pid: int | None = None  # frontmost process, for the accessibility walk; None in replay
     window: tuple[float, float, float, float] | None = None  # frontmost window, x/y/w/h in points; None in replay
+    popups: tuple[tuple[float, float, float, float], ...] = ()  # owned popups and the focused control's window, same units
     ax_refs: dict[int, object] = field(default_factory=dict)  # item index -> accessibility element, when it has one
     offscreen: list[AxNode] = field(default_factory=list)  # labelled controls the app exposes but does not show
     covered: dict[int, Popup] = field(default_factory=dict)  # item index -> the popup a click on it would land on

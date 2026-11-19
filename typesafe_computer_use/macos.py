@@ -341,6 +341,11 @@ def frontmost_window_bounds(pid: int | None = None) -> tuple[float, float, float
     return None
 
 
+def owned_popup_bounds(pid: int | None = None) -> tuple[tuple[float, float, float, float], ...]:
+    """Menus on macOS belong to the front window, so none is collected as its own window."""
+    return ()
+
+
 def frontmost_window_center(pid: int | None = None) -> tuple[float, float] | None:
     """Center of the frontmost app's topmost on-screen window, in points."""
     bounds = frontmost_window_bounds(pid)
@@ -443,6 +448,11 @@ def ax_value(ref) -> str | None:
 def ax_operate(ref, operation: str, value: str | None = None) -> bool:
     """macOS has no UI Automation patterns. A click falls back to the pointer."""
     return False
+
+
+def clipboard_files() -> tuple[str, ...] | None:
+    """macOS does not read the file clipboard here. None means the shortcut line stays unmarked."""
+    return None
 
 
 def element_frame(ref) -> tuple[float, float, float, float] | None:

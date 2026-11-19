@@ -82,6 +82,7 @@ class AxFacts(NamedTuple):
     low: float | None = None
     high: float | None = None
     writable: bool | None = None
+    selected: bool | None = None  # SelectionItem.IsSelected; None when the element cannot say
 
 
 def read_facts(raw) -> AxFacts:
@@ -234,6 +235,7 @@ def walk_actionable(
                 low=facts.low,
                 high=facts.high,
                 writable=facts.writable,
+                selected=facts.selected,
             )
             if visible:
                 if pressable or role in AX_ACTIONABLE_ROLES:

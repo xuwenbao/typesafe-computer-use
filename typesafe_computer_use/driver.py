@@ -10,7 +10,7 @@ import json
 import string
 from dataclasses import asdict
 
-from .actions import WAIT_SECONDS, click_item, fill_field, focus_landed
+from .actions import WAIT_SECONDS, add_item, click_item, clipboard_line, fill_field, focus_landed
 from .calls import MeteredWriter
 from .models import AxNode, Item, Missed, Screen, signature
 from .parse.marks import marks
@@ -183,7 +183,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 what = barred if barred is not None else _take(move, screen, items, state)
                 entry["did"] = what
                 taken.append(entry)
-                clipboard = move.action == "shortcut" and move.key in QUIET_SHORTCUTS and what.startswith("pressed ")
+                clipboard = "to the clipboard" in what
                 state.view = None
                 _record(state, PREFIX + what)
                 state.markable = (
@@ -207,6 +207,10 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 if "refused" in what:
                     if index + 1 < len(moves):
                         stop_note = what
+                    break
+                # 双击会打开另一张画面。这一批剩下的动作是对着旧画面排的，留到看见新画面再决定。
+                if move.action == "double_click" and index + 1 < len(moves):
+                    stop_note = "a double-click opens another screen"
                     break
                 if _comparable(move, what) and index + 1 < len(moves):
                     after = desktop.screenshot()
@@ -447,11 +451,10 @@ def act(move: DriveStep, screen: Screen, items: list[Item]) -> str:
         # 目标：按一个允许的 Cmd/Ctrl 组合。完成：禁止退出类快捷键；复制和剪切在结果里标明屏幕可以不变。
         if move.key not in SHORTCUTS:
             return f"shortcut refused: {move.key!r} is not one of {', '.join(SHORTCUTS)}"
-        desktop.press(move.key, command=True)
-        line = f"pressed command+{move.key}"
         if move.key in QUIET_SHORTCUTS:
-            return f"{line} (to the clipboard; the screen need not change)"
-        return line
+            return clipboard_line(move.key)
+        desktop.press(move.key, command=True)
+        return f"pressed command+{move.key}"
     if move.action in ("scroll_down", "scroll_up"):
         return _scroll(move, screen, items)
     if move.action == "set_value":
@@ -638,9 +641,12 @@ def _click(move: DriveStep, screen: Screen, items: list[Item]) -> str:
     modifier = _modifier(move.modifier)
     if modifier not in MODIFIERS:
         return f"click refused: {move.modifier!r} is not a modifier"
-    # 目标：普通单击走分类器同一条路径。完成：返回点击结果；双击、右键和带修饰的点击改走下面。
+    # 目标：普通单击走分类器同一条路径。追加选择走 AddToSelection，不靠按住 Control 再点一个很矮的文件名。
+    # 完成：返回点击结果；双击、右键和带 Shift 的点击改走下面。
     if move.action == "click" and not move.modifier:
         return click_item(item, screen)
+    if move.action == "click" and modifier == "add":
+        return add_item(item, screen)
 
     # 目标：发出双击、右键或带修饰的点击。完成：点中则写明点法和项目；点不中则拒绝。
     button = "right" if move.action == "right_click" else "left"

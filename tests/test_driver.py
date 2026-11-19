@@ -95,6 +95,19 @@ def test_a_click_modifier_the_model_invented_clicks_nothing(screen, machine):
     assert machine == []
 
 
+def test_adding_a_file_uses_add_to_selection_and_focuses_it(screen, machine, monkeypatch):
+    item = Item(0, "Doc02.docx", 1.0, 0, 0, 20, 20, controls=("selection_item",))
+    live = replace(screen, ax_refs={0: "doc"})
+    calls = []
+    monkeypatch.setattr(
+        desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or operation == "add_select"
+    )
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: calls.append(("focus", ref)) or True)
+    assert act(move("click", item="0", modifier="add"), live, [item]) == "clicked 'Doc02.docx' with add"
+    assert calls == ["add_select", ("focus", "doc")]
+    assert machine == []
+
+
 def test_control_and_shift_are_the_selection_modifiers(screen, machine):
     assert act(move("click", item="0", modifier="control"), screen, ITEMS) == "clicked 'Archive' with add"
     assert act(move("click", item="0", modifier="shift"), screen, ITEMS) == "clicked 'Archive' with range"
@@ -156,6 +169,32 @@ def test_only_listed_keys_are_pressed(screen, machine):
     assert act(move("key", key="start"), screen, ITEMS) == "pressed start"
     assert act(move("key", key="f4"), screen, ITEMS).startswith("key refused: 'f4'")
     assert machine == [("press", "tab", False), ("press", "start", False)]
+
+
+def test_a_cut_names_the_files_the_clipboard_gained(screen, machine, monkeypatch):
+    held = {"files": ()}
+
+    def press(key, command=False):
+        machine.append(("press", key, command))
+        held["files"] = ("Doc01.docx", "Doc02.docx")
+
+    monkeypatch.setattr(desktop, "press", press)
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: held["files"])
+    assert (
+        act(move("shortcut", key="x"), screen, ITEMS)
+        == "pressed command+x (to the clipboard: Doc01.docx, Doc02.docx; the screen need not change)"
+    )
+
+
+def test_a_cut_that_puts_nothing_on_the_clipboard_says_so(screen, machine, monkeypatch):
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: ())
+    assert act(move("shortcut", key="x"), screen, ITEMS) == "pressed command+x (the clipboard has no files)"
+    assert machine == [("press", "x", True)]
+
+
+def test_a_cut_that_leaves_the_clipboard_unchanged_says_so(screen, machine, monkeypatch):
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: ("Doc01.docx",))
+    assert act(move("shortcut", key="x"), screen, ITEMS) == "pressed command+x (the clipboard is unchanged: Doc01.docx)"
 
 
 def test_only_listed_shortcuts_are_pressed(screen, machine):

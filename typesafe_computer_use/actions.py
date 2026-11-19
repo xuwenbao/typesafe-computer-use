@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typesafe_sdk import TypeSafeClient
 
 from .config import SITES
-from .decide import OFFSCREEN_PREFIX, Decision, row_mates, verify_typed
+from .decide import OFFSCREEN_PREFIX, SHORTCUT_KEYS, Decision, row_mates, verify_typed
 from .models import AxNode, Field, Guidance, Item, Missed, Popup, Screen
 from .platform_adapter import desktop
 from .writer import Writer, WriterError, compose_text, compose_url
@@ -36,13 +36,20 @@ def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context)
     key = decision.chosen
     by_index = {str(it.index): it for it in items}
     if key in by_index:
-        what = open_item(by_index[key], screen) if getattr(decision, "opening", False) else click_item(by_index[key], screen)
+        if decision.adding:
+            what = add_item(by_index[key], screen)
+        elif decision.opening:
+            what = open_item(by_index[key], screen)
+        else:
+            what = click_item(by_index[key], screen)
         mates = row_mates(items, limit=None).get(int(key))
         # Three rows each end in a Buy: the line must say which, or trying one marks them all as tried.
         # The whole row goes in, so two rows that open alike still get lines of their own.
         return f"{what} beside {', '.join(repr(m) for m in mates)}" if mates else what
     if key.startswith(OFFSCREEN_PREFIX):
         return press_offscreen(key[len(OFFSCREEN_PREFIX) :], screen)
+    if decision.kind.choice == "add_item":
+        return "click refused: there is no item to add"
     handler = _HANDLERS.get(key)
     if handler is None:
         raise ValueError(f"unknown action {key!r}")
@@ -76,12 +83,15 @@ def click_item(item: Item, screen: Screen) -> str:
     a sticky header, a cookie banner, or a tooltip. An element that refuses still has a location.
     A click there would land on a popup in front of the item, so that popup is closed first.
     A control the tree says is disabled is not clicked at all.
+    A row that can be selected is not invoked: Invoke on a file opens it, and a click only selects.
     """
     refused = _disabled(item)
     if refused is not None:
         return refused
     ref = screen.ax_refs.get(item.index)
-    if ref is not None and desktop.ax_press(ref):
+    # A file row lists both. Invoke is the double-click, so a click must not take it.
+    selectable = "selection_item" in item.controls
+    if ref is not None and not selectable and desktop.ax_press(ref):
         return f"pressed {item.text!r} via accessibility"
     if ref is not None:
         # A radio button's Select() is reported as success by Qt and then changes nothing.
@@ -91,6 +101,8 @@ def click_item(item: Item, screen: Screen) -> str:
             if operation == "select" and role == "AXRadioButton":
                 continue
             if desktop.ax_operate(ref, operation):
+                if operation == "select":
+                    desktop.ax_focus(ref)  # Select() does not give the list the keyboard, so a later cut misses it
                 return f"{verb} {item.text!r} via accessibility"
     popup = screen.covered.get(item.index)
     closed = f"{close_popup(popup)} then " if popup is not None else ""
@@ -100,6 +112,24 @@ def click_item(item: Item, screen: Screen) -> str:
         return f"{closed}click refused: {item.text!r} was not clicked, {e}"
     # The mouse click is the action either way. Whether it took is the next capture's to say.
     return f"{closed}clicked {item.text!r}"
+
+
+def add_item(item: Item, screen: Screen) -> str:
+    """Add an item to the selection. Select() would replace it, and Invoke would open a file."""
+    refused = _disabled(item)
+    if refused is not None:
+        return refused
+    ref = screen.ax_refs.get(item.index)
+    if ref is not None and desktop.ax_operate(ref, "add_select"):
+        desktop.ax_focus(ref)
+        return f"clicked {item.text!r} with add"
+    popup = screen.covered.get(item.index)
+    closed = f"{close_popup(popup)} then " if popup is not None else ""
+    try:
+        desktop.click_at(screen.to_points(item), modifier="add")
+    except Missed as e:
+        return f"{closed}click refused: {item.text!r} was not clicked, {e}"
+    return f"{closed}clicked {item.text!r} with add"
 
 
 def close_popup(popup: Popup) -> str:
@@ -279,6 +309,41 @@ def _type_text(decision, screen: Screen, items, ctx: Context) -> str:
     return f"typed {text!r} into {screen.field.label!r} {how} (verified {p:.2f})"
 
 
+# Copy and cut only change the clipboard, so an unchanged screen is not a failed action.
+_CLIPBOARD_KEYS = frozenset({"c", "x"})
+
+
+def clipboard_line(key: str) -> str:
+    """Press Control (Command on a Mac) with `key`, and name the files the clipboard holds afterward.
+
+    None from the platform means it cannot read the clipboard, so the line stays the old one.
+    An empty or unchanged clipboard is said outright: a quiet success would send the next step to paste.
+    """
+    before = desktop.clipboard_files()
+    desktop.press(key, command=True)
+    after = desktop.clipboard_files()
+    line = f"pressed command+{key}"
+    if after is None:
+        return f"{line} (to the clipboard; the screen need not change)"
+    shown = ", ".join(after)
+    if not after:
+        return f"{line} (the clipboard has no files)"
+    if before == after:
+        return f"{line} (the clipboard is unchanged: {shown})"
+    return f"{line} (to the clipboard: {shown}; the screen need not change)"
+
+
+def _shortcut(decision: Decision, screen: Screen, items: list[Item], ctx: Context) -> str:
+    key = decision.key.choice if decision.key is not None else ""
+    allowed = ", ".join(SHORTCUT_KEYS)
+    if key not in SHORTCUT_KEYS:
+        return f"shortcut refused: {key!r} is not one of {allowed}"
+    if key in _CLIPBOARD_KEYS:
+        return clipboard_line(key)
+    desktop.press(key, command=True)
+    return f"pressed command+{key}"
+
+
 def _key(name: str, description: str, command: bool = False):
     def handler(decision, screen, items, ctx) -> str:
         desktop.press(name, command)
@@ -311,4 +376,5 @@ _HANDLERS = {
     "scroll_down": _scroll(-10, "scrolled down"),
     "scroll_up": _scroll(10, "scrolled up"),
     "wait": _wait,
+    "shortcut": _shortcut,
 }

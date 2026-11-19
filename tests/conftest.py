@@ -124,6 +124,7 @@ def no_real_machine(monkeypatch):
         "ax_operate",
         "element_state",
         "element_frame",
+        "owned_popup_bounds",
     ):
         monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))
     for name in (

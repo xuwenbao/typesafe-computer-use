@@ -340,6 +340,25 @@ def press(key: str, command: bool = False) -> None:
         _send(_key(vk=vk, flags=flags))
 
 
+def clipboard_files() -> tuple[str, ...]:
+    """File names on the clipboard, without their directories. Empty when it holds no files."""
+    import win32clipboard
+
+    try:
+        win32clipboard.OpenClipboard()
+    except Exception:
+        return ()
+    try:
+        if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
+            return ()
+        paths = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+    except Exception:
+        return ()
+    finally:
+        win32clipboard.CloseClipboard()
+    return tuple(Path(path).name for path in paths)
+
+
 def type_text(text: str) -> None:
     for unit, flags in unicode_events(text):
         _send(_key(scan=unit, flags=flags))
@@ -516,6 +535,18 @@ def open_path(path: Path, as_text: bool = False) -> None:
     os.startfile(path)
 
 
+def _window_rect(hwnd: int) -> tuple[float, float, float, float] | None:
+    """A visible window's bounds, or None when it is missing or only a shadow."""
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    except pywintypes.error:
+        return None
+    w, h = float(right - left), float(bottom - top)
+    if w > MIN_WINDOW_SIDE_PT and h > MIN_WINDOW_SIDE_PT:
+        return float(left), float(top), w, h
+    return None
+
+
 def frontmost_window_bounds(pid: int | None = None) -> tuple[float, float, float, float] | None:
     """The foreground window's bounds as x, y, w, h in screen pixels.
 
@@ -525,14 +556,68 @@ def frontmost_window_bounds(pid: int | None = None) -> tuple[float, float, float
     hwnd = win32gui.GetForegroundWindow()
     if not hwnd or (pid is not None and _window_pid(hwnd) != pid):
         return None
+    return _window_rect(hwnd)
+
+
+def _focused_root() -> int:
+    """The top-level window that holds the focused control, or 0 when focus cannot be read."""
     try:
-        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        element = auto.GetFocusedControl()
+    except Exception:
+        return 0
+    if element is None:
+        return 0
+    try:
+        handle = int(getattr(element, "NativeWindowHandle", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    if not handle:
+        return 0
+    try:
+        return int(win32gui.GetAncestor(handle, win32con.GA_ROOT) or 0)
     except pywintypes.error:
-        return None
-    w, h = float(right - left), float(bottom - top)
-    if w > MIN_WINDOW_SIDE_PT and h > MIN_WINDOW_SIDE_PT:
-        return float(left), float(top), w, h
-    return None
+        return 0
+
+
+def _popup_hwnds(pid: int | None) -> list[int]:
+    """Owned top-level windows of the foreground window, plus the focused control's own root.
+
+    A menu that opens beside the window is a separate window. Both kinds have to be visible, belong
+    to the same process, and be large enough not to be a shadow.
+    """
+    foreground = win32gui.GetForegroundWindow()
+    if not foreground:
+        return []
+    owner_pid = _window_pid(foreground)
+    if pid is not None and owner_pid != pid:
+        return []
+    found: list[int] = []
+    seen = {foreground}
+
+    def consider(hwnd: int) -> None:
+        if not hwnd or hwnd in seen or not win32gui.IsWindowVisible(hwnd):
+            return
+        if _window_pid(hwnd) != owner_pid or _window_rect(hwnd) is None:
+            return
+        seen.add(hwnd)
+        found.append(hwnd)
+
+    def visit(hwnd, _lparam) -> bool:
+        try:
+            if win32gui.GetWindow(hwnd, win32con.GW_OWNER) == foreground:
+                consider(hwnd)
+        except pywintypes.error:
+            pass
+        return True
+
+    win32gui.EnumWindows(visit, None)
+    consider(_focused_root())
+    return found
+
+
+def owned_popup_bounds(pid: int | None = None) -> tuple[tuple[float, float, float, float], ...]:
+    """Those popups as x, y, w, h in screen pixels. Empty when the foreground window is not this process."""
+    return tuple(rect for hwnd in _popup_hwnds(pid) if (rect := _window_rect(hwnd)) is not None)
 
 
 def frontmost_window_center(pid: int | None = None) -> tuple[float, float] | None:
@@ -736,6 +821,8 @@ def ax_operate(ref, operation: str, value: str | None = None) -> bool:
             pattern.Toggle()
         elif operation == "select":
             pattern.Select()
+        elif operation == "add_select":
+            pattern.AddToSelection()
         elif operation == "expand_toggle":
             if int(getattr(pattern, "ExpandCollapseState", 0)) == 0:
                 pattern.Expand()
@@ -841,6 +928,15 @@ def _range_bounds(element) -> tuple[float | None, float | None]:
         return None, None
 
 
+def _selected(element) -> bool | None:
+    """Whether a list row is in the selection. None when it has no SelectionItem pattern."""
+    pattern = _pattern(element, PATTERN_IDS["selection_item"])
+    try:
+        return bool(pattern.IsSelected) if pattern is not None else None
+    except Exception:
+        return None
+
+
 def _writable(element) -> bool | None:
     pattern = _pattern(element, PATTERN_IDS["value"])
     try:
@@ -872,18 +968,27 @@ def _ui_actions(element) -> AxFacts:
         low,
         high,
         _writable(element),
+        _selected(element),
     )
 
 
 def actionable_elements(pid: int, display_w_pt: float, display_h_pt: float) -> tuple[list[AxNode], list[AxNode], bool]:
-    """Labelled controls of the foreground window, in screen pixels, and the pressable off-screen
-    ones. Best effort: a window that refuses UI Automation, or belongs to a different process, or
-    has none, yields nothing."""
+    """Labelled controls of the foreground window and its popups, in screen pixels, and the pressable
+    off-screen ones. Best effort: a window that refuses UI Automation, or belongs to a different
+    process, or has none, yields nothing. A popup that refuses is skipped; the others are still walked."""
     hwnd = win32gui.GetForegroundWindow()
     if _window_pid(hwnd) != pid:
         return [], [], False
-    try:
-        root = auto.ControlFromHandle(hwnd)
-    except Exception:
-        return [], [], False
-    return walk_actionable(root, _ui_children, _ui_attrs, _ui_actions, display_w_pt, display_h_pt)
+    found: list[AxNode] = []
+    hidden: list[AxNode] = []
+    capped = False
+    for root_hwnd in (hwnd, *_popup_hwnds(pid)):
+        try:
+            root = auto.ControlFromHandle(root_hwnd)
+        except Exception:
+            continue
+        nodes, off, cut = walk_actionable(root, _ui_children, _ui_attrs, _ui_actions, display_w_pt, display_h_pt)
+        found.extend(nodes)
+        hidden.extend(off)
+        capped = capped or cut
+    return found, hidden, capped

@@ -402,8 +402,9 @@ class FakeTypeSafe:
     """The classifier, replaced by a policy over the state the real `decide` builds.
 
     A policy returns (kind, target) and this maps the target to whatever key the question wants:
-    the item's index for click_item, the off-screen control's key for press_offscreen, the site key
-    for use_browser. So a scenario never writes an index, and renumbering the page cannot break it.
+    the item's index for a click, the off-screen control's key for press_offscreen, the site key
+    for use_browser, and the letter for a shortcut. So a scenario never writes an index, and
+    renumbering the page cannot break it.
 
     Every decision state lands in `states`, so a test can assert what the model was shown. The
     `verify_typed` Noul that `actions._type_text` makes is a different question about a different
@@ -438,10 +439,14 @@ class FakeTypeSafe:
     def _answers(self, state: dict, questions: dict, kind: str, target, confidence: float) -> dict:
         answers = {"kind": _answer(kind, confidence), "site": _answer(target if kind == "use_browser" else "none", confidence)}
         if "item" in questions:
-            answers["item"] = _answer(self._item_key(state, target) if kind in ("click_item", "open_item") else "0", confidence)
+            answers["item"] = _answer(
+                self._item_key(state, target) if kind in ("click_item", "open_item", "add_item") else "0", confidence
+            )
         if "offscreen" in questions:
             key = self._offscreen_key(state, target) if kind == "press_offscreen" else "0"
             answers["offscreen"] = _answer(key, confidence)
+        if "key" in questions:
+            answers["key"] = _answer(target if kind == "shortcut" else "x", confidence)
         return answers
 
     @staticmethod

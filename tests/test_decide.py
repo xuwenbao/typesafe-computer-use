@@ -7,6 +7,7 @@ from typesafe_computer_use.decide import (
     base_state,
     decide,
     item_criteria,
+    key_criteria,
     kind_criteria,
     offscreen_criteria,
     row_mates,
@@ -23,6 +24,13 @@ def answer(choice, confidence, probabilities=None):
 def test_decision_click_uses_item_and_min_confidence():
     d = Decision(kind=answer("click_item", 0.9), item=answer("12", 0.6), site=answer("none", 1.0))
     assert d.clicking and d.chosen == "12" and d.confidence == 0.6 and not d.stops
+
+
+def test_an_added_item_uses_the_item_and_a_shortcut_uses_the_key():
+    added = Decision(kind=answer("add_item", 0.8), item=answer("3", 0.5), site=answer("none", 1.0))
+    assert added.adding and added.clicking and added.chosen == "3" and added.confidence == 0.5
+    cut = Decision(kind=answer("shortcut", 0.9), item=None, site=answer("none", 1.0), key=answer("x", 0.4))
+    assert cut.shortcutting and not cut.clicking and cut.chosen == "shortcut" and cut.confidence == 0.4
 
 
 def test_decision_fixed_action_ignores_item():
@@ -53,6 +61,15 @@ def test_decision_ignores_an_offscreen_answer_for_any_other_kind():
 def test_kind_criteria_offers_a_double_click_only_on_the_desktop():
     assert "open_item" not in kind_criteria("Google Chrome", None)
     assert "open_item" in kind_criteria("Google Chrome", None, desktop=True)
+
+
+def test_kind_criteria_offers_selection_and_shortcuts_only_on_the_desktop():
+    browser = kind_criteria("Google Chrome", None)
+    desktop_kinds = kind_criteria("Google Chrome", None, desktop=True)
+    assert "add_item" not in browser and "shortcut" not in browser
+    assert "added to the current selection" in desktop_kinds["add_item"]
+    assert "cut, copy" in desktop_kinds["shortcut"]
+    assert list(key_criteria()) == ["x", "c", "v", "a"]
 
 
 def test_kind_criteria_offers_press_offscreen_only_when_there_are_offscreen_controls():
@@ -115,6 +132,14 @@ def test_item_criteria_and_state_carry_region_and_dates(screen, make_item):
     assert state["previous_actions"] == ["opened https://example.com/"]
     assert state["screen_items_in_reading_order"][1]["when"].startswith("near a line dated")
     assert "today" in state["now"]
+
+
+def test_a_selected_row_says_so_in_its_criterion(screen, make_item):
+    chosen = replace(make_item(0, "Doc01.docx"), selected=True)
+    other = make_item(1, "Doc02.docx")
+    crit = item_criteria(screen, [chosen, other])
+    assert crit["0"].endswith("; selected)")
+    assert "selected" not in crit["1"]
 
 
 def test_a_duplicated_label_names_its_row_and_a_unique_one_does_not(screen, make_item):
@@ -227,3 +252,20 @@ def test_a_thin_vote_stops_even_when_it_leads(tmp_path, screen):
 def test_a_lone_probability_under_the_floor_is_not_treated_as_a_lead(tmp_path, screen):
     decision = Decision(kind=answer("click_item", 0.9), item=answer("0", 0.38), site=answer("none", 1.0))
     assert _stopped(tmp_path, screen, decision) == "low confidence"
+
+
+def test_a_shortcut_key_under_the_floor_needs_a_lead(tmp_path, screen):
+    leading = Decision(
+        kind=answer("shortcut", 0.8),
+        item=None,
+        site=answer("none", 1.0),
+        key=answer("x", 0.35, {"x": 0.35, "c": 0.1}),
+    )
+    assert _stopped(tmp_path, screen, leading) == "dry run"
+    split = Decision(
+        kind=answer("shortcut", 0.8),
+        item=None,
+        site=answer("none", 1.0),
+        key=answer("x", 0.35, {"x": 0.35, "v": 0.3}),
+    )
+    assert _stopped(tmp_path, screen, split) == "low confidence"

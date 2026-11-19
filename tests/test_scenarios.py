@@ -1889,8 +1889,8 @@ ARCHIVE_GOAL = "move Doc01.docx into the Archive folder"
 
 
 def archive_world() -> World:
-    """file_explorer/0c9dda13: the file is selected, and moving it takes Cut, the folder, and Paste,
-    which no classifier action can do: the classifier has no shortcut."""
+    """file_explorer/0c9dda13: the file is selected, then this policy stops.
+    The driver finishes the move with Cut, the folder, and Paste."""
     explorer = "File Explorer"
     return World(
         [
@@ -1906,6 +1906,67 @@ def archive_world() -> World:
 def archive_classifier(state: dict, questions: dict) -> tuple:
     """Selects the file, then finds nothing on screen that moves it."""
     return ("none", None) if state["previous_actions"] else ("click_item", "Doc01.docx")
+
+
+def test_the_classifier_adds_a_file_then_cuts_and_pastes_it(monkeypatch, tmp_path):
+    explorer = "File Explorer"
+    world = World(
+        [
+            Page(
+                name="folder",
+                items=["Doc01.docx", "Doc02.docx", "Archive"],
+                app=explorer,
+                on={"click:Doc01.docx": "one"},
+            ),
+            Page(
+                name="one",
+                items=["Doc01.docx selected", "Doc02.docx", "Archive"],
+                app=explorer,
+                on={"add+click:Doc02.docx": "both"},
+            ),
+            Page(
+                name="both",
+                items=["Doc01.docx selected", "Doc02.docx selected", "Archive"],
+                app=explorer,
+                on={"command+x": "cut"},
+            ),
+            Page(
+                name="cut",
+                items=["Doc01.docx cut", "Doc02.docx cut", "Archive"],
+                app=explorer,
+                on={"double:Archive": "empty"},
+            ),
+            Page(name="empty", items=["Archive", "This folder is empty."], app=explorer, on={"command+v": "moved"}),
+            Page(name="moved", items=["Archive", "Doc01.docx", "Doc02.docx"], app=explorer),
+        ]
+    )
+
+    state = drive(
+        world,
+        scripted(
+            ("click_item", "Doc01.docx"),
+            ("add_item", "Doc02.docx"),
+            ("shortcut", "x"),
+            ("open_item", "Archive"),
+            ("shortcut", "v"),
+        ),
+        goal=ARCHIVE_GOAL,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+    )
+
+    assert state.outcome == "done" and world.page.name == "moved"
+    assert world.log == ["click:Doc01.docx", "add+click:Doc02.docx", "command+x", "double:Archive", "command+v"]
+    assert state.history == [
+        "clicked 'Doc01.docx'",
+        "clicked 'Doc02.docx' with add",
+        "pressed command+x (to the clipboard; the screen need not change)",
+        "opened 'Archive'",
+        "pressed command+v",
+    ]
+    assert "add_item" in world.fake.asked[0]["kind"].criteria
+    assert "shortcut" in world.fake.asked[0]["kind"].criteria
+    assert list(world.fake.asked[0]["key"].criteria) == ["x", "c", "v", "a"]
 
 
 def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of_the_run(monkeypatch, tmp_path):

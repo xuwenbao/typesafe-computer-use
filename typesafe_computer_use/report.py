@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
 
-from .decide import SCREEN_IMAGE, base_state, item_criteria, kind_criteria, offscreen_criteria, site_criteria
+from .decide import SCREEN_IMAGE, base_state, item_criteria, key_criteria, kind_criteria, offscreen_criteria, site_criteria
 from .models import Guidance, Item, Screen
 from .parse.marks import Marked, color_of
 
@@ -99,6 +99,14 @@ def render_payload(
         json.dumps(site_criteria(), indent=2),
         "",
     ]
+    if screen.url is None and screen.app != browser:
+        parts += [
+            RULE,
+            "QUESTION key  (Choice criteria)",
+            RULE,
+            json.dumps(key_criteria(), indent=2),
+            "",
+        ]
     if screen.offscreen:
         parts += [
             RULE,

@@ -227,6 +227,10 @@ class WAADesktop:
     def frontmost_window_bounds(self, pid: int | None = None) -> tuple[float, float, float, float] | None:
         return self._view().window
 
+    def owned_popup_bounds(self, pid: int | None = None) -> tuple[tuple[float, float, float, float], ...]:
+        """The VM observation is one window. A menu in it is already part of that tree."""
+        return ()
+
     def screenshot(self) -> Image.Image:
         self._step()
         return self._open()
@@ -290,6 +294,10 @@ class WAADesktop:
     def ax_value(self, ref) -> str | None:
         return None
 
+    def clipboard_files(self) -> tuple[str, ...] | None:
+        """The benchmark desktop does not read the file clipboard."""
+        return None
+
     def ax_operate(self, ref, operation: str, value: str | None = None) -> bool:
         """Queue one UIA operation, after this observation's tree has arrived.
 
@@ -333,6 +341,7 @@ class WAADesktop:
 _PATTERN_INTERFACE = {
     "toggle": "IUIAutomationTogglePattern",
     "select": "IUIAutomationSelectionItemPattern",
+    "add_select": "IUIAutomationSelectionItemPattern",
     "expand_toggle": "IUIAutomationExpandCollapsePattern",
     "scroll_into_view": "IUIAutomationScrollItemPattern",
     "set_range": "IUIAutomationRangeValuePattern",
@@ -358,7 +367,12 @@ def _operate_element(name: str, control_type: int | None, operation: str, value:
     elif operation == "expand_toggle":
         call = "_p.Expand() if _p.CurrentExpandCollapseState == 0 else _p.Collapse()"
     else:
-        call = {"toggle": "_p.Toggle()", "select": "_p.Select()", "scroll_into_view": "_p.ScrollIntoView()"}[operation]
+        call = {
+            "toggle": "_p.Toggle()",
+            "select": "_p.Select()",
+            "add_select": "_p.AddToSelection()",
+            "scroll_into_view": "_p.ScrollIntoView()",
+        }[operation]
     named = f"_auto.CreatePropertyCondition(30005, {name!r})"
     if control_type is None:
         condition = named

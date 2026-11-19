@@ -40,6 +40,7 @@ def _quiet_desktop(monkeypatch, screenshot, field=lambda: None, url=lambda brows
     monkeypatch.setattr(desktop, "display_scale", lambda image: 1.0)
     monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: ("notepad.exe", 3))
     monkeypatch.setattr(desktop, "frontmost_window_bounds", lambda pid: (0.0, 0.0, 8.0, 8.0))
+    monkeypatch.setattr(desktop, "owned_popup_bounds", lambda pid: ())
     monkeypatch.setattr(desktop, "focused_field", field)
     monkeypatch.setattr(desktop, "browser_url", url)
 

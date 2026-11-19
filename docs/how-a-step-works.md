@@ -71,7 +71,9 @@ of text, the detector by the region it looks at, and the captioner by the number
 without text, so the savings are reading less of the screen and reading it less often.
 
 - **Crop.** Each step reads the frontmost window with an 8 pt margin, plus the menu bar
-  strip over the same columns, clamped to the display. Text on the desktop and in
+  strip over the same columns, clamped to the display. A popup owned by that window, and the
+  window of the focused control when it is not the front window, is joined into the same crop,
+  so a menu that opens beside the window stays in the picture. Text on the desktop and in
   background windows is noise to the decision. Clipping the strip to the window's width is
   what makes the crop pay on a full-height window. The cost: the clock and the menu extras
   to the right of the window go unread. They stay clickable through the accessibility tree.
@@ -307,8 +309,9 @@ It picks from a whitelist, and code checks every move before anything reaches th
 
 Each action is checked, then checked again against the live element when it came from the
 accessibility tree: still present, still visible, and not explicitly disabled. macOS does not
-report enabled, so that part is skipped. A refusal, a failed check, an action that leaves the
-screen unchanged, or `done` / `give_up` drops the rest of the batch. The unchanged test is the
+report enabled, so that part is skipped. A refusal, a failed check, a double-click, an action that
+leaves the screen unchanged, or `done` / `give_up` drops the rest of the batch. A double-click opens
+another screen, so paste, select all, and any other key wait until that screen is seen. The unchanged test is the
 existing tile comparison and does not run OCR or the icon models. `wait`, `type`, `set_value`,
 copy, and cut are not compared. An item with no element handle is allowed only as the first
 action of a batch.

@@ -15,15 +15,15 @@ import pytest
 from PIL import Image
 
 from typesafe_computer_use import cli, macos, windows, windows_session
-from typesafe_computer_use.actions import click_item, press_offscreen
+from typesafe_computer_use.actions import Context, add_item, click_item, press_offscreen
 from typesafe_computer_use.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
 from typesafe_computer_use.config import settings
-from typesafe_computer_use.decide import kind_criteria
+from typesafe_computer_use.decide import Decision, kind_criteria
 from typesafe_computer_use.driver import act, load_driver_record, take_over
-from typesafe_computer_use.models import Abort, AxNode, ElementState, Item
+from typesafe_computer_use.models import Abort, AxNode, ElementState, Item, signature
 from typesafe_computer_use.perception import to_ax_items
 from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.runner import RunConfig, RunState
+from typesafe_computer_use.runner import UNCHANGED, RunConfig, RunState, resolve, screen_moved
 from typesafe_computer_use.uia_patterns import PATTERN_IDS
 from typesafe_computer_use.waa import tree
 from typesafe_computer_use.waa.desktop import WAADesktop, _operate_element
@@ -146,6 +146,75 @@ def test_click_order_uses_toggle_then_a_default_action_then_the_pointer(screen, 
     names = [call if isinstance(call, str) else call[0] for call in calls]
     assert names == ["press", "toggle", "select", "expand_toggle", "click"]
     assert "scroll_into_view" not in calls
+
+
+def test_a_selectable_file_is_selected_instead_of_opened(screen, monkeypatch):
+    calls = []
+    item = Item(
+        0, "Doc01.docx", 1.0, 0, 0, 20, 20, role="cell", source="ax", controls=("invoke", "selection_item")
+    )
+    live = replace(screen, ax_refs={0: {"role": "AXCell", "name": "Doc01.docx"}})
+
+    def ax_press(ref):
+        pytest.fail("invoke would open the file")
+
+    def ax_operate(ref, operation, value=None):
+        calls.append(operation)
+        return operation == "select"
+
+    monkeypatch.setattr(desktop, "ax_press", ax_press)
+    monkeypatch.setattr(desktop, "ax_operate", ax_operate)
+    monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append("click"))
+    assert click_item(item, live) == "selected 'Doc01.docx' via accessibility"
+    assert calls == ["toggle", "select"]
+
+
+def test_adding_a_file_uses_add_to_selection_and_not_invoke(screen, monkeypatch):
+    calls = []
+    item = Item(
+        0, "Doc02.docx", 1.0, 0, 0, 20, 20, role="cell", source="ax", controls=("invoke", "selection_item")
+    )
+    live = replace(screen, ax_refs={0: {"role": "AXCell", "name": "Doc02.docx"}})
+
+    def ax_press(ref):
+        pytest.fail("invoke would open the file")
+
+    def ax_operate(ref, operation, value=None):
+        calls.append(operation)
+        return operation == "add_select"
+
+    monkeypatch.setattr(desktop, "ax_press", ax_press)
+    monkeypatch.setattr(desktop, "ax_operate", ax_operate)
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: calls.append(("focus", ref)) or True)
+    monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append(("click", kwargs.get("modifier"))))
+    assert add_item(item, live) == "clicked 'Doc02.docx' with add"
+    assert calls == ["add_select", ("focus", live.ax_refs[0])]
+
+    calls.clear()
+    monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or False)
+    assert add_item(item, live) == "clicked 'Doc02.docx' with add"
+    assert calls == ["add_select", ("click", "add")]
+    assert "AddToSelection" in _operate_element("Doc02.docx", None, "add_select", None)
+
+
+def test_a_cut_does_not_count_as_an_unchanged_screen(screen, monkeypatch, tmp_path):
+    pressed = []
+    monkeypatch.setattr(desktop, "press", lambda key, command=False: pressed.append((key, command)))
+    decision = Decision(
+        kind=SimpleNamespace(choice="shortcut", confidence=0.9, probabilities={"shortcut": 0.9}),
+        item=None,
+        site=SimpleNamespace(choice="none", confidence=1.0, probabilities={"none": 1.0}),
+        key=SimpleNamespace(choice="x", confidence=0.8, probabilities={"x": 0.8}),
+    )
+    state = RunState()
+    ctx = Context(goal="cut the files", browser="Google Chrome", email=None, typesafe=None, writer=None, history=[])
+    assert resolve(RunConfig(goal="cut the files", out=tmp_path, act=True), ctx, state, screen, [], decision, {}, lambda _m: None)
+    assert pressed == [("x", True)]
+    assert state.history == ["pressed command+x (to the clipboard; the screen need not change)"]
+    assert state.quiet and not state.markable
+    state.last = signature(screen, [])
+    assert screen_moved(state, screen, [], lambda _m: None)
+    assert state.idle == 0 and UNCHANGED not in state.history[0]
 
 
 def test_a_radio_button_is_clicked_because_select_does_not_change_it(screen, monkeypatch):
@@ -285,12 +354,13 @@ def test_the_model_sees_controls_and_the_classifier_does_not_gain_set_value(scre
     assert "set_value" not in kind_criteria("Google Chrome", None)
 
 
-def _run_batch(monkeypatch, tmp_path, screen, items, moves, element, shots):
+def _run_batch(monkeypatch, tmp_path, screen, items, moves, element, shots, presses=None):
     monkeypatch.setattr(desktop, "check_abort", lambda: None)
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
     monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: False)
-    monkeypatch.setattr(desktop, "press", lambda key, command=False: None)
+    recorded = [] if presses is None else presses
+    monkeypatch.setattr(desktop, "press", lambda key, command=False: recorded.append((key, command)))
     clicks = []
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: clicks.append(args))
     monkeypatch.setattr(desktop, "element_state", element)
@@ -386,6 +456,28 @@ def test_an_unchanged_screen_drops_the_rest_and_a_wait_does_not(monkeypatch, tmp
     )
     assert len(clicks) == 1
     assert any("waited" in line for line in state.history)
+
+
+def test_a_double_click_stops_the_batch_before_a_paste(monkeypatch, tmp_path, screen):
+    archive = Item(0, "Archive", 1.0, 0, 0, 20, 20, source="ax")
+    live = replace(screen, ax_refs={0: "archive"})
+    presses = []
+    state, clicks = _run_batch(
+        monkeypatch,
+        tmp_path,
+        live,
+        [archive],
+        [step("double_click", item="0"), step("shortcut", key="v")],
+        lambda ref: ElementState(True, True, True),
+        [],
+        presses,
+    )
+    assert len(clicks) == 1
+    assert presses == []
+    assert state.driver_actions == 1
+    assert any("double-clicked 'Archive'" in line for line in state.history)
+    assert any("stopped the rest of the batch: a double-click opens another screen" in line for line in state.history)
+    assert not any("command+v" in line for line in state.history)
 
 
 def test_done_ends_the_batch_without_spending_the_budget(monkeypatch, tmp_path, screen):

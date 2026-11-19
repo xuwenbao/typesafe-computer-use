@@ -28,10 +28,11 @@ PATTERN_IDS = {
 ID_TO_NAME = {pattern_id: name for name, pattern_id in PATTERN_IDS.items()}
 
 # What `Desktop.ax_operate` accepts. expand_toggle reads the state and expands or collapses.
-OPERATIONS = ("toggle", "select", "expand_toggle", "scroll_into_view", "set_range")
+OPERATIONS = ("toggle", "select", "add_select", "expand_toggle", "scroll_into_view", "set_range")
 OPERATION_PATTERN = {
     "toggle": TOGGLE,
     "select": SELECTION_ITEM,
+    "add_select": SELECTION_ITEM,
     "expand_toggle": EXPAND_COLLAPSE,
     "scroll_into_view": SCROLL_ITEM,
     "set_range": RANGE_VALUE,

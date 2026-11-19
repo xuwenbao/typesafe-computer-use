@@ -83,6 +83,15 @@ def kind_criteria(
             "Open one of the on-screen items (chosen in the item question) by double-clicking it: a file, "
             "a folder, or a list entry that a single click only selects."
         )
+        clicks["add_item"] = (
+            "Click one on-screen item while holding the selection modifier (Control, or Command on a Mac), "
+            "so it is added to the current selection. A plain click replaces the selection. The item is "
+            "chosen in the item question."
+        )
+        clicks["shortcut"] = (
+            "Press Control (Command on a Mac) together with the key chosen in the key question: cut, copy, "
+            "paste, or select all. Use it once a file or a list entry is selected."
+        )
     if offscreen:
         clicks["press_offscreen"] = PRESS_OFFSCREEN
     return {**clicks, **fixed_actions(browser, email, typing)}
@@ -122,6 +131,7 @@ def item_criteria(screen: Screen, items: list[Item]) -> dict[str, str]:
             f"({screen.region(it)}"
             f"{'; ' + hints[it.index] if it.index in hints else ''}"
             f"{'; in the row of ' + ', '.join(repr(t) for t in mates[it.index]) if it.index in mates else ''}"
+            f"{'; selected' if it.selected else ''}"
             f"{'; under ' + screen.covered[it.index].title if it.index in screen.covered else ''})"
         )
         for it in items
@@ -136,6 +146,20 @@ def offscreen_criteria(nodes: list[AxNode]) -> dict[str, str]:
 def offscreen_records(nodes: list[AxNode]) -> list[dict]:
     """The same controls as state, with the key the offscreen question answers with."""
     return [{"k": i, "role": node.role_word, "label": node.label} for i, node in enumerate(nodes)]
+
+
+# The file-list chords. Quit, close, hide, and minimize are not here; the driver keeps its own wider list.
+SHORTCUT_KEYS = {
+    "x": "Cut the selection.",
+    "c": "Copy the selection.",
+    "v": "Paste.",
+    "a": "Select all.",
+}
+
+
+def key_criteria() -> dict[str, str]:
+    """Which key a desktop shortcut presses with Control, or with Command on a Mac."""
+    return dict(SHORTCUT_KEYS)
 
 
 def site_criteria() -> dict[str, str]:
@@ -191,19 +215,28 @@ class Decision:
     item: ChoiceAnswer | None
     site: ChoiceAnswer
     offscreen: ChoiceAnswer | None = None
+    key: ChoiceAnswer | None = None
     image_refused: str | None = None  # why System One refused the picture, when the step was asked again without it
 
     @property
     def clicking(self) -> bool:
-        return self.kind.choice in ("click_item", "open_item") and self.item is not None
+        return self.kind.choice in ("click_item", "open_item", "add_item") and self.item is not None
 
     @property
     def opening(self) -> bool:
         return self.kind.choice == "open_item" and self.item is not None
 
     @property
+    def adding(self) -> bool:
+        return self.kind.choice == "add_item" and self.item is not None
+
+    @property
     def pressing_offscreen(self) -> bool:
         return self.kind.choice == "press_offscreen" and self.offscreen is not None
+
+    @property
+    def shortcutting(self) -> bool:
+        return self.kind.choice == "shortcut" and self.key is not None
 
     @property
     def chosen(self) -> str:
@@ -223,6 +256,8 @@ class Decision:
             return min(self.kind.confidence, self.item.confidence)
         if self.pressing_offscreen:
             return min(self.kind.confidence, self.offscreen.confidence)
+        if self.shortcutting:
+            return min(self.kind.confidence, self.key.confidence)
         return self.kind.confidence
 
     @property
@@ -245,6 +280,7 @@ def decide(
     """One step's decision. With a `picture`, the state refers to it as `screen_image` and the
     request carries it as an asset; when System One refuses the picture, the step is asked once
     more without it, and the decision says why (see `refuses_the_picture`)."""
+    on_desktop = screen.url is None and screen.app != browser
     questions = {
         "kind": Choice(
             instructions=(
@@ -259,7 +295,7 @@ def decide(
                 email,
                 bool(screen.offscreen),
                 bool(screen.field and screen.field.is_text),
-                desktop=screen.url is None and screen.app != browser,
+                desktop=on_desktop,
             ),
         ),
         "site": Choice(
@@ -281,6 +317,11 @@ def decide(
                 "the capture points at them."
             ),
             criteria=offscreen_criteria(screen.offscreen),
+        )
+    if on_desktop:
+        questions["key"] = Choice(
+            instructions="If this step presses a command shortcut, which key?",
+            criteria=key_criteria(),
         )
     state = base_state(goal, screen, items, history, tried, guidance)
     refused = None
@@ -308,6 +349,7 @@ def decide(
         item=answers.get("item"),
         site=answers["site"],
         offscreen=answers.get("offscreen"),
+        key=answers.get("key"),
         image_refused=refused,
     )
 
@@ -319,7 +361,8 @@ def item_question(screen: Screen, items: list[Item], pictured: bool) -> Choice:
             + "If clicking an on-screen item is the right move, which item? Items marked with a "
             "role come from the app's accessibility tree and are real controls; items marked "
             "'icon' are icons without text, named by a short English description of how they "
-            "look; plain items are text read from the screen. Never pick an item that an action "
+            "look; plain items are text read from the screen. A criterion that says selected is in "
+            "the app's selection; a plain click replaces that selection. Never pick an item that an action "
             "listed as already tried on this screen clicked or pressed: each of those led "
             "straight back here."
         ),
