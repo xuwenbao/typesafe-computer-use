@@ -33,11 +33,19 @@ PACKAGE = Path(__file__).resolve().parent.parent
 
 
 def script() -> str:
-    """The program the VM runs: the role table, the walk, and a call to `main`."""
+    """The program the VM runs: the role table, the walk, and a call to `main`.
+
+    Only the first file may carry `from __future__ import annotations`. A later copy is a
+    syntax error, because that import has to be the first statement of the whole script.
+    """
     roles = (PACKAGE / "uia_roles.py").read_text(encoding="utf-8")
-    patterns = (PACKAGE / "uia_patterns.py").read_text(encoding="utf-8")
-    walk = (PACKAGE / "waa" / "walk_vm.py").read_text(encoding="utf-8")
+    patterns = _without_future((PACKAGE / "uia_patterns.py").read_text(encoding="utf-8"))
+    walk = _without_future((PACKAGE / "waa" / "walk_vm.py").read_text(encoding="utf-8"))
     return f"{roles}\n{patterns}\n{walk}\nmain()\n"
+
+
+def _without_future(source: str) -> str:
+    return source.replace("from __future__ import annotations\n", "", 1)
 
 
 def app_name(exe: str) -> str:

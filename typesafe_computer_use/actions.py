@@ -84,7 +84,12 @@ def click_item(item: Item, screen: Screen) -> str:
     if ref is not None and desktop.ax_press(ref):
         return f"pressed {item.text!r} via accessibility"
     if ref is not None:
+        # A radio button's Select() is reported as success by Qt and then changes nothing.
+        # The circle only moves when the pointer clicks it, so that pattern is not used here.
+        role = ref.get("role") if isinstance(ref, dict) else None
         for operation, verb in _PATTERN_CLICKS:
+            if operation == "select" and role == "AXRadioButton":
+                continue
             if desktop.ax_operate(ref, operation):
                 return f"{verb} {item.text!r} via accessibility"
     popup = screen.covered.get(item.index)

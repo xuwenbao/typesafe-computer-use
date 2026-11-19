@@ -35,7 +35,7 @@ from .config import settings
 from .models import Abort, AxNode, ElementState, Field, Missed
 from .uia_patterns import OPERATION_PATTERN, PATTERN_IDS
 from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
-from .uia_roles import pressable, role_for
+from .uia_roles import focused_role, pressable, role_for
 
 with suppress(AttributeError, OSError):  # pre-8.1 Windows without shcore, or awareness set by the host process
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
@@ -128,6 +128,16 @@ def display_name(process_name: str) -> str:
 
 def key_events(key: str, command: bool = False) -> list[tuple[int, int]]:
     """(virtual key, flags) for pressing a key, with its modifiers held around it."""
+    # `run` is the Run dialog: the Windows key held around R. It is not a key of its own.
+    if key == "run" and not command:
+        win = 0x5B  # VK_LWIN
+        letter = VK["r"]
+        return [
+            (win, KEYEVENTF_EXTENDEDKEY),
+            (letter, 0),
+            (letter, KEYEVENTF_KEYUP),
+            (win, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
+        ]
     keys = COMMAND_CHORDS.get(key, (VK_CONTROL, VK[key])) if command else (VK[key],)
     down = [(vk, KEYEVENTF_EXTENDEDKEY if vk in EXTENDED_KEYS else 0) for vk in keys]
     up = [(vk, flags | KEYEVENTF_KEYUP) for vk, flags in reversed(down)]
@@ -149,6 +159,21 @@ def wheel_delta(lines: int) -> int:
 
 def landed(target: tuple[int, int], actual: tuple[float, float]) -> bool:
     return abs(actual[0] - target[0]) <= CLICK_TOLERANCE_PX and abs(actual[1] - target[1]) <= CLICK_TOLERANCE_PX
+
+
+def placed_origin(rect: tuple[float, float, float, float], work: tuple[float, float, float, float]) -> tuple[float, float] | None:
+    """Where to move `rect` so it sits inside `work`, or None when it already does.
+
+    Both are x, y, w, h. The size stays. A window larger than the work area keeps the work
+    area's origin, so it still starts on the visible desktop instead of off to one side.
+    """
+    x, y, w, h = rect
+    left, top, width, height = work
+    nx = left if w > width else min(max(x, left), left + width - w)
+    ny = top if h > height else min(max(y, top), top + height - h)
+    if nx == x and ny == y:
+        return None
+    return nx, ny
 
 
 # ------------------------------------------------------------------ SendInput
@@ -383,20 +408,81 @@ def _find_window(app: str) -> int | None:
     return found[0] if found else None
 
 
+def list_windows() -> list[tuple[str, str, str]]:
+    """Visible titled top-level windows as (id, title, process), frontmost first."""
+    found: list[tuple[str, str, str]] = []
+
+    def visit(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+        title = (win32gui.GetWindowText(hwnd) or "").strip()
+        process = _process_name(_window_pid(hwnd))
+        if title and process:
+            found.append((str(len(found) + 1), title, process))
+
+    win32gui.EnumWindows(visit, None)
+    return found
+
+
+def launch_app(name: str) -> None:
+    """Start `name` with ShellExecute. No arguments and no shell, so the name cannot carry a command."""
+    check_abort()
+    started = int(win32api.ShellExecute(0, "open", name, None, None, win32con.SW_SHOWNORMAL))
+    if started <= 32:
+        raise OSError(f"could not start {name}")
+
+
 def activate(app: str, timeout: float = 3.0) -> bool:
-    """Bring an app to the front and confirm it got there."""
+    """Bring an app's visible window to the front and confirm that window is the foreground one.
+
+    A process name on the foreground window is not enough: the window may be restored off the
+    desktop this session can show. A task-scheduler process is often refused `SetForegroundWindow`,
+    so a momentary Alt is sent once to let this session accept the change.
+    """
     hwnd = _find_window(app)
     if hwnd is None:
         return False
     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-    with suppress(Exception):  # Windows may refuse focus theft; the check below reports it
-        win32gui.SetForegroundWindow(hwnd)
+    _move_into_work_area(hwnd)
+    _claim_foreground(hwnd)
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if win32gui.GetForegroundWindow() == hwnd:
             return True
         time.sleep(0.1)
     return win32gui.GetForegroundWindow() == hwnd
+
+
+def _work_area() -> tuple[float, float, float, float]:
+    """The desktop's work area as x, y, w, h. The full screen stands in when Windows will not say."""
+    rect = ctypes.wintypes.RECT()
+    if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+        return float(rect.left), float(rect.top), float(rect.right - rect.left), float(rect.bottom - rect.top)
+    return 0.0, 0.0, float(win32api.GetSystemMetrics(0)), float(win32api.GetSystemMetrics(1))
+
+
+def _move_into_work_area(hwnd: int) -> None:
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    except pywintypes.error:
+        return
+    origin = placed_origin((float(left), float(top), float(right - left), float(bottom - top)), _work_area())
+    if origin is None:
+        return
+    win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, int(origin[0]), int(origin[1]), 0, 0, win32con.SWP_NOSIZE)
+
+
+def _claim_foreground(hwnd: int) -> None:
+    with suppress(Exception):
+        win32gui.SetForegroundWindow(hwnd)
+    if win32gui.GetForegroundWindow() == hwnd:
+        return
+    with suppress(Exception):
+        _send(_key(VK_ALT))
+    with suppress(Exception):
+        win32gui.SetForegroundWindow(hwnd)
+    with suppress(Exception):
+        _send(_key(VK_ALT, flags=KEYEVENTF_KEYUP))
 
 
 def open_url(browser: str, url: str) -> bool:
@@ -472,6 +558,61 @@ def display_scale(image: Image.Image) -> float:
     return 1.0
 
 
+def read_capture(browser: str, shot_wait: float, detail_wait: float, timing: dict | None = None):
+    """Screenshot, focused control, and address bar from a process this one can kill.
+
+    The screenshot is kept when the later read does not return. No screenshot raises CaptureTimeout.
+    The call stays off this thread, so a stuck UI Automation call cannot be delivered back here.
+    """
+    import sys
+    import tempfile
+    import threading
+
+    from .bound import CaptureLines, SilentEvent, assemble_capture, await_capture
+
+    folder = tempfile.mkdtemp(prefix="jev-capture-")
+    png = os.path.join(folder, "shot.png")
+    shot, done = SilentEvent(), SilentEvent()
+    lines = CaptureLines(shot, done)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "typesafe_computer_use.capture_proc", png, browser],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+    def pump() -> None:
+        if proc.stdout is None:
+            return
+        for line in proc.stdout:
+            lines.feed(line)
+
+    threading.Thread(target=pump, name="jev-capture", daemon=True).start()
+    try:
+        got_shot, got_detail = await_capture(shot, done, shot_wait, detail_wait, lambda: _stop_process(proc))
+        image = None
+        if got_shot and os.path.exists(png):
+            with Image.open(png) as opened:
+                image = opened.convert("RGB")
+        found, field_data, url = assemble_capture(got_shot, lines.detail if got_detail else None, image, timing)
+        field = None if field_data is None else Field(**field_data)
+        return found, field, url
+    finally:
+        _stop_process(proc)
+        shot.close()
+        done.close()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _stop_process(proc) -> None:
+    with suppress(OSError):
+        proc.kill()
+    with suppress(Exception):
+        proc.wait(timeout=2)
+
+
 def _pattern(element, pattern_id):
     """A UI Automation pattern, or None when the element does not support it or has died."""
     try:
@@ -504,6 +645,17 @@ def _ui_default_action(element) -> str:
         return ""
 
 
+def _legacy_state(element) -> int | None:
+    """The LegacyIAccessible state, or None when the control does not say."""
+    legacy = _pattern(element, auto.PatternId.LegacyIAccessiblePattern)
+    if legacy is None:
+        return None
+    try:
+        return int(legacy.State)
+    except Exception:
+        return None
+
+
 def focused_field() -> Field | None:
     try:
         element = auto.GetFocusedControl()
@@ -514,7 +666,7 @@ def focused_field() -> Field | None:
     frame = _ui_frame(element)
     x, y, w, h = frame if frame is not None else (0.0, 0.0, 0.0, 0.0)
     return Field(
-        role=role_for(getattr(element, "ControlTypeName", "")),
+        role=focused_role(getattr(element, "ControlTypeName", ""), _legacy_state(element)),
         label=(getattr(element, "Name", "") or "").strip(),
         placeholder=_ui_placeholder(element),
         value=_ui_value(element) or "",

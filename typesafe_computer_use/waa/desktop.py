@@ -39,6 +39,10 @@ DESKTOP_TITLES = {"program manager", "desktop"}
 class WAADesktop:
     """One WAA run's computer: the observation in hand, and the actions not yet handed over."""
 
+    # screenshot() hands the previous action to the VM and waits for the next picture. That wait
+    # is the benchmark step, so the capture bound must not abandon it.
+    screenshot_waits = True
+
     def __init__(
         self, obs: dict, next_obs: NextObs, *, start_tree: StartTree | None = None, save_tree: Path | None = None
     ) -> None:
@@ -153,6 +157,9 @@ class WAADesktop:
         else:
             # `delete` stays Backspace: that is the key the Mac adapter's Delete presses, and the
             # classifier's delete was aimed at it. The key named `backspace` is the same key here.
+            if key == "run":
+                self._do("pyautogui.hotkey('win', 'r')")  # the Run dialog; Start search is not a launch path here
+                return
             pressed = {"return": "enter", "escape": "esc", "delete": "backspace", "start": "win"}.get(key, key)
             self._do(f"pyautogui.press({pressed!r})")
 
@@ -178,13 +185,30 @@ class WAADesktop:
         view = self._view()
         return view.app, view.pid
 
+    def list_windows(self) -> list[tuple[str, str, str]]:
+        """The one window this observation shows, when it has a title."""
+        view = self._view()
+        title = view.title.strip()
+        if not title or not view.app:
+            return []
+        return [("1", title, view.app)]
+
+    def launch_app(self, name: str) -> None:
+        """Start `name` in the VM. `start` also focuses it when it is already running."""
+        self._do(_launch(name, None))
+
     def activate(self, app: str, timeout: float = 3.0) -> bool:
-        """Bring a browser forward, starting it when it is not running. No other app."""
+        """Bring a browser forward, starting it when it is not running.
+
+        Any other app is already forward when its process is the window in front. Launching
+        that app is `launch_app`. Reporting failure while the window is the one on screen
+        makes the host tell the model the program never appeared.
+        """
         exe = BROWSERS.get(app)
-        if exe is None:
-            return False
-        self._do(_launch(exe, None))
-        return True
+        if exe is not None:
+            self._do(_launch(exe, None))
+            return True
+        return _same_process(app, self._current().app)
 
     def open_url(self, browser: str, url: str) -> bool:
         """Open `url` in the browser, starting it when it is not running."""
@@ -447,6 +471,15 @@ def _open_list_item(name: str) -> str:
     )
 
 
+def _same_process(wanted: str, process: str) -> bool:
+    """`mspaint` and `C:\\Windows\\System32\\mspaint.exe` are the same program."""
+
+    def stem(value: str) -> str:
+        return value.replace("\\", "/").rsplit("/", 1)[-1].strip().lower().removesuffix(".exe")
+
+    return bool(stem(wanted)) and stem(wanted) == stem(process)
+
+
 def _launch(exe: str, url: str | None) -> str:
     """VM code that runs `start <exe> [url]`. `start` focuses a running program or launches it.
 
@@ -454,7 +487,10 @@ def _launch(exe: str, url: str | None) -> str:
     The URL is one argument, through `repr()` of the whole list, never part of a shell string.
     """
     command = ["cmd", "/c", "start", "", exe] if url is None else ["cmd", "/c", "start", "", exe, url]
+    # The VM runs this as a script that already has pyautogui, and does not import subprocess.
+    # A test can still hand in its own subprocess through the globals.
     return (
-        "subprocess.Popen("
-        f"{command!r}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)"
+        "_sp = globals().get('subprocess') or __import__('subprocess')\n"
+        "_sp.Popen("
+        f"{command!r}, stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, start_new_session=True)"
     )

@@ -32,6 +32,7 @@ RDP_CLIENT_IIDS = (
 RDP_EXTENDED_IID = "{302D8188-0052-4807-806A-362B628F9AC5}"  # IMsRdpExtendedSettings
 AX_WINDOW_CLASSES = ("AtlAxWin140", "AtlAxWin110", "AtlAxWin100", "AtlAxWin")
 WINDOW_TITLE = "jev child session"
+MASK_TEXT = "智能体执行中"
 FRAME_X, FRAME_Y = 80, 80
 # Client area of the frame, and the child session's own pixels. The title bar and borders sit
 # outside this rectangle. A desktop larger than the client makes the control present its own view.
@@ -204,6 +205,7 @@ def run_controller(argv: list[str]) -> None:
 
         wait_for_child_explorer(pump, deadline, client)
         pid = launch_in_session(PIPE_NAME)
+        _show_execution_mask(hwnd)
         errors: list[BaseException] = []
 
         def relay_target() -> None:
@@ -224,6 +226,7 @@ def run_controller(argv: list[str]) -> None:
     except Exception as e:
         sys.exit(f"the child session did not start: {e}")
     finally:
+        _hide_execution_mask()
         _delete_launch_task()
         _close_window(hwnd, client)
 
@@ -260,7 +263,17 @@ def child_startup() -> tuple[str, Callable[[str], str], Callable[[str, str], Non
     def finish(outcome: str, folder: str) -> None:
         _write_line(client, encode("done", text=outcome, folder=folder))
 
+    def report(line: str) -> None:
+        _write_line(client, encode("log", text=line))
+
+    _bind_action_report(report)
     return str(first.get("goal") or ""), ask, finish
+
+
+def end_child(finish: Callable[[str, str], None], outcome: str, folder: str) -> None:
+    """Report the outcome, then leave. Closing HTTPS clients on the way out can wait forever."""
+    finish(outcome, folder)
+    os._exit(130 if outcome.startswith("aborted") else 0)
 
 
 def collect_facts() -> SessionFacts:
@@ -380,10 +393,7 @@ def open_child_window():
     _size_control_to_window(hwnd, client)
     user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
     user32.ShowWindow.restype = wintypes.BOOL
-    user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
-    user32.SetForegroundWindow.restype = wintypes.BOOL
-    user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL: the frame stays a small overlapped window
-    user32.SetForegroundWindow(hwnd)
+    user32.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE: visible, without taking the foreground
     return hwnd, client
 
 
@@ -402,6 +412,10 @@ def _create_frame():
             return 0
         if msg == win32con.WM_SIZE:
             _fit_hosted_control(hwnd)
+            _sync_execution_mask(hwnd)
+            return 0
+        if msg == 0x0003:  # WM_MOVE
+            _sync_execution_mask(hwnd)
             return 0
         if msg == win32con.WM_CLOSE:
             win32gui.DestroyWindow(hwnd)
@@ -424,7 +438,7 @@ def _create_frame():
         atom = _FRAME_CLASS
     x, y, width, height = frame_outer()
     _frame_hwnd = win32gui.CreateWindowEx(
-        win32con.WS_EX_TOPMOST,
+        0,
         atom,
         WINDOW_TITLE,
         win32con.WS_OVERLAPPEDWINDOW | win32con.WS_CLIPCHILDREN | win32con.WS_VISIBLE,
@@ -465,13 +479,17 @@ def _clamp_window_pos(lparam) -> None:
 
 
 def _reveal_hosted_windows(hwnd, client) -> None:
-    """Show the control's view, keep the frame small, and keep the remote view inside it."""
+    """Show the control's hidden view and keep that view inside the frame.
+
+    The frame itself is left where the user puts it, including behind other windows.
+    """
     import win32gui
 
     applied = False
     while win32gui.IsWindow(hwnd):
-        _show_descendants(hwnd)
+        _show_hidden_children(hwnd)
         _clamp_view_to_client(hwnd)
+        _sync_execution_mask(hwnd)
         with contextlib.suppress(Exception):
             if client.FullScreen:
                 client.FullScreen = False
@@ -480,20 +498,220 @@ def _reveal_hosted_windows(hwnd, client) -> None:
                 if int(client.Connected) == 1:
                     _set_desktop_resolution(client, live=True)
                     applied = True
-        x, y, width, height = frame_outer()
-        win32gui.SetWindowPos(hwnd, -1, x, y, width, height, 0x0040)
         time.sleep(0.2)
 
 
-def _show_descendants(hwnd) -> None:
+def _show_hidden_children(hwnd) -> None:
+    """Show a hidden remote view without showing or activating the frame."""
     import win32con
     import win32gui
 
-    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
     child = win32gui.GetWindow(hwnd, win32con.GW_CHILD)
     while child:
-        _show_descendants(child)
+        if not win32gui.IsWindowVisible(child):
+            win32gui.ShowWindow(child, 8)  # SW_SHOWNA
+        _show_hidden_children(child)
         child = win32gui.GetWindow(child, win32con.GW_HWNDNEXT)
+
+
+_MASK_CLASS = "JevSessionMask"
+_mask_hwnd = None
+_mask_wndproc = None
+_mask_on = False
+_mask_place = None
+_mask_action = ""
+_action_report: Callable[[str], None] | None = None
+
+
+def mask_line(line: str) -> str:
+    """The sentence under the title. The driver's prefix only marks who took the action."""
+    return line.removeprefix("driver: ").strip()
+
+
+def report_action(line: str) -> None:
+    """Tell the picture window what jev just did. Outside a child session this does nothing."""
+    if _action_report is None:
+        return
+    with contextlib.suppress(Exception):
+        _action_report(line)
+
+
+def _bind_action_report(report: Callable[[str], None] | None) -> None:
+    global _action_report
+    _action_report = report
+
+
+def _show_execution_mask(frame) -> None:
+    """Cover the picture while jev works. The window can still sit behind other windows."""
+    global _mask_on
+
+    _mask_on = True
+    _ensure_execution_mask(frame)
+    _sync_execution_mask(frame)
+
+
+def _hide_execution_mask() -> None:
+    """Take the mask down. Closing the frame destroys it either way."""
+    global _mask_on, _mask_action
+
+    _mask_on = False
+    _mask_action = ""
+    if not _mask_hwnd:
+        return
+    with contextlib.suppress(Exception):
+        import win32gui
+
+        if win32gui.IsWindow(_mask_hwnd):
+            win32gui.ShowWindow(_mask_hwnd, 0)  # SW_HIDE
+
+
+def _ensure_execution_mask(owner) -> None:
+    """An owned layered window. It stays above the picture, and goes behind other apps with it."""
+    global _mask_hwnd, _mask_wndproc
+
+    import win32con
+    import win32gui
+
+    if _mask_hwnd and win32gui.IsWindow(_mask_hwnd):
+        return
+
+    def wndproc(hwnd, msg, wparam, lparam):
+        if msg == win32con.WM_ERASEBKGND:
+            return 1
+        if msg == win32con.WM_PAINT:
+            _paint_execution_mask(hwnd)
+            return 0
+        return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+
+    _mask_wndproc = wndproc
+    instance = win32gui.GetModuleHandle(None)
+    window_class = win32gui.WNDCLASS()
+    window_class.hInstance = instance
+    window_class.lpszClassName = _MASK_CLASS
+    window_class.lpfnWndProc = _mask_wndproc
+    try:
+        atom = win32gui.RegisterClass(window_class)
+    except Exception as error:
+        if getattr(error, "winerror", None) != 1410:
+            raise
+        atom = _MASK_CLASS
+    _mask_hwnd = win32gui.CreateWindowEx(
+        win32con.WS_EX_LAYERED | win32con.WS_EX_NOACTIVATE | win32con.WS_EX_TOOLWINDOW,
+        atom,
+        "",
+        win32con.WS_POPUP,
+        0,
+        0,
+        0,
+        0,
+        owner,
+        0,
+        instance,
+        None,
+    )
+    win32gui.SetLayeredWindowAttributes(_mask_hwnd, 0, 190, 0x2)  # LWA_ALPHA
+
+
+def _sync_execution_mask(frame) -> None:
+    """Match the mask to the frame's client area, and hide it when the frame is minimized."""
+    global _mask_place
+
+    import win32gui
+
+    if not _mask_on or not _mask_hwnd or not win32gui.IsWindow(_mask_hwnd) or not win32gui.IsWindow(frame):
+        return
+    if win32gui.IsIconic(frame) or not win32gui.IsWindowVisible(frame):
+        win32gui.ShowWindow(_mask_hwnd, 0)
+        return
+    left, top, right, bottom = win32gui.GetClientRect(frame)
+    origin = win32gui.ClientToScreen(frame, (0, 0))
+    place = (origin[0], origin[1], right - left, bottom - top)
+    if place != _mask_place:
+        win32gui.SetWindowPos(_mask_hwnd, 0, place[0], place[1], place[2], place[3], 0x0010)  # SWP_NOACTIVATE
+        win32gui.InvalidateRect(_mask_hwnd, None, True)
+        _mask_place = place
+    win32gui.ShowWindow(_mask_hwnd, 8)  # SW_SHOWNA
+
+
+def _note_mask_action(line: str) -> None:
+    """Remember the latest action and ask the mask to draw it."""
+    global _mask_action
+
+    _mask_action = mask_line(line)
+    if not _mask_hwnd:
+        return
+    with contextlib.suppress(Exception):
+        import win32gui
+
+        if win32gui.IsWindow(_mask_hwnd):
+            win32gui.InvalidateRect(_mask_hwnd, None, True)
+
+
+def _paint_execution_mask(hwnd) -> None:
+    """A dim cover: the title, and under it the action jev is taking."""
+    import ctypes
+
+    import win32con
+    import win32gui
+
+    hdc, paint = win32gui.BeginPaint(hwnd)
+    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+    brush = win32gui.CreateSolidBrush(0x00101010)
+    win32gui.FillRect(hdc, (left, top, right, bottom), brush)
+    win32gui.DeleteObject(brush)
+    win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
+    gdi = ctypes.WinDLL("gdi32", use_last_error=True)
+    gdi.CreateFontW.argtypes = (ctypes.c_int,) * 13 + (ctypes.c_wchar_p,)
+    gdi.CreateFontW.restype = ctypes.c_void_p
+    gdi.SelectObject.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    gdi.SelectObject.restype = ctypes.c_void_p
+    gdi.DeleteObject.argtypes = (ctypes.c_void_p,)
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.DrawTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint)
+    width, height = right - left, bottom - top
+    margin = max(48, width // 10)
+    title_h, gap, action_h = 44, 16, 52
+    block = title_h + (gap + action_h if _mask_action else 0)
+    y = top + max(0, (height - block) // 2)
+    title = (left + margin, y, right - margin, y + title_h)
+    # DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX
+    _draw_mask_text(gdi, user, hdc, MASK_TEXT, title, -32, 600, 0x00FFFFFF, 0x0001 | 0x0004 | 0x0020 | 0x0800)
+    if _mask_action:
+        action = (left + margin, y + title_h + gap, right - margin, y + title_h + gap + action_h)
+        # DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX
+        _draw_mask_text(gdi, user, hdc, _mask_action, action, -18, 400, 0x00C8C8C8, 0x0001 | 0x0010 | 0x8000 | 0x0800)
+    win32gui.EndPaint(hwnd, paint)
+
+
+def _draw_mask_text(
+    gdi,
+    user,
+    hdc,
+    text: str,
+    box: tuple[int, int, int, int],
+    height: int,
+    weight: int,
+    color: int,
+    flags: int,
+) -> None:
+    """One centered line or block, in Microsoft YaHei UI."""
+    import ctypes
+
+    import win32gui
+
+    font = gdi.CreateFontW(height, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 0, 0, "Microsoft YaHei UI")
+    dc = int(hdc)
+    old = gdi.SelectObject(dc, font)
+    win32gui.SetTextColor(hdc, color)
+    user.DrawTextW(dc, text, -1, ctypes.byref(_rect(box)), flags)
+    gdi.SelectObject(dc, old)
+    gdi.DeleteObject(font)
+
+
+def _rect(box: tuple[int, int, int, int]):
+    from ctypes import wintypes
+
+    return wintypes.RECT(*box)
 
 
 def frame_outer() -> tuple[int, int, int, int]:
@@ -504,7 +722,7 @@ def frame_outer() -> tuple[int, int, int, int]:
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     rect = wintypes.RECT(0, 0, DESKTOP_WIDTH, DESKTOP_HEIGHT)
     style = 0x00CF0000 | 0x02000000  # WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN
-    exstyle = 0x00000008  # WS_EX_TOPMOST
+    exstyle = 0
     dpi = 96
     get_dpi = getattr(user32, "GetDpiForSystem", None)
     if get_dpi is not None:
@@ -1071,19 +1289,36 @@ def create_session_pipe(name: str):
     )
 
 
+# Handles opened so a pending read does not block a write on the same pipe. A synchronous
+# duplex handle deadlocks when the reader thread is inside ReadFile and the main thread writes.
+_OVERLAPPED: set[int] = set()
+
+
+def _pipe_is_overlapped(pipe) -> bool:
+    try:
+        return int(pipe) in _OVERLAPPED
+    except (TypeError, ValueError):
+        return False
+
+
 def attach_session_pipe(name: str):
-    """The child's end of the pipe the controller created."""
+    """The child's end of the pipe the controller created.
+
+    Overlapped, so the thread that waits for cancel can read while the run writes a log line.
+    """
     import win32file
 
-    return win32file.CreateFile(
+    handle = win32file.CreateFile(
         rf"\\.\pipe\{name}",
         win32file.GENERIC_READ | win32file.GENERIC_WRITE,
         0,
         None,
         win32file.OPEN_EXISTING,
-        0,
+        win32file.FILE_FLAG_OVERLAPPED,
         None,
     )
+    _OVERLAPPED.add(int(handle))
+    return handle
 
 
 def attach_input_desktop() -> None:
@@ -1430,7 +1665,9 @@ def _relay(pipe, goal: str, connect=None, write=None, read=None, ask=None) -> No
         message = decode(read(pipe))
         kind = message["type"]
         if kind == "log":
-            print(message.get("text", ""), flush=True)
+            text = str(message.get("text") or "")
+            print(text, flush=True)
+            _note_mask_action(text)
         elif kind == "progress":
             print(f"  {message.get('taken')} / {message.get('budget')}", flush=True)
         elif kind == "question":
@@ -1446,13 +1683,82 @@ def _relay(pipe, goal: str, connect=None, write=None, read=None, ask=None) -> No
 
 
 def _write_line(pipe, line: str) -> None:
+    data = line.encode("utf-8")
+    if _pipe_is_overlapped(pipe):
+        _overlapped_write(pipe, data)
+        return
+    _blocking_write(pipe, data)
+
+
+def _blocking_write(pipe, data: bytes) -> None:
     import win32file
 
-    win32file.WriteFile(pipe, line.encode("utf-8"))
+    win32file.WriteFile(pipe, data)
 
 
 def _read_line(pipe) -> str:
+    if _pipe_is_overlapped(pipe):
+        return _overlapped_read(pipe).decode("utf-8")
     import win32file
 
     _, data = win32file.ReadFile(pipe, 65536)
     return data.decode("utf-8")
+
+
+def _overlapped():
+    """An event the read or write completes on. Each call gets its own, so the two directions do not share one."""
+    import pywintypes
+    import win32event
+
+    ov = pywintypes.OVERLAPPED()
+    ov.hEvent = win32event.CreateEvent(None, True, False, None)
+    return ov
+
+
+ERROR_IO_PENDING = 997  # win32file does not export this name; the overlapped call returns it
+
+
+def _complete(pipe, ov, code: int) -> int:
+    import win32event
+    import win32file
+
+    try:
+        if code == ERROR_IO_PENDING:
+            win32event.WaitForSingleObject(ov.hEvent, win32event.INFINITE)
+        return int(win32file.GetOverlappedResult(pipe, ov, True))
+    finally:
+        win32file.CloseHandle(ov.hEvent)
+
+
+def _overlapped_write(pipe, data: bytes) -> None:
+    import pywintypes
+    import win32file
+
+    ov = _overlapped()
+    try:
+        code, _written = win32file.WriteFile(pipe, data, ov)
+    except pywintypes.error as error:
+        if error.winerror != ERROR_IO_PENDING:
+            win32file.CloseHandle(ov.hEvent)
+            raise
+        code = error.winerror
+    _complete(pipe, ov, code)
+
+
+def _overlapped_read(pipe) -> bytes:
+    import pywintypes
+    import win32file
+
+    ov = _overlapped()
+    buf = win32file.AllocateReadBuffer(65536)
+    try:
+        code, _data = win32file.ReadFile(pipe, buf, ov)
+    except pywintypes.error as error:
+        if error.winerror != ERROR_IO_PENDING:
+            win32file.CloseHandle(ov.hEvent)
+            raise
+        code = error.winerror
+    size = _complete(pipe, ov, code)
+    # GetOverlappedResult is the number of bytes in this message. The buffer is larger, and the
+    # bytes ReadFile hands back can be that whole buffer with zeros after the message.
+    return bytes(buf[:size]).split(b"\x00", 1)[0]

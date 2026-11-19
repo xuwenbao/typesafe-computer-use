@@ -16,6 +16,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
+from .bound import CaptureTimeout, call_within
 from .config import settings
 from .models import MENU_BAR_PT, AxNode, Box, Item, Screen
 from .parse import caption as parse_caption
@@ -24,7 +25,14 @@ from .parse import ocr as parse_ocr
 from .parse import weights as parse_weights
 from .parse.fuse import fuse
 from .platform_adapter import desktop
-from .timing import OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, phase
+from .timing import FIELD_TIMEOUT, OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, SCREENSHOT_TIMEOUT, URL_TIMEOUT, phase
+
+# A control that does not answer is treated as absent. A screenshot that does not return ends the step.
+FIELD_WAIT = 2.0
+URL_WAIT = 2.0
+SCREENSHOT_WAIT = 3.0
+_MISSED = object()
+_TIMEOUT = {"field": FIELD_TIMEOUT, "url": URL_TIMEOUT, "screenshot": SCREENSHOT_TIMEOUT}
 
 Line = tuple[str, float, Box]
 Detection = tuple[Box, float]  # an icon box in capture pixels, and the detector's score
@@ -67,10 +75,33 @@ def capture(
     record the seconds each one costs under "screenshot", "app", "window", "field", and "url".
     Pass `ahead`, the run's OCR cache, to start reading the capture while those queries run (see
     `ParseCache.read_ahead`).
+
+    A field or address that does not answer counts as absent. A screenshot that does not answer
+    within SCREENSHOT_WAIT seconds raises CaptureTimeout. On Windows those three reads run in a
+    process of their own, so a stuck call can be killed instead of landing back on this thread.
     """
     replay = image_path is not None and app is not None
+    brought = None
     with phase(timing, "screenshot"):
-        image = Image.open(image_path).convert("RGB") if image_path else desktop.screenshot()
+        if image_path:
+            image = Image.open(image_path).convert("RGB")
+        else:
+            read_capture = getattr(desktop, "read_capture", None)
+            if read_capture is None:
+                # A desktop whose screenshot waits out the previous action, such as the benchmark
+                # VM, cannot be cut off here: that wait is the step, and it outlasts SCREENSHOT_WAIT.
+                if getattr(desktop, "screenshot_waits", False):
+                    image = desktop.screenshot()
+                else:
+                    image = _bounded(timing, "screenshot", SCREENSHOT_WAIT, desktop.screenshot)
+            else:
+                try:
+                    brought = read_capture(browser, SCREENSHOT_WAIT, FIELD_WAIT, timing)
+                except CaptureTimeout:
+                    if timing is not None:
+                        timing[_TIMEOUT["screenshot"]] = 1.0
+                    raise
+                image = brought[0]
     scale = desktop.display_scale(image)
     if ahead is not None:
         ahead.read_ahead(image, scale)
@@ -83,10 +114,34 @@ def capture(
     with phase(timing, "window"):
         window = None if replay else desktop.frontmost_window_bounds(pid)
     with phase(timing, "field"):
-        field = None if replay else desktop.focused_field()
+        if replay or brought is not None:
+            field = None if brought is None else brought[1]
+        else:
+            field = _bounded(timing, "field", FIELD_WAIT, desktop.focused_field, absent=None)
     with phase(timing, "url"):
-        page_url = url if url is not None else (None if replay else desktop.browser_url(browser))
+        if url is not None:
+            page_url = url
+        elif replay or brought is not None:
+            page_url = None if brought is None else brought[2]
+        else:
+            page_url = _bounded(timing, "url", URL_WAIT, desktop.browser_url, browser, absent=None)
     return Screen(image=image, scale=scale, app=frontmost, field=field, url=page_url, pid=pid, window=window)
+
+
+def _bounded(timing: dict[str, float] | None, name: str, seconds: float, fn, *args, absent=None):
+    """What `fn` returns, or `absent` when it is still running after `seconds`.
+
+    A screenshot that misses raises CaptureTimeout after the timing flag is set. The sentinel is
+    not None: a focused control that is genuinely absent must not look like a timeout.
+    """
+    found = call_within(seconds, lambda: fn(*args), _MISSED)
+    if found is not _MISSED:
+        return found
+    if timing is not None:
+        timing[_TIMEOUT[name]] = 1.0
+    if name == "screenshot":
+        raise CaptureTimeout(name)
+    return absent
 
 
 def goal_echoes(goal: str) -> set[str]:

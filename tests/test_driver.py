@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from typesafe_computer_use import config, macos, windows
-from typesafe_computer_use.driver import DEAD, KEYS, SHORTCUTS, _signature, _take, act
+from typesafe_computer_use.driver import DEAD, KEYS, MAX_SAME_ACTION, SHORTCUTS, _advance_same_action, _signature, _take, act
 from typesafe_computer_use.models import AxNode, Field, Item, signature
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import UNCHANGED, RunState, screen_moved
@@ -220,8 +220,11 @@ def test_an_action_the_model_made_up_does_nothing(screen, machine):
 
 def test_every_key_the_driver_offers_is_one_both_adapters_press():
     for key in (*KEYS, *SHORTCUTS):
+        # `start` and `run` are chords the adapters translate, not entries in the single-key tables.
+        if key == "run":
+            assert key not in windows.VK
+            continue
         assert key in windows.VK
-        # `start` is Command-Space on a Mac, not its own key code.
         if key != "start":
             assert key in macos.KEYCODES
 
@@ -250,3 +253,60 @@ def test_the_driver_model_is_the_answer_model_unless_named(monkeypatch):
     assert config.settings().resolved_driver_model == config.settings().answer_model
     monkeypatch.setenv("CLICKER_DRIVER_MODEL", "some-model")
     assert config.settings().resolved_driver_model == "some-model"
+
+
+def test_the_same_action_stops_after_four_even_when_a_wait_sits_between_them():
+    streak, previous = 0, None
+    for action in ("key", "wait", "key", "key", "key"):
+        streak, previous = _advance_same_action(streak, previous, move(action, key="return"), ITEMS, None)
+    assert streak == MAX_SAME_ACTION
+    assert previous == "key return"
+
+
+def test_navigation_keys_do_not_count_as_the_same_action():
+    streak, previous = 0, None
+    for _ in range(MAX_SAME_ACTION + 2):
+        streak, previous = _advance_same_action(streak, previous, move("key", key="down"), ITEMS, None)
+    assert streak == 0 and previous is None
+
+
+def test_the_driver_stops_when_return_repeats_across_screens_that_keep_changing(monkeypatch, tmp_path):
+    from world import FakeWriter, Page, World, drive
+
+    pages = [Page(name=f"s{i}", items=[f"placeholder {i}"], app="SearchHost.exe", on={"enter": f"s{i + 1}"}) for i in range(5)]
+    pages.append(Page(name="s5", items=["placeholder 5"], app="SearchHost.exe"))
+    writer = FakeWriter(reviews=[{"achieved": False}, {"achieved": False}], drives=[{"action": "key", "key": "return"}] * 8)
+
+    state = drive(
+        world := World(pages),
+        lambda state, questions: ("none", None),
+        goal="open notepad",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert state.outcome == "driver stalled"
+    assert world.log == ["enter"] * MAX_SAME_ACTION
+
+
+def test_direction_keys_may_repeat_while_the_screen_changes(monkeypatch, tmp_path):
+    from world import FakeWriter, Page, World, drive
+
+    pages = [Page(name=f"s{i}", items=[f"row {i}"], app="Files", on={"down": f"s{i + 1}"}) for i in range(7)]
+    pages.append(Page(name="s7", items=["row 7"], app="Files"))
+    writer = FakeWriter(reviews=[{"achieved": False}, {"achieved": False}], drives=[{"action": "key", "key": "down"}] * 8)
+
+    state = drive(
+        world := World(pages),
+        lambda state, questions: ("none", None),
+        goal="reach the last row",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=6,
+    )
+
+    assert state.outcome == "driver step limit"
+    assert world.log == ["down"] * 6

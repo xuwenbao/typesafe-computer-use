@@ -3,6 +3,7 @@
 几个角色：
 - 分类器（classifier）：TypeSafe 模型，每一步从固定选项里挑一个动作。
 - 写手（writer）：大语言模型，分类器停下时读屏幕、回答用户，必要时给分类器一个“焦点”让它继续。
+- 宿主（host）：真操作开始前，只负责把目标应用打开或调到前台，然后把同一条目标交给分类器。
 - 接管（driver）：分类器彻底做不下去时，由更强的模型一步一步接着操作。
 """
 
@@ -17,9 +18,11 @@ from typesafe_sdk import TypeSafeClient
 
 from . import driver
 from .actions import Context, perform
+from .bound import CaptureTimeout
 from .calls import Calls, MeteredClassifier, MeteredWriter
 from .config import settings
 from .decide import Decision, decide, offscreen_records
+from .host import prepare
 from .models import Abort, Guidance, Item, Screen, Signature, same_screen, signature
 from .parse.marks import marks
 from .perception import ParseCache, capture, ocr_region, perceive, pipeline_record
@@ -130,7 +133,7 @@ class RunState:
 def run(cfg: RunConfig, ctx_factory) -> RunState:
     """跑完整次运行。
 
-    流程：分类器一步步走；它停下时交给写手；写手可能让它继续，也可能给出最终回答；
+    流程：真操作时宿主先打开目标应用；分类器一步步走；它停下时交给写手；写手可能让它继续，也可能给出最终回答；
     如果目标没完成又没路可走，再交给接管模型。无论怎么结束，最后都写 run.json。
     ctx_factory(typesafe, history) 负责构造执行动作用的 Context。
     """
@@ -145,6 +148,7 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
     try:
         with TypeSafeClient() as typesafe:
             ctx = metered(ctx_factory(typesafe, state.history), state.calls)
+            prepare(cfg, ctx, state, log)
             for step in range(1, cfg.steps + 1):
                 if run_step(cfg, ctx, state, step, log):
                     continue
@@ -373,8 +377,16 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     timing: dict[str, float] = {}
     started = time.perf_counter()
     cache = None if cfg.replay else state.parse_cache
-    with phase(timing, "capture"):
-        screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser, timing, ahead=cache if cfg.read_ahead else None)
+    try:
+        with phase(timing, "capture"):
+            screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser, timing, ahead=cache if cfg.read_ahead else None)
+    except CaptureTimeout:
+        # 截屏没有在时限内返回。这一步没有画面，不交给写手或接管；收尾仍会写 run.json。
+        log("capture timed out")
+        state.outcome = "capture timed out"
+        timing["total"] = round(time.perf_counter() - started, 3)
+        state.timings.append(timing)
+        return False
     items = perceive(screen, settings().max_options, cfg.goal, timing, cache)
     state.view = (screen, items)
     if not screen_moved(state, screen, items, log):
@@ -493,6 +505,9 @@ def resolve(
         what = perform(decision, screen, items, ctx)
     state.view = None
     state.history.append(what)
+    from .windows_session import report_action
+
+    report_action(what)
     state.markable = decision.kind.choice not in UNMARKED
     log(f"  did: {what}")
     return not repeating(state, what, decision.kind.choice == "wait", log)

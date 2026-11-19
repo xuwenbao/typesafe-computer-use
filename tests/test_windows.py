@@ -14,6 +14,7 @@ from typesafe_computer_use.windows import (
     display_name,
     key_events,
     landed,
+    placed_origin,
     pressable,
     role_for,
     unicode_events,
@@ -30,6 +31,9 @@ def test_control_types_map_onto_the_roles_the_shared_code_knows():
     assert role_for("EditControl") in TEXT_ROLES  # a focused edit box is a text field
     assert role_for("ComboBoxControl") in TEXT_ROLES
     assert role_for("TextControl") == "AXStaticText"  # where a list row's label is recovered from
+    assert windows.focused_role("DocumentControl") == "AXTextArea"  # Notepad's editor, when its state is unreadable
+    assert windows.focused_role("DocumentControl", 0) == "AXTextArea"
+    assert windows.focused_role("DocumentControl", 0x40) == ""  # a read-only document, such as a web page
 
 
 def test_an_unknown_control_type_has_no_role():
@@ -122,6 +126,11 @@ def test_start_is_the_windows_key():
     assert key_events("start") == [(0x5B, KEYEVENTF_EXTENDEDKEY), (0x5B, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
 
 
+def test_run_is_the_windows_key_held_around_r():
+    ext = KEYEVENTF_EXTENDEDKEY
+    assert key_events("run") == [(0x5B, ext), (0x52, 0), (0x52, KEYEVENTF_KEYUP), (0x5B, ext | KEYEVENTF_KEYUP)]
+
+
 def test_text_is_typed_as_unicode_characters_not_keys():
     down, up = KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
     assert unicode_events("aé") == [(ord("a"), down), (ord("a"), up), (0xE9, down), (0xE9, up)]
@@ -159,6 +168,21 @@ def test_a_click_lands_only_where_the_cursor_went():
     assert landed((100, 200), (101.0, 199.0))
     assert not landed((100, 200), (0.0, 0.0))  # another desktop has the input
     assert not landed((100, 200), (100.0, 260.0))
+
+
+WORK = (0.0, 0.0, 1280.0, 800.0)
+
+
+def test_a_window_inside_the_work_area_stays_where_it_is():
+    assert placed_origin((10.0, 20.0, 100.0, 80.0), WORK) is None
+    assert placed_origin((0.0, 0.0, 2000.0, 2000.0), WORK) is None  # already at the origin, though larger
+
+
+def test_a_window_outside_the_work_area_is_moved_back_inside():
+    assert placed_origin((-40.0, 20.0, 100.0, 80.0), WORK) == (0.0, 20.0)
+    assert placed_origin((1250.0, 20.0, 100.0, 80.0), WORK) == (1180.0, 20.0)
+    assert placed_origin((10.0, 900.0, 100.0, 80.0), WORK) == (10.0, 720.0)
+    assert placed_origin((50.0, 10.0, 2000.0, 80.0), WORK) == (0.0, 10.0)
 
 
 def test_a_click_that_did_not_land_presses_nothing(monkeypatch):

@@ -288,7 +288,9 @@ def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env):
 
 def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
     assert "press escape to close it, then press the shortcut" in DRIVE_SYSTEM
-    assert "press start, type its name into the search box" in DRIVE_SYSTEM
+    assert "When the app you need is not on the screen, open it from the Run dialog: press run" in DRIVE_SYSTEM
+    assert "press escape, then use run" in DRIVE_SYSTEM
+    assert "On a Mac, press start and type its name into Spotlight" in DRIVE_SYSTEM
     assert "Do not give_up because one way failed" in DRIVE_SYSTEM
     assert "A spinner, a number box" in DRIVE_SYSTEM
     assert "do not press escape until the selection has been used" in DRIVE_SYSTEM

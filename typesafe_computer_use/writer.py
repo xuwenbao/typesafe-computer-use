@@ -413,6 +413,38 @@ DRIVE_ACTIONS = (
     "give_up",
 )
 
+HOST_SYSTEM = (
+    "An agent is about to drive a computer toward the user's goal. Your only job is to put the "
+    "application that goal needs in front. You do not click, type, scroll, or save. You receive the "
+    "goal, the frontmost process, and the visible windows. Each window has an id, a title, and a "
+    "process name.\n"
+    "Choose one action:\n"
+    "ready: the frontmost process is already the application the goal needs. Leave id and executable empty.\n"
+    "focus: one of the listed windows is that application, even if it is not frontmost. Set id to its id.\n"
+    "launch: it is not open. Set executable to a single program name such as notepad or WINWORD.EXE. "
+    "No path, no spaces, and no arguments.\n"
+    "Leave whichever of id and executable the action does not use empty. Do not use the Start menu "
+    "or its search. Give the reason in one sentence."
+)
+
+HOST_PROPERTIES = {
+    "action": {"type": "string"},
+    "id": {"type": "string"},
+    "executable": {"type": "string"},
+    "reason": {"type": "string"},
+}
+
+
+def compose_host(writer: Writer, goal: str, windows: list[tuple[str, str, str]], frontmost: str) -> dict:
+    """Which application to put in front before the classifier runs. One of ready, focus, or launch."""
+    packet = {
+        "goal": goal,
+        "frontmost": frontmost,
+        "windows": [{"id": ident, "title": title, "process": process} for ident, title, process in windows],
+    }
+    return _structured(writer, HOST_SYSTEM, packet, HOST_PROPERTIES, 300)
+
+
 DRIVE_SYSTEM = (
     "An agent is driving a user's computer toward the user's goal. A small classifier picked each "
     "action until it stopped for good, short of the goal, and the run is now yours: you choose the "
@@ -441,7 +473,8 @@ DRIVE_SYSTEM = (
     "and only when focused_field is a text field. Never a password, a one-time code, a card "
     "number, or any other credential, and never personal data the goal does not give.\n"
     "key: press `key`, one of return, escape, tab, up, down, left, right, pageup, pagedown, home, "
-    "end, delete, space, backspace, f2, f5, start. start opens the Start menu on Windows and "
+    "end, delete, space, backspace, f2, f5, start, run. start opens the Start menu on Windows and "
+    "Spotlight on a Mac. run opens the Run dialog on Windows, the Windows key with R, and "
     "Spotlight on a Mac.\n"
     "shortcut: press `key` together with the platform's command key (Command on a Mac, Control on "
     "Windows). `key` is a letter or a digit, but never q, w, h, or m: those quit, close, hide, or "
@@ -477,8 +510,10 @@ DRIVE_SYSTEM = (
     "terminal or console that is already open on the desktop.\n"
     "A shortcut reaches only the frontmost window. When a menu or a dialog is open, press escape "
     "to close it, then press the shortcut.\n"
-    "When the app you need is not on the screen, press start, type its name into the search box, "
-    "and open it. Do not give_up because one way failed: try another. Give up when the app has no "
+    "When the app you need is not on the screen, open it from the Run dialog: press run, type the "
+    "app's name, and press return. On a Mac, press start and type its name into Spotlight. If the "
+    "Start menu search box is open but its results list never appears, do not keep pressing return "
+    "there: press escape, then use run. Do not give_up because one way failed: try another. Give up when the app has no "
     "such feature and the goal cannot be done, and say in the reason what is missing. When what "
     "the goal assumes is not on the screen, such as a file that is playing or something that is "
     "there to be found, give_up and say in the reason what is missing. Do not keep clicking.\n"

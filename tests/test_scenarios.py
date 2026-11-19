@@ -1721,12 +1721,12 @@ def test_l52_the_run_counts_the_requests_each_model_took(monkeypatch, tmp_path):
     )
 
     assert world.page.name == "checkout"
-    # Five decisions and the check of what was typed; the typed text and two readings of a stopped screen.
-    assert state.calls.count == {"classifier": 6, "writer": 3, "driver": 0}
+    # Five decisions and the check of what was typed; the host, the typed text, and two readings.
+    assert state.calls.count == {"classifier": 6, "writer": 4, "driver": 0}
     summary = json.loads((tmp_path / "run" / "run.json").read_text())
-    assert summary["calls"]["classifier"]["calls"] == 6 and summary["calls"]["classifier"]["share"] == 0.667
-    assert summary["calls"]["writer"]["calls"] == 3 and summary["calls"]["writer"]["share"] == 0.333
-    assert "calls: classifier 6 (67%, " in (tmp_path / "run" / "run.log").read_text()
+    assert summary["calls"]["classifier"]["calls"] == 6 and summary["calls"]["classifier"]["share"] == 0.6
+    assert summary["calls"]["writer"]["calls"] == 4 and summary["calls"]["writer"]["share"] == 0.4
+    assert "calls: classifier 6 (60%, " in (tmp_path / "run" / "run.log").read_text()
 
 
 def test_l53_unverified_keystrokes_stay_when_the_field_will_not_take_a_value(monkeypatch, tmp_path):
@@ -1841,7 +1841,11 @@ def test_l56_a_name_the_writer_submits_is_typed_and_saved_in_one_step(monkeypatc
     assert state.outcome == "done" and world.page.name == "saved"
     assert state.history == ["typed 'Favorites' into 'Name' via accessibility and pressed Return"]
     assert world.log == ["type:Favorites", "enter"]
-    assert state.calls.count == {"classifier": 2, "writer": 2, "driver": 0}  # two decisions and no check; the name and the answer
+    assert state.calls.count == {
+        "classifier": 2,
+        "writer": 3,
+        "driver": 0,
+    }  # two decisions and no check; the host, the name, and the answer
 
 
 def test_l57_an_item_under_a_popup_is_reached_by_closing_the_popup_in_the_same_step(monkeypatch, tmp_path):

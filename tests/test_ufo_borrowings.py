@@ -7,6 +7,7 @@ import json
 import queue
 import threading
 from dataclasses import replace
+from inspect import getsource
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -145,6 +146,26 @@ def test_click_order_uses_toggle_then_a_default_action_then_the_pointer(screen, 
     names = [call if isinstance(call, str) else call[0] for call in calls]
     assert names == ["press", "toggle", "select", "expand_toggle", "click"]
     assert "scroll_into_view" not in calls
+
+
+def test_a_radio_button_is_clicked_because_select_does_not_change_it(screen, monkeypatch):
+    calls = []
+    item = Item(0, "All", 1.0, 0, 0, 20, 20, role="AXRadioButton", source="ax")
+    live = replace(screen, ax_refs={0: {"role": "AXRadioButton", "name": "All"}})
+
+    def ax_press(ref):
+        calls.append(("press", ref))
+        return False
+
+    def ax_operate(ref, operation, value=None):
+        calls.append((operation, ref))
+        return operation == "select"
+
+    monkeypatch.setattr(desktop, "ax_press", ax_press)
+    monkeypatch.setattr(desktop, "ax_operate", ax_operate)
+    monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append(("click", args)))
+    assert click_item(item, live) == "clicked 'All'"
+    assert [name for name, _ in calls] == ["press", "toggle", "expand_toggle", "click"]
 
 
 def test_a_shift_click_stays_a_pointer_click(screen, monkeypatch):
@@ -578,7 +599,7 @@ def test_the_picture_in_picture_opens_before_connect_and_launch_waits(monkeypatc
     monkeypatch.setattr(windows_session, "_host_until", host)
     windows_session.run_controller(["open notepad"])
     assert order.index("window") < order.index("connect") < order.index("wait") < order.index("launch")
-    assert order.index("launch") < order.index("relay") < order.index("host")
+    assert order.index("launch") < order.index("mask") < order.index("relay") < order.index("host")
     assert order.index("pump") < order.index("launch")
     assert order[-1] == "close"
 
@@ -596,6 +617,75 @@ def test_a_failed_window_does_not_launch_into_the_session(monkeypatch):
         windows_session.run_controller(["open notepad"])
     assert "launch" not in order
     assert "close" in order
+
+
+def test_an_action_is_shown_under_the_mask_title():
+    assert windows_session.mask_line("driver: pressed run") == "pressed run"
+    assert windows_session.mask_line("clicked 'Archive'") == "clicked 'Archive'"
+    windows_session._bind_action_report(None)
+    windows_session.report_action("clicked 'Archive'")
+    sent = []
+    windows_session._bind_action_report(sent.append)
+    windows_session.report_action("clicked 'Archive'")
+    assert sent == ["clicked 'Archive'"]
+    windows_session._bind_action_report(None)
+    messages = iter(
+        [
+            windows_session.encode("log", text="driver: pressed run"),
+            windows_session.encode("done", text="ok"),
+        ]
+    )
+    windows_session._relay(
+        object(),
+        "goal",
+        connect=lambda pipe: None,
+        write=lambda pipe, line: None,
+        read=lambda pipe: next(messages),
+    )
+    assert windows_session._mask_action == "pressed run"
+    windows_session._note_mask_action("")
+    windows_session._bind_action_report(None)
+
+
+def test_a_pending_read_does_not_take_the_blocking_write(monkeypatch):
+    """The child keeps a read outstanding for cancel. That read must not block the log write."""
+    windows_session._OVERLAPPED.add(7)
+    calls = []
+    monkeypatch.setattr(windows_session, "_overlapped_write", lambda pipe, data: calls.append(("overlapped", pipe, data)))
+
+    def blocking(pipe, data):
+        calls.append(("blocking", pipe, data))
+
+    monkeypatch.setattr(windows_session, "_blocking_write", blocking)
+    try:
+        windows_session._write_line(7, "host: launched notepad.exe")
+        windows_session._write_line(object(), "parent")
+    finally:
+        windows_session._OVERLAPPED.discard(7)
+    assert calls[0] == ("overlapped", 7, b"host: launched notepad.exe")
+    kind, pipe, data = calls[1]
+    assert (kind, data) == ("blocking", b"parent")
+    assert pipe != 7
+
+
+def test_the_child_leaves_once_it_has_reported(monkeypatch):
+    seen = []
+
+    def finish(outcome, folder):
+        seen.append((outcome, folder))
+
+    def stop(code):
+        seen.append(code)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(windows_session.os, "_exit", stop)
+    with pytest.raises(SystemExit):
+        windows_session.end_child(finish, "driver stalled", "runs/x")
+    assert seen == [("driver stalled", "runs/x"), 0]
+    seen.clear()
+    with pytest.raises(SystemExit):
+        windows_session.end_child(finish, "aborted (Ctrl-C)", "runs/x")
+    assert seen == [("aborted (Ctrl-C)", "runs/x"), 130]
 
 
 def test_the_relay_connects_before_it_writes_and_a_closed_window_cancels():
@@ -677,6 +767,14 @@ def test_the_picture_window_is_the_small_frame():
     assert (windows_session.DESKTOP_WIDTH, windows_session.DESKTOP_HEIGHT) == (1280, 800)
     assert windows_session.desktop_oversized(1920, 1080)
     assert not windows_session.desktop_oversized(1280, 800)
+    assert "WS_EX_TOPMOST" not in getsource(windows_session._create_frame)
+    assert "SetWindowPos" not in getsource(windows_session._reveal_hosted_windows)
+
+
+def test_the_run_covers_the_window_while_the_agent_works():
+    assert windows_session.MASK_TEXT == "智能体执行中"
+    source = getsource(windows_session.run_controller)
+    assert source.index("_show_execution_mask") < source.index("_host_until")
 
 
 def test_the_child_session_is_launched_acting():
@@ -706,6 +804,8 @@ def _patch_session(monkeypatch, order, client):
     monkeypatch.setattr(windows_session, "connect_child_session", lambda got: order.append("connect") if got is client else None)
     monkeypatch.setattr(windows_session, "wait_for_child_explorer", lambda pump, deadline, got: order.append("wait"))
     monkeypatch.setattr(windows_session, "launch_in_session", lambda name: order.append("launch") or 0)
+    monkeypatch.setattr(windows_session, "_show_execution_mask", lambda hwnd: order.append("mask"))
+    monkeypatch.setattr(windows_session, "_hide_execution_mask", lambda: None)
     monkeypatch.setattr(windows_session, "_relay", lambda pipe, goal: order.append("relay"))
     monkeypatch.setattr(windows_session, "_host_until", lambda relay, hwnd, pipe, pid: "done")
     monkeypatch.setattr(windows_session, "_close_window", lambda hwnd, got: order.append("close"))

@@ -190,8 +190,8 @@ def drag(start: tuple[float, float], end: tuple[float, float]) -> None:
 
 def press(key: str, command: bool = False) -> None:
     check_abort()
-    # `start` is the Windows key. On a Mac the same action opens Spotlight, Command-Space.
-    if key == "start":
+    # `start` is the Windows key and `run` is Win+R. On a Mac both open Spotlight, Command-Space.
+    if key in ("start", "run"):
         key, command = "space", True
     code = KEYCODES[key]
 
@@ -252,6 +252,44 @@ def frontmost_app_and_pid() -> tuple[str, int]:
 
 def frontmost_pid() -> int:
     return int(osascript('tell application "System Events" to get unix id of first application process whose frontmost is true'))
+
+
+_LIST_WINDOWS = """
+tell application "System Events"
+    set sep to ASCII character 31
+    set rows to {}
+    set i to 0
+    repeat with proc in (every process whose background only is false)
+        try
+            set window_name to name of window 1 of proc
+            if window_name is not "" then
+                set i to i + 1
+                set end of rows to ((i as text) & sep & window_name & sep & (name of proc))
+            end if
+        end try
+    end repeat
+    if i is 0 then return ""
+    set AppleScript's text item delimiters to linefeed
+    return rows as text
+end tell
+"""
+
+
+def list_windows() -> list[tuple[str, str, str]]:
+    """Visible apps' front windows as (id, title, process)."""
+    found: list[tuple[str, str, str]] = []
+    for line in osascript(_LIST_WINDOWS).splitlines():
+        ident, _sep, rest = line.partition("\x1f")
+        title, sep, process = rest.partition("\x1f")
+        if sep and ident and process:
+            found.append((ident, title, process))
+    return found
+
+
+def launch_app(name: str) -> None:
+    """Start the named app with `open -a`. No arguments and no shell."""
+    check_abort()
+    subprocess.run(["open", "-a", name], check=False)
 
 
 def activate(app: str, timeout: float = 3.0) -> bool:

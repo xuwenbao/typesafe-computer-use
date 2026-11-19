@@ -36,6 +36,13 @@ ROLE_TO_CONTROL_TYPE_ID = {role: type_id for _, type_id, role in _TYPES} | {"AXT
 STATE_READ_ONLY = 0x40  # STATE_SYSTEM_READONLY, in LegacyIAccessible's state
 
 
+def focused_role(control_type_name: str, legacy_state: int | None = None) -> str:
+    """The role of the focused control. A writable document is a text area; a read-only one is not."""
+    if control_type_name == "DocumentControl":
+        return document_role(0 if legacy_state is None else legacy_state)
+    return role_for(control_type_name)
+
+
 def role_for(control_type_name: str) -> str:
     """The AX role a UI Automation control type stands for, or "" for one the walk ignores."""
     return CONTROL_TYPE_TO_ROLE.get(control_type_name, "")

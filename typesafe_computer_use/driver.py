@@ -19,6 +19,7 @@ from .platform_adapter import desktop
 from .writer import DriveStep, WriterError, compose_drive_step, looks_credential
 
 # 模型可以按的单个键。名单以外的按键直接拒绝。start 在 Windows 上打开开始菜单，在 Mac 上打开 Spotlight。
+# run 在 Windows 上打开运行对话框（Win+R），在 Mac 上同样打开 Spotlight。
 KEYS = (
     "return",
     "escape",
@@ -37,7 +38,11 @@ KEYS = (
     "f2",
     "f5",
     "start",
+    "run",
 )
+# 只在列表里移动的键。连续按它们是正常翻页，不计入“同一个动作重复”的闸。
+NAVIGATION_KEYS = ("up", "down", "left", "right", "pageup", "pagedown", "home", "end")
+MAX_SAME_ACTION = 4  # 同一个动作连续这么多次就停下，不论这几张屏幕像不像
 DENIED_SHORTCUTS = ("q", "w", "h", "m")  # 这四个快捷键会退出、关闭、隐藏或最小化窗口，所以不让模型按
 QUIET_SHORTCUTS = ("c", "x")  # 复制和剪切只改剪贴板。屏幕可以不变，不能据此说这一步没效果
 # 允许的 Cmd/Ctrl 组合：小写字母和数字，去掉上面四个。
@@ -93,6 +98,8 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
     unusable = 0
     cursor = first
     calls = 0
+    same_streak = 0
+    same_sig: str | None = None
 
     try:
         while cursor < first + budget:
@@ -136,7 +143,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 calls += 1
                 unusable += 1
                 log(f"  the model's reply was unusable: {e}")
-                state.history.append(PREFIX + UNUSABLE)
+                _record(state, PREFIX + UNUSABLE)
                 state.markable = False
                 _write_call(prefix, cursor, calls, [{"step": cursor, "did": UNUSABLE, "error": str(e)}])
                 cursor += 1
@@ -178,7 +185,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 taken.append(entry)
                 clipboard = move.action == "shortcut" and move.key in QUIET_SHORTCUTS and what.startswith("pressed ")
                 state.view = None
-                state.history.append(PREFIX + what)
+                _record(state, PREFIX + what)
                 state.markable = (
                     move.action not in UNMARKED
                     and move.action != "set_value"
@@ -189,6 +196,12 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 log(f"  did: {what}")
                 cursor += 1
                 if _repeat(state, _signature(move, items, screen.offscreen), move.action == "wait", log):
+                    _write_call(prefix, taken[0]["step"], calls, taken)
+                    return True
+                same_streak, same_sig = _advance_same_action(same_streak, same_sig, move, items, screen.offscreen)
+                if same_streak >= MAX_SAME_ACTION:
+                    log(f"  the same action was taken {MAX_SAME_ACTION} times in a row; stopping")
+                    state.outcome = "driver stalled"
                     _write_call(prefix, taken[0]["step"], calls, taken)
                     return True
                 if "refused" in what:
@@ -203,7 +216,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                     before = after
                 desktop.sleep_watching(cfg.delay)
             if stop_note is not None:
-                state.history.append(PREFIX + f"stopped the rest of the batch: {stop_note}")
+                _record(state, PREFIX + f"stopped the rest of the batch: {stop_note}")
                 state.markable = False
             if taken:
                 _write_call(prefix, taken[0]["step"], calls, taken)
@@ -214,6 +227,14 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
     finally:
         state.driver_actions = cursor - first
         state.driver_calls = calls
+
+
+def _record(state, line: str) -> None:
+    """记进历史，并在子会话里把这一行送到画中画蒙板上。"""
+    state.history.append(line)
+    from .windows_session import report_action
+
+    report_action(line)
 
 
 def _write_call(prefix, step: int, call: int, actions: list[dict]) -> None:
@@ -343,6 +364,19 @@ def _take(move: DriveStep, screen: Screen, items: list[Item], state) -> str:
     if _signature(move, items, screen.offscreen) in _dead(state):
         return DEAD
     return act(move, screen, items)
+
+
+def _advance_same_action(
+    streak: int, previous: str | None, move: DriveStep, items: list[Item], offscreen: list[AxNode] | None
+) -> tuple[int, str | None]:
+    """连续同一个动作做了几次。等待和只翻页的方向键不计入，也不把计数清掉。
+
+    这条不看两张截图像不像。结果页在加载时每一帧的文字都会变，按屏幕比较的闸因此数不到头。
+    """
+    if move.action == "wait" or (move.action == "key" and move.key in NAVIGATION_KEYS):
+        return streak, previous
+    sig = _signature(move, items, offscreen)
+    return (streak + 1, sig) if sig == previous else (1, sig)
 
 
 def _repeat(state, sig: str, waiting: bool, log) -> bool:

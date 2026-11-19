@@ -27,6 +27,7 @@ from typesafe_computer_use.actions import Context
 from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import RunConfig, RunState, run
+from typesafe_computer_use.writer import WriterError
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -384,6 +385,9 @@ class World:
         monkeypatch.setattr(desktop, "clear_field", self.clear_field)
         monkeypatch.setattr(desktop, "focused_field", self.focused_field)
         monkeypatch.setattr(desktop, "activate", self.activate)
+        monkeypatch.setattr(desktop, "list_windows", lambda: [])
+        monkeypatch.setattr(desktop, "launch_app", lambda name: self.apply(f"launch:{name}"))
+        monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: (self.page.app, 1))
         monkeypatch.setattr(desktop, "open_url", self.open_url)
         # `wait` is the one action that touches no machine call, so the only way the world hears
         # about it is the handler itself. Without this a loading page would never finish loading.
@@ -496,7 +500,13 @@ class FakeWriter:
     """
 
     def __init__(
-        self, text: str = "", url: str = "", reviews: list | None = None, submit: bool = False, drives: list | None = None
+        self,
+        text: str = "",
+        url: str = "",
+        reviews: list | None = None,
+        submit: bool = False,
+        drives: list | None = None,
+        host_fails: bool = False,
     ):
         self.requests: list[dict] = []
         self.text = text
@@ -504,6 +514,7 @@ class FakeWriter:
         self.url = url
         self.reviews = list(reviews or [])
         self.drives = list(drives or [])
+        self.host_fails = host_fails
         self.packets: list[dict] = []  # the packet of every answer asked for, in order
         self.drive_packets: list[dict] = []  # the packet of every driver action asked for, in order
         self.messages = SimpleNamespace(create=self._create)
@@ -554,6 +565,10 @@ class FakeWriter:
                 **scripted,
             }
             reply = {"reason": "scripted", "actions": [action]}
+        elif asked == {"action", "executable", "id", "reason"}:
+            if self.host_fails:
+                raise WriterError("the host could not be asked")
+            reply = {"action": "ready", "id": "", "executable": "", "reason": "the frontmost app is the one"}
         else:
             raise AssertionError(f"the writer was asked for {sorted(asked)}")
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(reply))])

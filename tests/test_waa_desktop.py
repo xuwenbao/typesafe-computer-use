@@ -116,6 +116,7 @@ def test_keys_map_onto_pyautogui():
     desktop.press("tab")
     desktop.press("delete")
     desktop.press("start")
+    desktop.press("run")
     (code,) = desktop.actions
     assert code.splitlines() == [
         "pyautogui.press('enter')",
@@ -125,6 +126,7 @@ def test_keys_map_onto_pyautogui():
         "pyautogui.press('tab')",
         "pyautogui.press('backspace')",
         "pyautogui.press('win')",
+        "pyautogui.hotkey('win', 'r')",
     ]
 
 
@@ -161,6 +163,15 @@ def test_text_goes_in_only_as_a_string_literal():
     assert calls[1][-1] == hostile
     assert ["cmd", "/c", "start", "", "msedge", "https://example.com"] in calls
     assert ["cmd", "/c", "start", "", "msedge"] in calls
+
+
+def test_an_app_already_in_front_counts_as_forward_and_a_different_one_does_not():
+    body = raw("edge-address.json")
+    body["app"] = r"C:\Windows\System32\mspaint.exe"
+    desktop = over(None, None, body)
+    assert desktop.activate("mspaint") is True
+    assert desktop.actions == []
+    assert desktop.activate("notepad") is False
 
 
 def test_a_wait_stands_alone_and_a_pause_between_inputs_stays_in_their_code():

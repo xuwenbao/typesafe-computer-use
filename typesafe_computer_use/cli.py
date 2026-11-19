@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> None:
     session_ask = None
     session_done = None
     if os.environ.get("JEV_SESSION") == "1":
-        from .windows_session import child_startup, refuse_if_console
+        from .windows_session import child_startup, end_child, refuse_if_console
 
         refuse_if_console()
         goal, session_ask, session_done = child_startup()
@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> None:
 
     state = run(cfg, ctx_factory)
     if session_done is not None:
-        session_done(state.outcome, str(args.out))
+        end_child(session_done, state.outcome, str(args.out))
     if state.outcome.startswith("aborted"):
         sys.exit(130)
 
