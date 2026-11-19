@@ -6,7 +6,7 @@ import pytest
 
 from typesafe_computer_use import actions
 from typesafe_computer_use.actions import click_item, fill_field, press_offscreen
-from typesafe_computer_use.models import AxNode, Field, Item, Missed, Popup
+from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Missed, Popup
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.writer import Fill, make_writer
 
@@ -19,6 +19,9 @@ def calls(monkeypatch):
     monkeypatch.setattr(desktop, "type_text", lambda text: log.append(("type", text)))
     monkeypatch.setattr(desktop, "ax_focus", lambda ref: log.append(("focus", ref)) or True)
     monkeypatch.setattr(desktop, "clear_field", lambda: log.append(("clear",)))
+    # A fake element has no box. A test that reveals one replaces this.
+    monkeypatch.setattr(desktop, "element_frame", lambda ref: None)
+    monkeypatch.setattr(desktop, "element_state", lambda ref: None)
     return log
 
 
@@ -88,6 +91,25 @@ def test_a_focus_that_does_not_land_is_refused(screen, calls, monkeypatch):
     node = AxNode(role="AXTextField", label="Record directory", x=0.0, y=900.0, w=200.0, h=24.0, pressable=True, ref=object())
     refusal = press_offscreen("0", replace(screen, offscreen=[node]))
     assert refusal == "press_offscreen refused: 'Record directory' did not take the focus"
+
+
+def test_a_revealed_offscreen_control_is_clicked_at_its_new_center(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "element_frame", lambda ref: (100.0, 80.0, 40.0, 20.0))
+    monkeypatch.setattr(desktop, "element_state", lambda ref: ElementState(True, True, True))
+    node = AxNode(role="AXButton", label="文档 (已固定)", x=0.0, y=-400.0, w=80.0, h=24.0, pressable=True, ref=object())
+    assert press_offscreen("0", replace(screen, offscreen=[node])) == "clicked '文档 (已固定)' (off-screen control)"
+    assert calls == [("click", (120.0, 90.0))]
+
+
+def test_a_revealed_box_outside_the_capture_is_not_clicked(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "element_frame", lambda ref: (0.0, 4000.0, 40.0, 20.0))
+    monkeypatch.setattr(desktop, "element_state", lambda ref: ElementState(True, True, True))
+    node = AxNode(role="AXButton", label="文档 (已固定)", x=0.0, y=-400.0, w=80.0, h=24.0, pressable=True, ref=object())
+    refusal = press_offscreen("0", replace(screen, offscreen=[node]))
+    assert refusal == "press_offscreen refused: '文档 (已固定)' did not accept the press"
+    assert calls == []
 
 
 def test_a_refused_press_of_an_offscreen_button_stays_a_refusal(screen, calls, monkeypatch):

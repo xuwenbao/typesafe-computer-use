@@ -376,6 +376,7 @@ class World:
         monkeypatch.setattr(desktop, "ax_press", self.ax_press)
         monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: False)
         monkeypatch.setattr(desktop, "element_state", lambda ref: ElementState(True, True, None))
+        monkeypatch.setattr(desktop, "element_frame", lambda ref: None)
         monkeypatch.setattr(desktop, "press", self.press)
         monkeypatch.setattr(desktop, "scroll", self.scroll)
         monkeypatch.setattr(desktop, "type_text", self.type_text)

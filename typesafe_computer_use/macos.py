@@ -445,6 +445,11 @@ def ax_operate(ref, operation: str, value: str | None = None) -> bool:
     return False
 
 
+def element_frame(ref) -> tuple[float, float, float, float] | None:
+    """macOS clicks an off-screen control through AXPress. There is no fresh box to aim at."""
+    return None
+
+
 def element_state(ref) -> ElementState | None:
     """Whether the element is still there. macOS does not report an enabled bit here."""
     if ref is None:

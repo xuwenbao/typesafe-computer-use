@@ -123,6 +123,7 @@ def no_real_machine(monkeypatch):
         "ax_set_value",
         "ax_operate",
         "element_state",
+        "element_frame",
     ):
         monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))
     for name in (

@@ -54,6 +54,7 @@ def test_the_pointer_reads_as_mid_screen_so_no_test_aborts_by_chance():
         lambda: windows.ax_set_value(object(), "hi"),
         lambda: windows.ax_operate(object(), "toggle"),
         lambda: windows.element_state(object()),
+        lambda: windows.element_frame(object()),
     ],
 )
 def test_an_unpatched_windows_call_refuses_instead_of_reaching_the_machine(touch):

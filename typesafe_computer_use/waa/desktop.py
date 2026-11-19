@@ -309,6 +309,10 @@ class WAADesktop:
         self._do(_operate_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""), operation, value))
         return True
 
+    def element_frame(self, ref) -> tuple[float, float, float, float] | None:
+        """Accessibility work is queued for the VM, so this step cannot read the box after a scroll."""
+        return None
+
     def element_state(self, ref) -> ElementState | None:
         """Hand over whatever input is waiting, then answer from the tree of the screen that follows."""
         self._step()

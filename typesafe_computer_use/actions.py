@@ -10,7 +10,7 @@ from typesafe_sdk import TypeSafeClient
 
 from .config import SITES
 from .decide import OFFSCREEN_PREFIX, Decision, row_mates, verify_typed
-from .models import Field, Guidance, Item, Missed, Popup, Screen
+from .models import AxNode, Field, Guidance, Item, Missed, Popup, Screen
 from .platform_adapter import desktop
 from .writer import Writer, WriterError, compose_text, compose_url
 
@@ -137,8 +137,9 @@ def press_offscreen(key: str, screen: Screen) -> str:
 
     AXPress does not need the element to be visible: a note row scrolled thousands of points down
     and a link the browser parked above the viewport both take it. A text field that refuses the
-    press is focused instead, so the next step can type into it. Anything else has no pixel to
-    fall back on, so a refusal is the end of it and reads as a no-op.
+    press is focused instead, so the next step can type into it. Anything else is scrolled into
+    view and, when that puts it on the capture, clicked at the centre it has then. The box stored
+    on the node is where it was at capture time, which is off the screen, so it is not a place to click.
     """
     nodes = screen.offscreen
     node = nodes[int(key)] if key.isdigit() and int(key) < len(nodes) else None
@@ -153,7 +154,32 @@ def press_offscreen(key: str, screen: Screen) -> str:
         if focus_landed(node.label):
             return f"focused {node.label!r} (off-screen control)"
         return f"press_offscreen refused: {node.label!r} did not take the focus"
+    clicked = _click_revealed(node, screen)
+    if clicked is not None:
+        return clicked
     return f"press_offscreen refused: {node.label!r} did not accept the press"
+
+
+def _click_revealed(node: AxNode, screen: Screen) -> str | None:
+    """Click a control that ScrollIntoView has brought onto the capture. None when it is not there."""
+    frame = desktop.element_frame(node.ref)
+    if frame is None:
+        return None
+    x, y, w, h = frame
+    if w <= 0 or h <= 0:
+        return None
+    cx, cy = x + w / 2, y + h / 2
+    width, height = screen.size_pt
+    if not (0 <= cx < width and 0 <= cy < height):
+        return None
+    state = desktop.element_state(node.ref)
+    if state is None or not state.present or not state.visible or state.enabled is False:
+        return None
+    try:
+        desktop.click_at((cx, cy))
+    except Missed as e:
+        return f"press_offscreen refused: {node.label!r} was not clicked, {e}"
+    return f"clicked {node.label!r} (off-screen control)"
 
 
 def fill_field(field: Field, text: str) -> str:

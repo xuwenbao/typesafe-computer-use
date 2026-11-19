@@ -764,6 +764,18 @@ def element_state(ref) -> ElementState | None:
     return read_uia_state(ref)
 
 
+def element_frame(ref) -> Frame | None:
+    """The element's box in screen pixels, read now. None when it cannot be read.
+
+    The box captured with the screen is where the element was then. After ScrollIntoView the
+    element may have moved, and only this read knows the place a click would land.
+    """
+    if ref is None:
+        return None
+    check_abort()
+    return _ui_frame(ref)
+
+
 def read_uia_state(element) -> ElementState | None:
     """The same facts from an element or a stand-in. A dead element, or one that raises, is unknown."""
     if element is None:
