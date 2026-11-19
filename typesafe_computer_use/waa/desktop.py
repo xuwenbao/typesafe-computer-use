@@ -294,6 +294,10 @@ class WAADesktop:
     def ax_value(self, ref) -> str | None:
         return None
 
+    def ax_selected(self, ref) -> bool | None:
+        """The benchmark observation is not refreshed between actions of one batch."""
+        return None
+
     def clipboard_files(self) -> tuple[str, ...] | None:
         """The benchmark desktop does not read the file clipboard."""
         return None

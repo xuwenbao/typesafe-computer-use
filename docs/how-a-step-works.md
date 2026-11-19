@@ -309,9 +309,16 @@ It picks from a whitelist, and code checks every move before anything reaches th
 
 Each action is checked, then checked again against the live element when it came from the
 accessibility tree: still present, still visible, and not explicitly disabled. macOS does not
-report enabled, so that part is skipped. A refusal, a failed check, a double-click, an action that
-leaves the screen unchanged, or `done` / `give_up` drops the rest of the batch. A double-click opens
-another screen, so paste, select all, and any other key wait until that screen is seen. The unchanged test is the
+report enabled, so that part is skipped. Before the next action of a batch, file rows are
+read again for whether they are selected, so a later click sees the selection this batch just
+made. A read that cannot answer leaves the captured value. A refusal, a failed check, a
+double-click, a successful cut, copy, paste, type, or F2, an action that leaves the screen
+unchanged, or `done` / `give_up` drops the rest of the batch. A `give_up`, or a `done` that says the
+goal is not reached, is not taken when other actions came before it in the same batch: those
+actions may have changed the screen, so the next look decides. A `done` that says the goal is
+reached still ends the takeover. A cut, copy, or paste changes the
+clipboard, typing changes the field, F2 starts a rename, and a double-click opens another screen,
+so each of those is the last action. Select and add may come before it. The unchanged test is the
 existing tile comparison and does not run OCR or the icon models. `wait`, `type`, `set_value`,
 copy, and cut are not compared. An item with no element handle is allowed only as the first
 action of a batch.

@@ -122,6 +122,7 @@ def no_real_machine(monkeypatch):
         "ax_focus",
         "ax_set_value",
         "ax_operate",
+        "ax_selected",
         "element_state",
         "element_frame",
         "owned_popup_bounds",

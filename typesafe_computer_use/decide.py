@@ -49,7 +49,10 @@ def fixed_actions(browser: str, email: str | None, typing: bool = True) -> dict[
             "continue with. This is the only way to reach a website: never click the address bar, a URL, "
             "or a search box to get there. Works from any app, including this one."
         ),
-        "press_enter": "Press Return to submit the focused form or field.",
+        "press_enter": (
+            "Press Return to submit the focused form or field. When a menu item is focused, Return takes "
+            "that item; do not click a different menu item."
+        ),
         "press_escape": "Press Escape to dismiss a dialog, menu, or popup.",
         "go_back": (
             "Go back to the previous page or screen, as the browser's Back button does. Use when the last "
@@ -77,7 +80,13 @@ def fixed_actions(browser: str, email: str | None, typing: bool = True) -> dict[
 def kind_criteria(
     browser: str, email: str | None, offscreen: bool = False, typing: bool = True, desktop: bool = False
 ) -> dict[str, str]:
-    clicks = {"click_item": "Click one of the on-screen text items (chosen in the item question)."}
+    clicks = {
+        "click_item": (
+            "Click one of the on-screen text items (chosen in the item question). When more than one "
+            "file is already selected, do not click a different row: cut or copy the selection, or "
+            "click one of the selected rows to keep only that one."
+        )
+    }
     if desktop:
         clicks["open_item"] = (
             "Open one of the on-screen items (chosen in the item question) by double-clicking it: a file, "
@@ -85,8 +94,9 @@ def kind_criteria(
         )
         clicks["add_item"] = (
             "Click one on-screen item while holding the selection modifier (Control, or Command on a Mac), "
-            "so it is added to the current selection. A plain click replaces the selection. The item is "
-            "chosen in the item question."
+            "so it is added to the current selection. A plain click replaces the selection. Add only a "
+            "file the goal names. When the goal asks for one kind of file, such as .docx, do not add "
+            "other files in the same folder. The item is chosen in the item question."
         )
         clicks["shortcut"] = (
             "Press Control (Command on a Mac) together with the key chosen in the key question: cut, copy, "

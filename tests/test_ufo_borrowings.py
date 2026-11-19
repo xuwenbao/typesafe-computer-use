@@ -19,7 +19,7 @@ from typesafe_computer_use.actions import Context, add_item, click_item, press_o
 from typesafe_computer_use.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
 from typesafe_computer_use.config import settings
 from typesafe_computer_use.decide import Decision, kind_criteria
-from typesafe_computer_use.driver import act, load_driver_record, take_over
+from typesafe_computer_use.driver import _refresh_file_selection, act, load_driver_record, take_over
 from typesafe_computer_use.models import Abort, AxNode, ElementState, Item, signature
 from typesafe_computer_use.perception import to_ax_items
 from typesafe_computer_use.platform_adapter import desktop
@@ -354,11 +354,29 @@ def test_the_model_sees_controls_and_the_classifier_does_not_gain_set_value(scre
     assert "set_value" not in kind_criteria("Google Chrome", None)
 
 
-def _run_batch(monkeypatch, tmp_path, screen, items, moves, element, shots, presses=None):
+def _file_row(index: int, text: str, selected: bool = False) -> Item:
+    return Item(
+        index,
+        text,
+        1.0,
+        index * 30,
+        0,
+        index * 30 + 20,
+        20,
+        role="cell",
+        source="ax",
+        controls=("selection_item", "invoke"),
+        selected=selected,
+    )
+
+
+def _run_batch(monkeypatch, tmp_path, screen, items, moves, element, shots, presses=None, operate=None, selected=None):
     monkeypatch.setattr(desktop, "check_abort", lambda: None)
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
-    monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: False)
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: True)
+    monkeypatch.setattr(desktop, "ax_operate", (lambda *args, **kwargs: False) if operate is None else operate)
+    monkeypatch.setattr(desktop, "ax_selected", (lambda ref: None) if selected is None else selected)
     recorded = [] if presses is None else presses
     monkeypatch.setattr(desktop, "press", lambda key, command=False: recorded.append((key, command)))
     clicks = []
@@ -478,6 +496,180 @@ def test_a_double_click_stops_the_batch_before_a_paste(monkeypatch, tmp_path, sc
     assert any("double-clicked 'Archive'" in line for line in state.history)
     assert any("stopped the rest of the batch: a double-click opens another screen" in line for line in state.history)
     assert not any("command+v" in line for line in state.history)
+
+
+def test_a_click_after_two_selections_in_the_same_batch_is_refused(monkeypatch, tmp_path, screen):
+    rows = [_file_row(0, "Doc01.docx"), _file_row(1, "Doc02.docx"), _file_row(2, "Archive")]
+    chosen: set[str] = set()
+
+    def operate(ref, operation, value=None):
+        if operation == "select":
+            chosen.clear()
+            chosen.add(ref)
+            return True
+        if operation == "add_select":
+            chosen.add(ref)
+            return True
+        return False
+
+    live = replace(screen, ax_refs={0: "doc01", 1: "doc02", 2: "archive"})
+    red = Image.new("RGB", screen.image.size, "red")
+    blue = Image.new("RGB", screen.image.size, "blue")
+    presses = []
+    state, clicks = _run_batch(
+        monkeypatch,
+        tmp_path,
+        live,
+        rows,
+        [
+            step("click", item="0"),
+            step("click", item="1", modifier="add"),
+            step("click", item="2"),
+            step("shortcut", key="x"),
+        ],
+        lambda ref: ElementState(True, True, True),
+        [red, blue],
+        presses,
+        operate,
+        lambda ref: ref in chosen,
+    )
+    assert clicks == []
+    assert presses == []
+    assert chosen == {"doc01", "doc02"}
+    assert any("would replace them" in line for line in state.history)
+    assert any("stopped the rest of the batch" in line for line in state.history)
+    assert not any("command+x" in line for line in state.history)
+    assert state.driver_actions == 3
+
+
+def test_a_cut_stops_the_batch_before_the_next_click(monkeypatch, tmp_path, screen):
+    rows = [_file_row(0, "Doc01.docx", selected=True), _file_row(1, "新建文件夹")]
+    live = replace(screen, ax_refs={0: "doc01", 1: "folder"})
+    presses = []
+    state, clicks = _run_batch(
+        monkeypatch,
+        tmp_path,
+        live,
+        rows,
+        [step("shortcut", key="x"), step("click", item="1")],
+        lambda ref: ElementState(True, True, True),
+        [],
+        presses,
+    )
+    assert presses == [("x", True)]
+    assert clicks == []
+    assert any("pressed command+x" in line for line in state.history)
+    assert any("stopped the rest of the batch: a cut changes the clipboard" in line for line in state.history)
+    assert not any("新建文件夹" in line for line in state.history)
+    assert state.driver_actions == 1
+
+
+def test_select_add_and_cut_all_run_when_the_cut_is_last(monkeypatch, tmp_path, screen):
+    rows = [_file_row(0, "Doc01.docx"), _file_row(1, "Doc02.docx"), _file_row(2, "Archive")]
+    chosen: set[str] = set()
+
+    def operate(ref, operation, value=None):
+        if operation == "select":
+            chosen.clear()
+            chosen.add(ref)
+            return True
+        if operation == "add_select":
+            chosen.add(ref)
+            return True
+        return False
+
+    live = replace(screen, ax_refs={0: "doc01", 1: "doc02", 2: "archive"})
+    red = Image.new("RGB", screen.image.size, "red")
+    blue = Image.new("RGB", screen.image.size, "blue")
+    presses = []
+    state, clicks = _run_batch(
+        monkeypatch,
+        tmp_path,
+        live,
+        rows,
+        [
+            step("click", item="0"),
+            step("click", item="1", modifier="add"),
+            step("shortcut", key="x"),
+            step("click", item="2"),
+        ],
+        lambda ref: ElementState(True, True, True),
+        [red, blue],
+        presses,
+        operate,
+        lambda ref: ref in chosen,
+    )
+    assert clicks == []
+    assert presses == [("x", True)]
+    assert chosen == {"doc01", "doc02"}
+    assert any("selected 'Doc01.docx' via accessibility" in line for line in state.history)
+    assert any("clicked 'Doc02.docx' with add" in line for line in state.history)
+    assert any("pressed command+x (Doc01.docx, Doc02.docx;" in line for line in state.history)
+    assert any("stopped the rest of the batch: a cut changes the clipboard" in line for line in state.history)
+    assert not any("Archive" in line for line in state.history)
+    assert state.driver_actions == 3
+
+
+def test_a_selection_read_that_cannot_answer_keeps_the_captured_value(monkeypatch, screen):
+    row = _file_row(0, "Doc01.docx", selected=False)
+    live = replace(screen, ax_refs={0: "doc01"})
+    items = [row]
+    monkeypatch.setattr(desktop, "ax_selected", lambda ref: None)
+    _refresh_file_selection(live, items)
+    assert items[0].selected is False
+    monkeypatch.setattr(desktop, "ax_selected", lambda ref: True)
+    _refresh_file_selection(live, items)
+    assert items[0].selected is True
+
+
+def test_the_drive_packet_names_the_selected_files(screen, monkeypatch):
+    monkeypatch.setenv("CLICKER_WRITER_VISION", "false")
+    seen = []
+
+    def create(**kwargs):
+        seen.append(json.loads(kwargs["messages"][0]["content"][0]["text"]))
+        payload = {"reason": "next", "actions": [{"action": "wait"}]}
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+    rows = [
+        _file_row(0, "Doc01.docx", selected=True),
+        _file_row(1, "draft.txt"),
+        Item(2, "文档", 1.0, 0, 40, 20, 60, role="tab", source="ax", controls=("selection_item",), selected=True),
+    ]
+    compose_drive_step(
+        SimpleNamespace(messages=SimpleNamespace(create=create)),
+        "move the files",
+        screen,
+        rows,
+        [],
+        "stuck",
+        [],
+        [],
+        None,
+        3,
+        None,
+    )
+    assert seen[0]["selected_files"] == ["Doc01.docx"]
+
+
+def test_a_give_up_after_other_actions_waits_for_the_next_screen(monkeypatch, tmp_path, screen):
+    item = Item(0, "此电脑", 1.0, 0, 0, 20, 20, source="ax")
+    live = replace(screen, ax_refs={0: "pc"})
+    state, clicks = _run_batch(
+        monkeypatch,
+        tmp_path,
+        live,
+        [item],
+        [step("click", item="0"), step("give_up")],
+        lambda ref: ElementState(True, True, True),
+        [Image.new("RGB", screen.image.size, "red")],
+        None,
+    )
+    assert len(clicks) == 1
+    assert state.driver_actions == 1
+    assert any("stopped the rest of the batch: the screen has not been seen since the earlier actions" in line for line in state.history)
+    record = load_driver_record(tmp_path / "step-000-driver.json")
+    assert [entry["action"] for entry in record["actions"]] == ["click"]
 
 
 def test_done_ends_the_batch_without_spending_the_budget(monkeypatch, tmp_path, screen):

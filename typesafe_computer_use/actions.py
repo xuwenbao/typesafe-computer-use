@@ -41,7 +41,7 @@ def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context)
         elif decision.opening:
             what = open_item(by_index[key], screen)
         else:
-            what = click_item(by_index[key], screen)
+            what = click_item(by_index[key], screen, items)
         mates = row_mates(items, limit=None).get(int(key))
         # Three rows each end in a Buy: the line must say which, or trying one marks them all as tried.
         # The whole row goes in, so two rows that open alike still get lines of their own.
@@ -56,8 +56,21 @@ def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context)
     return handler(decision, screen, items, ctx)
 
 
+def _menu_blocks(item: Item, screen: Screen) -> str | None:
+    """A menu item has the keyboard. Return takes it. A click on anything else picks a different command."""
+    field = screen.field
+    if field is None or field.role != "AXMenuBarItem":
+        return None
+    if item.role == "menu" and item.text == field.label:
+        return None
+    return f"click refused: a menu is open on {field.label!r}; press return to take it, or up or down to move"
+
+
 def open_item(item: Item, screen: Screen) -> str:
     """Open an item by double-clicking it. A single click only selects a file or a folder."""
+    refused = _menu_blocks(item, screen)
+    if refused is not None:
+        return refused
     try:
         desktop.click_at(screen.to_points(item), count=2)
     except Missed as e:
@@ -76,7 +89,34 @@ def _disabled(item: Item) -> str | None:
 _PATTERN_CLICKS = (("toggle", "toggled"), ("select", "selected"), ("expand_toggle", "expanded or collapsed"))
 
 
-def click_item(item: Item, screen: Screen) -> str:
+def _file_rows(items: list[Item] | None) -> list[Item]:
+    """File-list rows. A tab or a radio can also report a selection, and neither is one of these."""
+    if not items:
+        return []
+    return [it for it in items if it.role == "cell" and "selection_item" in it.controls]
+
+
+def _selected_file_names(items: list[Item] | None) -> list[str]:
+    """Names of the selected file rows, in the order they appear on the screen."""
+    names: list[str] = []
+    for it in _file_rows(items):
+        if it.selected and it.text not in names:
+            names.append(it.text)
+    return names
+
+
+def _replacing_click(item: Item, items: list[Item] | None) -> str | None:
+    """A plain click on a different file row would drop a selection of two or more files."""
+    names = _selected_file_names(items)
+    if len(names) < 2 or item.text in names:
+        return None
+    if item.role != "cell" or "selection_item" not in item.controls:
+        return None
+    listed = f"{names[0]} and {names[1]}" if len(names) == 2 else ", ".join(names[:-1]) + f" and {names[-1]}"
+    return f"click refused: {listed} are selected; a plain click on {item.text!r} would replace them"
+
+
+def click_item(item: Item, screen: Screen, items: list[Item] | None = None) -> str:
     """Press an item the app declared through the accessibility tree; click the pixel under it otherwise.
 
     A press goes to the control itself, so it lands even when the center of the box is covered by
@@ -84,8 +124,9 @@ def click_item(item: Item, screen: Screen) -> str:
     A click there would land on a popup in front of the item, so that popup is closed first.
     A control the tree says is disabled is not clicked at all.
     A row that can be selected is not invoked: Invoke on a file opens it, and a click only selects.
+    A plain click on a different file row is refused while two or more file rows are already selected.
     """
-    refused = _disabled(item)
+    refused = _disabled(item) or _menu_blocks(item, screen) or _replacing_click(item, items)
     if refused is not None:
         return refused
     ref = screen.ax_refs.get(item.index)
@@ -116,7 +157,7 @@ def click_item(item: Item, screen: Screen) -> str:
 
 def add_item(item: Item, screen: Screen) -> str:
     """Add an item to the selection. Select() would replace it, and Invoke would open a file."""
-    refused = _disabled(item)
+    refused = _disabled(item) or _menu_blocks(item, screen)
     if refused is not None:
         return refused
     ref = screen.ax_refs.get(item.index)
@@ -313,24 +354,29 @@ def _type_text(decision, screen: Screen, items, ctx: Context) -> str:
 _CLIPBOARD_KEYS = frozenset({"c", "x"})
 
 
-def clipboard_line(key: str) -> str:
+def clipboard_line(key: str, items: list[Item] | None = None) -> str:
     """Press Control (Command on a Mac) with `key`, and name the files the clipboard holds afterward.
 
-    None from the platform means it cannot read the clipboard, so the line stays the old one.
+    A file list with nothing selected is not cut: the key would act on whatever else looked selected.
+    None from the platform means it cannot read the clipboard, so that part of the line stays unmarked.
     An empty or unchanged clipboard is said outright: a quiet success would send the next step to paste.
     """
+    names = _selected_file_names(items)
+    if _file_rows(items) and not names:
+        return "shortcut refused: no file is selected"
     before = desktop.clipboard_files()
     desktop.press(key, command=True)
     after = desktop.clipboard_files()
     line = f"pressed command+{key}"
+    chosen = f"{', '.join(names)}; " if names else ""
     if after is None:
-        return f"{line} (to the clipboard; the screen need not change)"
+        return f"{line} ({chosen}to the clipboard; the screen need not change)"
     shown = ", ".join(after)
     if not after:
-        return f"{line} (the clipboard has no files)"
+        return f"{line} ({chosen}the clipboard has no files)"
     if before == after:
-        return f"{line} (the clipboard is unchanged: {shown})"
-    return f"{line} (to the clipboard: {shown}; the screen need not change)"
+        return f"{line} ({chosen}the clipboard is unchanged: {shown})"
+    return f"{line} ({chosen}to the clipboard: {shown}; the screen need not change)"
 
 
 def _shortcut(decision: Decision, screen: Screen, items: list[Item], ctx: Context) -> str:
@@ -339,7 +385,7 @@ def _shortcut(decision: Decision, screen: Screen, items: list[Item], ctx: Contex
     if key not in SHORTCUT_KEYS:
         return f"shortcut refused: {key!r} is not one of {allowed}"
     if key in _CLIPBOARD_KEYS:
-        return clipboard_line(key)
+        return clipboard_line(key, items)
     desktop.press(key, command=True)
     return f"pressed command+{key}"
 

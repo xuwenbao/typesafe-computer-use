@@ -928,6 +928,14 @@ def _range_bounds(element) -> tuple[float | None, float | None]:
         return None, None
 
 
+def ax_selected(ref) -> bool | None:
+    """Whether this element is in the selection now. None when it cannot say."""
+    if ref is None:
+        return None
+    check_abort()
+    return _selected(ref)
+
+
 def _selected(element) -> bool | None:
     """Whether a list row is in the selection. None when it has no SelectionItem pattern."""
     pattern = _pattern(element, PATTERN_IDS["selection_item"])

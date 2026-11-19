@@ -450,6 +450,11 @@ def ax_operate(ref, operation: str, value: str | None = None) -> bool:
     return False
 
 
+def ax_selected(ref) -> bool | None:
+    """macOS does not re-read a list selection here. None leaves the captured value as it was."""
+    return None
+
+
 def clipboard_files() -> tuple[str, ...] | None:
     """macOS does not read the file clipboard here. None means the shortcut line stays unmarked."""
     return None

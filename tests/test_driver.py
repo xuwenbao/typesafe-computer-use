@@ -37,6 +37,10 @@ def machine(monkeypatch):
 ITEMS = [Item(0, "Archive", 1.0, 100.0, 100.0, 300.0, 140.0)]
 
 
+def file_row(index: int, text: str, selected: bool = False) -> Item:
+    return Item(index, text, 1.0, 0, 0, 20, 20, role="cell", controls=("selection_item",), selected=selected)
+
+
 def move(action: str, **fields) -> DriveStep:
     return DriveStep(reason="test", action=action, **fields)
 
@@ -90,9 +94,80 @@ def test_a_double_click_a_right_click_and_a_modified_click_reach_the_adapter(scr
     ]
 
 
+def test_a_click_outside_an_open_menu_is_refused(screen, machine):
+    button = Item(1, "新建", 1.0, 40, 0, 80, 20, role="button", source="ax")
+    live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
+    line = act(move("click", item="1"), live, [button])
+    assert line == "click refused: a menu is open on '文件夹'; press return to take it, or up or down to move"
+    assert machine == []
+
+
+def test_a_different_menu_item_is_refused_while_one_is_focused(screen, machine):
+    other = Item(2, "DOCX 文档", 1.0, 0, 40, 40, 60, role="menu", source="ax")
+    live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20), ax_refs={2: "docx"})
+    line = act(move("click", item="2"), live, [other])
+    assert line == "click refused: a menu is open on '文件夹'; press return to take it, or up or down to move"
+    assert machine == []
+
+
+def test_a_menu_item_can_be_clicked_while_its_menu_is_open(screen, machine):
+    item = Item(0, "文件夹", 1.0, 0, 0, 20, 20, role="menu", source="ax")
+    live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
+    line = act(move("click", item="0"), live, [item])
+    assert "refused" not in line
+    assert machine[0][0] == "click"
+
+
 def test_a_click_modifier_the_model_invented_clicks_nothing(screen, machine):
     assert act(move("click", item="0", modifier="alt"), screen, ITEMS).startswith("click refused:")
     assert machine == []
+
+
+def test_a_plain_click_does_not_replace_two_selected_files(screen, machine, monkeypatch):
+    rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True), file_row(2, "Archive")]
+    called = []
+    monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: called.append(args) or False)
+    line = act(move("click", item="2"), screen, rows)
+    assert line == "click refused: Doc01.docx and Doc02.docx are selected; a plain click on 'Archive' would replace them"
+    assert called == []
+    assert machine == []
+
+
+def test_a_click_on_one_of_the_selected_files_narrows_the_selection(screen, machine, monkeypatch):
+    rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True)]
+    live = replace(screen, ax_refs={0: "doc"})
+    calls = []
+    monkeypatch.setattr(
+        desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or operation == "select"
+    )
+    assert act(move("click", item="0"), live, rows) == "selected 'Doc01.docx' via accessibility"
+    assert "select" in calls
+    assert machine == []
+
+
+def test_a_single_selected_file_can_be_replaced_by_another(screen, machine, monkeypatch):
+    rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx")]
+    live = replace(screen, ax_refs={1: "doc"})
+    calls = []
+    monkeypatch.setattr(
+        desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or operation == "select"
+    )
+    assert act(move("click", item="1"), live, rows) == "selected 'Doc02.docx' via accessibility"
+    assert "select" in calls
+    assert machine == []
+
+
+def test_a_cut_with_no_file_selected_does_not_press(screen, machine):
+    rows = [file_row(0, "Doc01.docx"), file_row(1, "Doc02.docx")]
+    assert act(move("shortcut", key="x"), screen, rows) == "shortcut refused: no file is selected"
+    assert machine == []
+
+
+def test_a_cut_names_the_selected_files(screen, machine):
+    rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True)]
+    line = act(move("shortcut", key="x"), screen, rows)
+    assert line == "pressed command+x (Doc01.docx, Doc02.docx; to the clipboard; the screen need not change)"
+    assert machine == [("press", "x", True)]
 
 
 def test_adding_a_file_uses_add_to_selection_and_focuses_it(screen, machine, monkeypatch):

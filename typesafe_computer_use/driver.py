@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import json
 import string
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
-from .actions import WAIT_SECONDS, add_item, click_item, clipboard_line, fill_field, focus_landed
+from .actions import WAIT_SECONDS, _menu_blocks, add_item, click_item, clipboard_line, fill_field, focus_landed
 from .calls import MeteredWriter
 from .models import AxNode, Item, Missed, Screen, signature
 from .parse.marks import marks
@@ -159,8 +159,14 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
             stop_note = None
             before = screen.image
             for index, move in enumerate(moves):
+                if index:
+                    _refresh_file_selection(screen, items)
                 if cursor >= first + budget:
                     stop_note = "the action budget is used"
+                    break
+                # 放弃是对着这一批开始时的画面做的。前面的动作可能已经换了画面，先看新画面再决定放不放弃。
+                if index and move.action in ("done", "give_up") and not (move.action == "done" and move.achieved):
+                    stop_note = "the screen has not been seen since the earlier actions"
                     break
                 log(
                     f"\ndriver step {cursor}: app={screen.app!r} items={len(items)} action={move.action} {_target(move)}\n  {move.reason}"
@@ -212,6 +218,11 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 if move.action == "double_click" and index + 1 < len(moves):
                     stop_note = "a double-click opens another screen"
                     break
+                # 剪切、复制、粘贴、输入和 F2 改变的是选择、剪贴板或正在编辑的名字。后面的动作仍按旧画面排的。
+                ending = _batch_ending(move, what)
+                if ending is not None and index + 1 < len(moves):
+                    stop_note = ending
+                    break
                 if _comparable(move, what) and index + 1 < len(moves):
                     after = desktop.screenshot()
                     if not pixels_changed(before, after):
@@ -231,6 +242,37 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
     finally:
         state.driver_actions = cursor - first
         state.driver_calls = calls
+
+
+def _refresh_file_selection(screen: Screen, items: list[Item]) -> None:
+    """把文件行的选中状态改成无障碍树现在报告的。读不到就保持看屏时的值。"""
+    for index, item in enumerate(items):
+        if item.role != "cell" or "selection_item" not in item.controls:
+            continue
+        ref = screen.ax_refs.get(item.index)
+        if ref is None:
+            continue
+        selected = desktop.ax_selected(ref)
+        if selected is None or selected == item.selected:
+            continue
+        items[index] = replace(item, selected=selected)
+
+
+def _batch_ending(move: DriveStep, what: str) -> str | None:
+    """这一步做成之后，同一批剩下的动作不再对着这张画面。没做成的不在这里停。"""
+    if "refused" in what:
+        return None
+    if move.action == "shortcut" and move.key == "x" and what.startswith("pressed "):
+        return "a cut changes the clipboard"
+    if move.action == "shortcut" and move.key == "c" and what.startswith("pressed "):
+        return "a copy changes the clipboard"
+    if move.action == "shortcut" and move.key == "v" and what.startswith("pressed "):
+        return "a paste changes the screen it lands on"
+    if move.action == "type" and what.startswith("typed "):
+        return "typing changes the field"
+    if move.action == "key" and move.key == "f2" and what.startswith("pressed "):
+        return "rename starts on the selected row"
+    return None
 
 
 def _record(state, line: str) -> None:
@@ -452,7 +494,7 @@ def act(move: DriveStep, screen: Screen, items: list[Item]) -> str:
         if move.key not in SHORTCUTS:
             return f"shortcut refused: {move.key!r} is not one of {', '.join(SHORTCUTS)}"
         if move.key in QUIET_SHORTCUTS:
-            return clipboard_line(move.key)
+            return clipboard_line(move.key, items)
         desktop.press(move.key, command=True)
         return f"pressed command+{move.key}"
     if move.action in ("scroll_down", "scroll_up"):
@@ -641,10 +683,13 @@ def _click(move: DriveStep, screen: Screen, items: list[Item]) -> str:
     modifier = _modifier(move.modifier)
     if modifier not in MODIFIERS:
         return f"click refused: {move.modifier!r} is not a modifier"
+    blocked = _menu_blocks(item, screen)
+    if blocked is not None:
+        return blocked
     # 目标：普通单击走分类器同一条路径。追加选择走 AddToSelection，不靠按住 Control 再点一个很矮的文件名。
     # 完成：返回点击结果；双击、右键和带 Shift 的点击改走下面。
     if move.action == "click" and not move.modifier:
-        return click_item(item, screen)
+        return click_item(item, screen, items)
     if move.action == "click" and modifier == "add":
         return add_item(item, screen)
 
