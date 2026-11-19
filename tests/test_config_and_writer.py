@@ -316,6 +316,10 @@ def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
     assert "Do not press up or down first." in DRIVE_SYSTEM
     assert "highlighted_menu_item" in ANSWER_SYSTEM
     assert "set focus to press Return" in ANSWER_SYSTEM
+    assert "actions_since" in ANSWER_SYSTEM
+    assert "missing" in ANSWER_SYSTEM
+    assert "driver_said_done" in ANSWER_SYSTEM
+    assert "actions_since" in DRIVE_SYSTEM
     assert "Return on a file row opens" in ANSWER_SYSTEM
     assert "Set route to classifier" in ANSWER_SYSTEM
     assert "Set route to driver" in ANSWER_SYSTEM

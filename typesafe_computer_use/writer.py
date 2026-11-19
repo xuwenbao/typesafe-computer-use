@@ -340,6 +340,7 @@ class Answer:
     focus: str = ""  # the next sub-goal for the classifier, in terms of the screen
     question: str = ""  # what only the user can say
     route: str = ""  # classifier, driver, or end
+    missing: tuple[tuple[str, str], ...] = ()  # (name, absent|still_here|other) when the goal is not reached
 
 
 ANSWER_SYSTEM = (
@@ -356,7 +357,10 @@ ANSWER_SYSTEM = (
     "When the screen does not hold the result, say so plainly, then say what is on screen and the "
     "one next step that would get there. on_screen names what this screen lists. A name there is "
     "on this screen: a blank area of the capture cannot say it is absent. Text from an earlier "
-    "screen, such as an empty folder, describes only that screen. A file or folder is in this "
+    "screen, such as an empty folder, describes only that screen. Each earlier screen is older "
+    "than the actions_since actions taken after it, and those actions may have changed the place "
+    "it shows. An earlier screen cannot deny what this screen shows, and cannot prove that a place "
+    "acted on later is still as it was. A file or folder is in this "
     "folder only when on_screen.file_rows lists it. A name in the sidebar, in Quick access, or in "
     "the address bar is a place to go, not a row of this folder, and does not show that it is "
     "here. When the goal asks for a new folder here and file_rows does not list it, the next step "
@@ -371,9 +375,15 @@ ANSWER_SYSTEM = (
     "on_screen.file_rows lists them, the goal is reached. When this screen is the place the goal "
     "clears, and on_screen.file_rows still lists them, the goal is not reached. Do not set a focus "
     "only to confirm a name "
-    "on_screen already lists. Return on a file row opens that file. When "
-    "listed_names_the_previous_answer_denied is present, the previous answer said those names were "
-    "absent. They are on this screen. Judge again from on_screen. There is no capture this time.\n\n"
+    "on_screen already lists. Return on a file row opens that file. When the goal is not reached, "
+    "set missing to one entry for each part this screen does not show done. Copy name from "
+    "on_screen. Set state to absent when the goal needs that name on this screen and it is not "
+    "here, still_here when the goal needs it gone and it is still here, or other for any other "
+    "unfinished part. When listed_names_the_previous_answer_denied is present, the previous answer "
+    "said those names were absent. They are on this screen. Judge again from on_screen. There is "
+    "no capture this time. When driver_said_done is present, the driver already judged the goal "
+    "reached, and that text is its reason. Judge again from on_screen. If you disagree, name in "
+    "missing the part this screen does not show done.\n\n"
     "When the goal is not reached, set route to classifier, driver, or end. "
     "Set route to classifier when the next step is one action the classifier can take, and set "
     "focus to that action: one short imperative sentence naming it in terms of what this screen "
@@ -472,6 +482,35 @@ def denied_listed_names(text: str, achieved: bool, items: list[Item]) -> list[st
     return found
 
 
+_MISSING_STATES = ("absent", "still_here", "other")
+
+
+def _missing_parts(raw: object, achieved: bool) -> tuple[tuple[str, str], ...]:
+    """The parts this screen does not show done. A reached goal names none of them."""
+    if achieved or not isinstance(raw, list):
+        return ()
+    found: list[tuple[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        state = str(item.get("state") or "").strip()
+        found.append((name, state if state in _MISSING_STATES else "other"))
+    return tuple(found)
+
+
+def listed_but_called_absent(answer: Answer, items: list[Item]) -> list[str]:
+    """File rows `missing` calls absent. A row that should leave and is still here is not a contradiction."""
+    rows = set(_on_screen(items)["file_rows"])
+    found: list[str] = []
+    for name, state in answer.missing:
+        if state == "absent" and name in rows and name not in found:
+            found.append(name)
+    return found
+
+
 def _offscreen_controls(screen: Screen) -> list[dict]:
     """Controls on this page that are not in view, numbered as focus_offscreen addresses them."""
     return [{"i": i, "control": f"{node.role_word} {node.label!r}"} for i, node in enumerate(screen.offscreen[:OFFSCREEN_LIMIT])]
@@ -549,7 +588,10 @@ DRIVE_SYSTEM = (
     "action, such as a key, a shortcut, a double-click, a right-click, or a different item.\n\n"
     "on_screen names what this screen lists. A name there is on this screen: a blank area of the "
     "capture cannot say it is absent. Text in earlier_screens, such as an empty folder, describes "
-    "only that screen. A file or folder is in this folder only when on_screen.file_rows lists it. "
+    "only that screen. Each earlier screen is older than the actions_since actions taken after it, "
+    "and those actions may have changed the place it shows. An earlier screen cannot deny what "
+    "this screen shows, and cannot prove that a place acted on later is still as it was. A file or "
+    "folder is in this folder only when on_screen.file_rows lists it. "
     "A name in the sidebar, in Quick access, or in the address bar is a place to go, not a row of "
     "this folder, and does not show that it is here. When the goal asks for a new folder here and "
     "file_rows does not list it, create it. Do not open a same-named item somewhere else. When "
@@ -845,6 +887,7 @@ def compose_answer(
     *,
     picture: bool = True,
     denied: list[str] | None = None,
+    driver_said_done: str = "",
 ) -> Answer:
     """What to tell the user now that the classifier has stopped, and how the run could go on.
 
@@ -873,6 +916,7 @@ def compose_answer(
             f"{it.text} (under {screen.covered[it.index].title})" if it.index in screen.covered else it.text for it in items
         ],
         **({"earlier_screens": earlier} if earlier else {}),
+        **({"driver_said_done": driver_said_done} if driver_said_done else {}),
     }
     data = _structured(
         writer,
@@ -884,10 +928,23 @@ def compose_answer(
             "focus": {"type": "string"},
             "question": {"type": "string"},
             "route": {"type": "string", "enum": list(ROUTES)},
+            "missing": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "state": {"type": "string", "enum": list(_MISSING_STATES)},
+                    },
+                    "required": ["name", "state"],
+                    "additionalProperties": False,
+                },
+            },
         },
         max_tokens=2048,
         answering=True,
         image=screen.image if picture and settings().writer_vision else None,
+        defaults={"missing": []},
     )
     focus = data["focus"].strip()
     achieved = bool(data["achieved"])
@@ -897,4 +954,5 @@ def compose_answer(
         focus=focus,
         question=data["question"].strip(),
         route=_settled_route(str(data.get("route", "")), achieved, focus),
+        missing=_missing_parts(data.get("missing"), achieved),
     )

@@ -533,7 +533,7 @@ class FakeWriter:
             reply = {"fill": bool(self.text), "text": self.text, "submit": self.submit, "reason": "the goal names what to type"}
         elif asked == {"ok", "url", "reason"}:
             reply = {"ok": bool(self.url), "url": self.url, "reason": "the goal names the site"}
-        elif asked == {"achieved", "answer", "focus", "question", "route"}:
+        elif asked == {"achieved", "answer", "focus", "question", "route", "missing"}:
             self.packets.append(packet)
             earlier = [text for screen in packet.get("earlier_screens", []) for text in screen["text"]]
             scripted = self.reviews.pop(0) if self.reviews else {}
@@ -543,6 +543,7 @@ class FakeWriter:
                 "answer": " ".join(packet["screen_text_in_reading_order"] + earlier),
                 "focus": "",
                 "question": "",
+                "missing": [],
                 **scripted,
             }
         elif asked == {"reason", "actions"}:

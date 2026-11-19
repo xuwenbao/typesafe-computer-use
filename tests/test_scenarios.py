@@ -2012,6 +2012,38 @@ def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of
     assert (tmp_path / "run" / "step-003-driver.json").is_file()
 
 
+def test_a_driver_that_finished_is_checked_once_more_against_the_screen(monkeypatch, tmp_path):
+    writer = FakeWriter(
+        reviews=[
+            {"achieved": False},
+            {"achieved": False, "missing": [], "answer": "the files were not moved"},
+            {"achieved": True, "answer": "Doc01.docx is in Archive"},
+        ],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world := archive_world(),
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert state.outcome == "driver done" and state.answer.achieved
+    assert world.page.name == "moved"
+    assert state.driver_done == "scripted"
+    assert writer.packets[-1]["driver_said_done"] == "scripted"
+    assert "driver_said_done" not in writer.packets[-2]
+
+
 def test_a_second_stop_in_the_same_app_goes_to_the_driver(monkeypatch, tmp_path):
     world = World([Page(name="docs", items=["Doc01.docx", "新建"], app="File Explorer")])
 

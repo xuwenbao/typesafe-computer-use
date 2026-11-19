@@ -11,7 +11,7 @@ from PIL import Image
 from typesafe_computer_use import runner, writer
 from typesafe_computer_use.actions import Context
 from typesafe_computer_use.models import Field, Guidance, Item, Popup
-from typesafe_computer_use.runner import RunConfig, RunState, hand_off, resolve, wants_driver
+from typesafe_computer_use.runner import RunConfig, RunState, answer_last, hand_off, resolve, wants_driver
 from typesafe_computer_use.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
 
 GOAL = "find the next upcoming bruno mars concert"
@@ -78,7 +78,14 @@ def test_the_answer_request_carries_what_the_run_has_learned_and_offers_both_way
 
     assert answer == Answer(text="Two sizes.", achieved=False, focus="Click '15 inch'", question="", route="classifier")
     request = fake.requests[0]
-    assert set(request["output_config"]["format"]["schema"]["required"]) == {"achieved", "answer", "focus", "question", "route"}
+    assert set(request["output_config"]["format"]["schema"]["required"]) == {
+        "achieved",
+        "answer",
+        "focus",
+        "question",
+        "route",
+        "missing",
+    }
     packet = json.loads(request["messages"][0]["content"][1]["text"])
     assert packet["current_focus"] == "Open the size menu"
     assert packet["user_said"] == [{"asked": "13 or 15 inch?", "replied": "15"}]
@@ -303,6 +310,128 @@ def test_files_still_in_the_place_being_cleared_stay_unfinished(tmp_path, screen
     assert state.guidance.focus == "Open Archive"
     assert "back to the classifier" in lines[0]
     assert len(fake.requests) == 2
+
+
+def test_missing_is_empty_when_the_goal_is_reached_and_an_unknown_state_is_other(screen):
+    reached = compose_answer(
+        FakeWriter({"achieved": True, "answer": "done", "missing": [{"name": "Doc01.docx", "state": "absent"}]}),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+    odd = compose_answer(
+        FakeWriter(
+            {
+                "achieved": False,
+                "answer": "not yet",
+                "missing": [{"name": "Save", "state": "gone"}, {"name": "", "state": "absent"}],
+            }
+        ),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+
+    assert reached.missing == ()
+    assert odd.missing == (("Save", "other"),)
+
+
+def test_a_file_row_named_absent_in_missing_is_judged_again_without_the_capture(tmp_path, screen):
+    fake = Replies(
+        [
+            {"achieved": False, "answer": "not moved", "missing": [{"name": "Doc01.docx", "state": "absent"}]},
+            {"achieved": True, "answer": "they are listed", "missing": []},
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
+    _, log = logged()
+
+    hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
+
+    assert len(fake.requests) == 2
+    assert [block["type"] for block in fake.requests[1]["messages"][0]["content"]] == ["text"]
+    assert packet_of(fake.requests[1])["listed_names_the_previous_answer_denied"] == ["Doc01.docx"]
+
+
+def test_a_file_row_that_should_have_left_is_not_asked_again(tmp_path, screen):
+    fake = Replies(
+        [
+            {
+                "achieved": False,
+                "answer": "Doc01.docx is still here",
+                "focus": "Open Archive",
+                "missing": [{"name": "Doc01.docx", "state": "still_here"}],
+            }
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    _, log = logged()
+
+    hand_off(
+        RunConfig(goal="move the docx files out of Documents", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log
+    )
+
+    assert len(fake.requests) == 1
+
+
+def test_an_absent_name_that_is_not_a_file_row_is_not_asked_again(tmp_path, screen):
+    fake = Replies(
+        [
+            {
+                "achieved": False,
+                "answer": "no folder",
+                "focus": "Create Archive",
+                "missing": [{"name": "Archive", "state": "absent"}],
+            }
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    _, log = logged()
+
+    hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
+
+    assert len(fake.requests) == 1
+
+
+def test_a_writer_who_disagrees_with_a_finished_driver_is_asked_once_more(tmp_path, screen):
+    fake = Replies(
+        [
+            {"achieved": False, "answer": "not moved", "missing": []},
+            {"achieved": True, "answer": "both files are in Archive", "missing": []},
+        ]
+    )
+    state = RunState(
+        outcome="driver done",
+        driver_done="both files are listed",
+        view=(screen, file_rows("Doc01.docx", "Doc02.docx")),
+    )
+    lines, log = logged()
+
+    answer_last(RunConfig(goal="move the files into Archive", out=tmp_path), context(fake), state, log)
+
+    assert state.answer is not None and state.answer.achieved
+    assert "the driver said done; asking the writer once more" in "\n".join(lines)
+    assert "driver_said_done" not in packet_of(fake.requests[0])
+    assert packet_of(fake.requests[1])["driver_said_done"] == "both files are listed"
+    assert fake.requests[1]["messages"][0]["content"][0]["type"] == "image"
+
+
+@pytest.mark.parametrize(("driver_done", "achieved"), [("", False), ("both files are listed", True)])
+def test_the_writer_is_not_asked_again_when_there_is_no_disagreement(driver_done, achieved, tmp_path, screen):
+    fake = Replies([{"achieved": achieved, "answer": "the screen decides", "missing": []}])
+    state = RunState(
+        outcome="driver done" if driver_done else "driver gave up", driver_done=driver_done, view=(screen, file_rows("Doc01.docx"))
+    )
+    _, log = logged()
+
+    answer_last(RunConfig(goal="move the files into Archive", out=tmp_path), context(fake), state, log)
+
+    assert len(fake.requests) == 1
+    assert state.answer is not None and state.answer.achieved is achieved
 
 
 def test_a_missing_name_that_is_not_on_screen_is_not_asked_again(tmp_path, screen):

@@ -29,7 +29,7 @@ from .perception import ParseCache, capture, ocr_region, perceive, pipeline_reco
 from .platform_adapter import desktop
 from .report import Log, annotate, ax_count, render_payload, top
 from .timing import format_timing, phase, summarize
-from .writer import Answer, WriterError, compose_answer, denied_listed_names
+from .writer import Answer, WriterError, compose_answer, denied_listed_names, listed_but_called_absent
 
 # ---- 判断“卡住了”的阈值 ----
 # 判断一个动作有没有效果，看的是动作之后的截图有没有变化，而不是看历史记录里写了什么。
@@ -130,6 +130,7 @@ class RunState:
     image_refusals: list[dict] = field(default_factory=list)  # 截图被模型拒收、改成不带图重问的步骤及原因
     driver_actions: int = 0  # 接管实际执行的动作数，含被拒绝的
     driver_calls: int = 0  # 接管问模型的次数
+    driver_done: str = ""  # 接管判定完成时给出的理由；空表示它没有这么判定
 
 
 def run(cfg: RunConfig, ctx_factory) -> RunState:
@@ -216,12 +217,34 @@ def wants_driver(cfg: RunConfig, ctx: Context, state: RunState) -> bool:
 
 
 def answer_last(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> None:
-    """接管结束后，让写手看最后的屏幕给出最终回答。到这里运行就结束了，不会再交回分类器。"""
+    """接管结束后，让写手看最后的屏幕给出最终回答。到这里运行就结束了，不会再交回分类器。
+
+    接管已经判定完成、写手却说没完成时，把接管的理由和当前画面再给写手看一次，以这次为准。
+    """
     try:
         answer = review(cfg, ctx, state, driver.STOPPED[state.outcome], can_ask=False)
     except WriterError as e:
         log(f"\nno answer: the writer failed ({e})")
         return
+    if not answer.achieved and state.driver_done and state.view is not None:
+        log("\nthe driver said done; asking the writer once more")
+        screen, items = state.view
+        try:
+            answer = compose_answer(
+                ctx.writer,
+                cfg.goal,
+                screen,
+                items,
+                state.history,
+                driver.STOPPED[state.outcome],
+                earlier_screens(state, signature(screen, items)),
+                state.guidance,
+                stops_so_far(state),
+                False,
+                driver_said_done=state.driver_done,
+            )
+        except WriterError as e:
+            log(f"\nno answer: the writer failed ({e})")
     state.answer = answer
     log(f"\nanswer ({verdict(answer)}):\n  {answer.text}")
 
@@ -373,6 +396,9 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
     )
     # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准。
     denied = denied_listed_names(f"{answer.text}\n{answer.focus}", answer.achieved, items)
+    for name in listed_but_called_absent(answer, items):
+        if name not in denied:
+            denied.append(name)
     if not denied:
         return answer
     return compose_answer(
@@ -397,16 +423,21 @@ def earlier_screens(state: RunState, final: Signature, budget: int = EARLIER_LIN
     原因：答案可能出现在中途的页面上（比如价格在商品列表页，结账页上没有）。
     规则：重复的屏幕只发一次；从最新的往前取，总行数超过 budget 就不再往前取。
     """
-    out: list[Signature] = []
+    out: list[tuple[Signature, int]] = []
     lines_left = budget
-    for seen, _ in reversed(state.seen):
-        if same_screen(seen, final) or any(same_screen(seen, kept) for kept in out):
+    total = len(state.seen)
+    for index in range(total - 1, -1, -1):
+        seen = state.seen[index][0]
+        if same_screen(seen, final) or any(same_screen(seen, kept) for kept, _ in out):
             continue
         lines_left -= len(seen[3])
         if lines_left < 0:
             break
-        out.append(seen)
-    return [{"app": app, "url": url, "text": [text for text, _ in lines]} for app, url, _, lines in reversed(out)]
+        out.append((seen, total - index))
+    return [
+        {"app": app, "url": url, "text": [text for text, _ in lines], "actions_since": since}
+        for (app, url, _, lines), since in reversed(out)
+    ]
 
 
 def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log) -> bool:

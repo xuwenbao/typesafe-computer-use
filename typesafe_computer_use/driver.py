@@ -209,6 +209,8 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 entry = {"step": cursor, **asdict(move), "did": None}
                 if move.action == "done":
                     state.outcome = "driver done" if move.achieved else "driver gave up"
+                    if move.achieved:
+                        state.driver_done = move.reason
                     entry["did"] = state.outcome
                     taken.append(entry)
                     _write_call(prefix, cursor if not taken else taken[0]["step"], calls, taken, reasked)
