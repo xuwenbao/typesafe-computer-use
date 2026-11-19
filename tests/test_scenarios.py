@@ -2012,6 +2012,39 @@ def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of
     assert (tmp_path / "run" / "step-003-driver.json").is_file()
 
 
+def test_a_second_stop_in_the_same_app_goes_to_the_driver(monkeypatch, tmp_path):
+    world = World([Page(name="docs", items=["Doc01.docx", "新建"], app="File Explorer")])
+
+    def policy(state: dict, questions: dict) -> tuple:
+        acted = len(state["previous_actions"])
+        if "current_focus" not in state:
+            return ("click_item", "Doc01.docx") if acted == 0 else ("none", None)
+        return ("click_item", "新建") if acted == 1 else ("none", None)
+
+    writer = FakeWriter(
+        reviews=[
+            {"focus": "Click 'Doc01.docx'", "route": "classifier"},
+            {"focus": "Click '新建'", "route": "classifier"},
+        ],
+        drives=[{"action": "done", "achieved": True}],
+    )
+
+    state = drive(
+        world,
+        policy,
+        goal="Create a folder named Archive",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert len(state.handoffs) == 1
+    assert state.handoffs[0].page == ("File Explorer", None)
+    assert state.outcome == "driver done" and state.answer is not None and state.answer.achieved
+    assert world.log == ["click:Doc01.docx", "click:新建"]
+
+
 def test_l59_with_the_driver_off_the_run_ends_where_the_classifier_stopped(monkeypatch, tmp_path):
     writer = FakeWriter(reviews=[{"achieved": False}], drives=[{"action": "shortcut", "key": "x"}])
 

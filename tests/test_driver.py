@@ -1,11 +1,24 @@
 """The driver's checks: every action the model names is taken only when the screen allows it."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from typesafe_computer_use import config, macos, windows
-from typesafe_computer_use.driver import DEAD, KEYS, MAX_SAME_ACTION, SHORTCUTS, _advance_same_action, _signature, _take, act
+from typesafe_computer_use.actions import Context, perform
+from typesafe_computer_use.decide import Decision
+from typesafe_computer_use.driver import (
+    DEAD,
+    KEYS,
+    MAX_SAME_ACTION,
+    SHORTCUTS,
+    _advance_same_action,
+    _batch_ending,
+    _signature,
+    _take,
+    act,
+)
 from typesafe_computer_use.models import AxNode, Field, Item, signature
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import UNCHANGED, RunState, screen_moved
@@ -50,7 +63,7 @@ def text_field(label: str = "Name") -> Field:
 
 
 def test_a_click_lands_on_the_item_the_model_numbered(screen, machine):
-    assert act(move("click", item="0"), screen, ITEMS) == "clicked 'Archive'"
+    assert act(move("click", item="0", target="Archive"), screen, ITEMS) == "clicked 'Archive'"
     assert machine == [("click", (100.0, 60.0), "left", 1, None)]
 
 
@@ -65,7 +78,7 @@ def test_typing_needs_a_focused_text_field(screen, machine):
 
 
 def test_typing_into_an_item_clicks_it_and_sends_keystrokes(screen, machine):
-    line = act(move("type", item="0", text="30"), screen, ITEMS)
+    line = act(move("type", item="0", target="Archive", text="30"), screen, ITEMS)
     assert line == "typed '30' into 'Archive' (keystrokes, not read back)"
     assert machine == [("click", (100.0, 60.0), "left", 1, None), ("clear",), ("type", "30")]
 
@@ -84,9 +97,9 @@ def test_a_credential_is_never_typed(screen, machine, label, text):
 
 
 def test_a_double_click_a_right_click_and_a_modified_click_reach_the_adapter(screen, machine):
-    assert act(move("double_click", item="0"), screen, ITEMS) == "double-clicked 'Archive'"
-    assert act(move("right_click", item="0"), screen, ITEMS) == "right-clicked 'Archive'"
-    assert act(move("click", item="0", modifier="add"), screen, ITEMS) == "clicked 'Archive' with add"
+    assert act(move("double_click", item="0", target="Archive"), screen, ITEMS) == "double-clicked 'Archive'"
+    assert act(move("right_click", item="0", target="Archive"), screen, ITEMS) == "right-clicked 'Archive'"
+    assert act(move("click", item="0", target="Archive", modifier="add"), screen, ITEMS) == "clicked 'Archive' with add"
     assert machine == [
         ("click", (100.0, 60.0), "left", 2, None),
         ("click", (100.0, 60.0), "right", 1, None),
@@ -97,29 +110,71 @@ def test_a_double_click_a_right_click_and_a_modified_click_reach_the_adapter(scr
 def test_a_click_outside_an_open_menu_is_refused(screen, machine):
     button = Item(1, "新建", 1.0, 40, 0, 80, 20, role="button", source="ax")
     live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
-    line = act(move("click", item="1"), live, [button])
-    assert line == "click refused: a menu is open on '文件夹'; press return to take it, or up or down to move"
+    line = act(move("click", item="1", target="新建"), live, [button])
+    assert (
+        line
+        == "click refused: '文件夹' is highlighted in the open menu; press return to choose it, or up or down to move the highlight"
+    )
     assert machine == []
 
 
 def test_a_different_menu_item_is_refused_while_one_is_focused(screen, machine):
     other = Item(2, "DOCX 文档", 1.0, 0, 40, 40, 60, role="menu", source="ax")
     live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20), ax_refs={2: "docx"})
-    line = act(move("click", item="2"), live, [other])
-    assert line == "click refused: a menu is open on '文件夹'; press return to take it, or up or down to move"
+    line = act(move("click", item="2", target="DOCX 文档"), live, [other])
+    assert (
+        line
+        == "click refused: '文件夹' is highlighted in the open menu; press return to choose it, or up or down to move the highlight"
+    )
     assert machine == []
+
+
+def test_a_menu_arrow_ends_the_batch_and_another_focus_does_not(screen):
+    menu = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
+    button = replace(screen, field=Field("AXButton", "新建", "", "", 0, 0, 20, 20))
+    assert _batch_ending(move("key", key="down"), "pressed down", menu) == "the highlight moved in the open menu"
+    assert _batch_ending(move("key", key="down"), "pressed down", button) is None
+    assert _batch_ending(move("key", key="down"), "pressed down", screen) is None
+    assert _batch_ending(move("key", key="down"), "key refused: 'down' is not one of the keys", menu) is None
+
+
+def _press_enter(screen):
+    decision = Decision(kind=SimpleNamespace(choice="press_enter"), item=None, site=SimpleNamespace(choice=""))
+    ctx = Context(goal="move the files", browser="", email=None, typesafe=None, writer=None, history=[])
+    return perform(decision, screen, [], ctx)
+
+
+def test_return_on_a_file_row_is_refused(screen, machine):
+    live = replace(screen, field=Field("AXRow", "Doc02.docx", "", "", 0, 0, 20, 20))
+    line = act(move("key", key="return"), live, [file_row(0, "Doc02.docx", True)])
+    assert line == "return refused: Return opens 'Doc02.docx'"
+    assert _press_enter(live) == "return refused: Return opens 'Doc02.docx'"
+    assert machine == []
+
+
+def test_return_on_a_menu_a_button_and_a_text_field_is_pressed(screen, machine):
+    menu = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
+    button = replace(screen, field=Field("AXButton", "新建", "", "", 0, 0, 20, 20))
+    field = replace(screen, field=Field("AXTextField", "Name", "", "", 0, 0, 20, 20))
+    assert act(move("key", key="return"), menu, []) == "pressed return"
+    assert act(move("key", key="return"), button, []) == "pressed return"
+    assert act(move("key", key="return"), field, []) == "pressed return"
+    assert _press_enter(menu) == "pressed Return"
+    assert _press_enter(button) == "pressed Return"
+    assert _press_enter(field) == "pressed Return"
+    assert machine == [("press", "return", False)] * 6
 
 
 def test_a_menu_item_can_be_clicked_while_its_menu_is_open(screen, machine):
     item = Item(0, "文件夹", 1.0, 0, 0, 20, 20, role="menu", source="ax")
     live = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
-    line = act(move("click", item="0"), live, [item])
+    line = act(move("click", item="0", target="文件夹"), live, [item])
     assert "refused" not in line
     assert machine[0][0] == "click"
 
 
 def test_a_click_modifier_the_model_invented_clicks_nothing(screen, machine):
-    assert act(move("click", item="0", modifier="alt"), screen, ITEMS).startswith("click refused:")
+    assert act(move("click", item="0", target="Archive", modifier="alt"), screen, ITEMS).startswith("click refused:")
     assert machine == []
 
 
@@ -127,7 +182,7 @@ def test_a_plain_click_does_not_replace_two_selected_files(screen, machine, monk
     rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True), file_row(2, "Archive")]
     called = []
     monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: called.append(args) or False)
-    line = act(move("click", item="2"), screen, rows)
+    line = act(move("click", item="2", target="Archive"), screen, rows)
     assert line == "click refused: Doc01.docx and Doc02.docx are selected; a plain click on 'Archive' would replace them"
     assert called == []
     assert machine == []
@@ -140,7 +195,7 @@ def test_a_click_on_one_of_the_selected_files_narrows_the_selection(screen, mach
     monkeypatch.setattr(
         desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or operation == "select"
     )
-    assert act(move("click", item="0"), live, rows) == "selected 'Doc01.docx' via accessibility"
+    assert act(move("click", item="0", target="Doc01.docx"), live, rows) == "selected 'Doc01.docx' via accessibility"
     assert "select" in calls
     assert machine == []
 
@@ -152,7 +207,7 @@ def test_a_single_selected_file_can_be_replaced_by_another(screen, machine, monk
     monkeypatch.setattr(
         desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or operation == "select"
     )
-    assert act(move("click", item="1"), live, rows) == "selected 'Doc02.docx' via accessibility"
+    assert act(move("click", item="1", target="Doc02.docx"), live, rows) == "selected 'Doc02.docx' via accessibility"
     assert "select" in calls
     assert machine == []
 
@@ -178,14 +233,14 @@ def test_adding_a_file_uses_add_to_selection_and_focuses_it(screen, machine, mon
         desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or operation == "add_select"
     )
     monkeypatch.setattr(desktop, "ax_focus", lambda ref: calls.append(("focus", ref)) or True)
-    assert act(move("click", item="0", modifier="add"), live, [item]) == "clicked 'Doc02.docx' with add"
+    assert act(move("click", item="0", target="Doc02.docx", modifier="add"), live, [item]) == "clicked 'Doc02.docx' with add"
     assert calls == ["add_select", ("focus", "doc")]
     assert machine == []
 
 
 def test_control_and_shift_are_the_selection_modifiers(screen, machine):
-    assert act(move("click", item="0", modifier="control"), screen, ITEMS) == "clicked 'Archive' with add"
-    assert act(move("click", item="0", modifier="shift"), screen, ITEMS) == "clicked 'Archive' with range"
+    assert act(move("click", item="0", target="Archive", modifier="control"), screen, ITEMS) == "clicked 'Archive' with add"
+    assert act(move("click", item="0", target="Archive", modifier="shift"), screen, ITEMS) == "clicked 'Archive' with range"
     assert _signature(move("click", item="0", modifier="ctrl"), ITEMS) == _signature(
         move("click", item="0", modifier="add"), ITEMS
     )
@@ -224,17 +279,17 @@ CANVAS = [Item(0, "Oval", 1.0, 100.0, 100.0, 180.0, 140.0), Item(1, "Canvas", 1.
 
 
 def test_a_drag_goes_from_one_item_to_another_or_by_pixels(screen, machine):
-    assert act(move("drag", item="0", to="1"), screen, CANVAS) == "dragged 'Oval' to 'Canvas'"
-    assert act(move("drag", item="0", dx="80", dy="-40"), screen, CANVAS) == "dragged 'Oval' to '80,-40'"
+    assert act(move("drag", item="0", target="Oval", to="1"), screen, CANVAS) == "dragged 'Oval' to 'Canvas'"
+    assert act(move("drag", item="0", target="Oval", dx="80", dy="-40"), screen, CANVAS) == "dragged 'Oval' to '80,-40'"
     assert machine == [("drag", (70.0, 60.0), (300.0, 275.0)), ("drag", (70.0, 60.0), (110.0, 40.0))]
     assert _signature(move("drag", item="0", to="1"), CANVAS) == "drag:Oval->Canvas"
 
 
 def test_a_drag_that_leaves_the_screen_or_names_nothing_is_refused(screen, machine):
     edge = [Item(0, "Edge", 1.0, 1900.0, 100.0, 1980.0, 140.0)]
-    assert act(move("drag", item="0", dx="100"), screen, edge).startswith("drag refused: the drag leaves")
-    assert act(move("drag", item="0", dx="601"), screen, CANVAS).startswith("drag refused: a drag stays within")
-    assert act(move("drag", item="0"), screen, CANVAS).startswith("drag refused: name the item")
+    assert act(move("drag", item="0", target="Edge", dx="100"), screen, edge).startswith("drag refused: the drag leaves")
+    assert act(move("drag", item="0", target="Oval", dx="601"), screen, CANVAS).startswith("drag refused: a drag stays within")
+    assert act(move("drag", item="0", target="Oval"), screen, CANVAS).startswith("drag refused: name the item")
     assert act(move("drag", item="9", to="1"), screen, CANVAS).startswith("drag refused: there is no item")
     assert machine == []
 
@@ -265,6 +320,126 @@ def test_a_cut_that_puts_nothing_on_the_clipboard_says_so(screen, machine, monke
     monkeypatch.setattr(desktop, "clipboard_files", lambda: ())
     assert act(move("shortcut", key="x"), screen, ITEMS) == "pressed command+x (the clipboard has no files)"
     assert machine == [("press", "x", True)]
+
+
+def _paste(screen, items):
+    decision = Decision(
+        kind=SimpleNamespace(choice="shortcut"),
+        item=None,
+        site=SimpleNamespace(choice=""),
+        key=SimpleNamespace(choice="v"),
+    )
+    ctx = Context(goal="move the files", browser="", email=None, typesafe=None, writer=None, history=[])
+    return perform(decision, screen, items, ctx)
+
+
+def test_a_paste_of_files_already_in_this_folder_is_refused(screen, machine, monkeypatch):
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: ("Doc01.docx", "Doc02.docx"))
+    rows = [file_row(0, "Doc01.docx"), file_row(1, "Doc02.docx")]
+    assert act(move("shortcut", key="v"), screen, rows) == "paste refused: Doc01.docx, Doc02.docx are already in this folder"
+    assert _paste(screen, rows) == "paste refused: Doc01.docx, Doc02.docx are already in this folder"
+    assert machine == []
+
+
+def test_a_paste_goes_ahead_when_a_file_is_missing_or_the_clipboard_cannot_be_read(screen, machine, monkeypatch):
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: ("Doc01.docx", "Doc02.docx"))
+    assert act(move("shortcut", key="v"), screen, [file_row(0, "Doc01.docx")]) == "pressed command+v"
+    assert _paste(screen, [file_row(0, "Doc01.docx")]) == "pressed command+v"
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: None)
+    both = [file_row(0, "Doc01.docx"), file_row(1, "Doc02.docx")]
+    assert act(move("shortcut", key="v"), screen, both) == "pressed command+v"
+    assert _paste(screen, both) == "pressed command+v"
+    assert machine == [("press", "v", True)] * 4
+
+
+def test_a_target_matches_a_zero_width_name_and_a_longer_label(screen, machine):
+    cut = Item(0, "剪切\u200b\u200b", 1.0, 100.0, 100.0, 300.0, 140.0)
+    pinned = Item(1, "文档 (已固定)", 1.0, 0.0, 200.0, 40.0, 220.0)
+    assert act(move("click", item="0", target="剪切"), screen, [cut, pinned]).startswith("clicked ")
+    assert act(move("click", item="1", target="文档"), screen, [cut, pinned]).startswith("clicked ")
+    assert len(machine) == 2
+
+
+def test_a_target_that_names_a_different_item_clicks_nothing(screen, machine):
+    row = Item(91, "WPSDrive", 1.0, 0.0, 0.0, 20.0, 20.0)
+    line = act(move("double_click", item="91", target="Archive"), screen, [row])
+    assert line == "double_click refused: item 91 is 'WPSDrive', not 'Archive'"
+    assert machine == []
+
+
+def test_an_item_without_a_target_is_refused_and_a_bare_action_is_not(screen, machine):
+    assert act(move("click", item="0"), screen, ITEMS) == "click refused: name item 0 in target"
+    assert act(move("key", key="tab"), screen, ITEMS) == "pressed tab"
+    assert act(move("wait"), screen, ITEMS) == "waited"
+    assert act(move("shortcut", key="e"), screen, ITEMS) == "pressed command+e"
+    assert [entry for entry in machine if entry[0] == "click"] == []
+    assert ("press", "tab", False) in machine
+    assert ("press", "e", True) in machine
+    assert any(entry[0] == "sleep" for entry in machine)
+
+
+def test_a_second_cut_of_files_already_on_the_clipboard_is_refused(screen, machine, monkeypatch):
+    rows = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True)]
+    held = {"files": ()}
+
+    def press(key, command=False):
+        machine.append(("press", key, command))
+        held["files"] = ("Doc02.docx", "Doc01.docx")
+
+    monkeypatch.setattr(desktop, "press", press)
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: held["files"])
+    assert "to the clipboard:" in act(move("shortcut", key="x"), screen, rows)
+    refused = "shortcut refused: Doc01.docx, Doc02.docx are already on the clipboard; paste them in the destination"
+    assert act(move("shortcut", key="x"), screen, rows) == refused
+    decision = Decision(
+        kind=SimpleNamespace(choice="shortcut"),
+        item=None,
+        site=SimpleNamespace(choice=""),
+        key=SimpleNamespace(choice="x"),
+    )
+    ctx = Context(goal="move the files", browser="", email=None, typesafe=None, writer=None, history=[])
+    assert perform(decision, screen, rows, ctx) == refused
+    assert machine == [("press", "x", True)]
+
+
+def test_a_cut_goes_ahead_when_the_key_the_files_or_the_clipboard_change(screen, machine, monkeypatch):
+    from typesafe_computer_use.actions import forget_clipboard
+
+    both = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True)]
+    held = {"files": (), "next": ()}
+
+    def press(key, command=False):
+        machine.append(("press", key, command))
+        held["files"] = held["next"]
+
+    monkeypatch.setattr(desktop, "press", press)
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: held["files"])
+
+    held["next"] = ("Doc01.docx", "Doc02.docx")
+    act(move("shortcut", key="x"), screen, both)
+    assert act(move("shortcut", key="c"), screen, both).startswith("pressed command+c")
+
+    forget_clipboard()
+    machine.clear()
+    held["files"] = ()
+    held["next"] = ("Doc01.docx",)
+    act(move("shortcut", key="x"), screen, [file_row(0, "Doc01.docx", True)])
+    assert act(move("shortcut", key="x"), screen, both).startswith("pressed command+x")
+
+    forget_clipboard()
+    machine.clear()
+    held["files"] = ()
+    held["next"] = ("Doc01.docx", "Doc02.docx")
+    act(move("shortcut", key="x"), screen, both)
+    held["files"] = ("Other.txt",)
+    assert act(move("shortcut", key="x"), screen, both).startswith("pressed command+x")
+
+    forget_clipboard()
+    machine.clear()
+    monkeypatch.setattr(desktop, "clipboard_files", lambda: None)
+    assert "to the clipboard;" in act(move("shortcut", key="x"), screen, both)
+    assert "to the clipboard;" in act(move("shortcut", key="x"), screen, both)
+    assert machine == [("press", "x", True), ("press", "x", True)]
 
 
 def test_a_cut_that_leaves_the_clipboard_unchanged_says_so(screen, machine, monkeypatch):
@@ -308,7 +483,7 @@ def test_a_cut_is_a_clipboard_shortcut_and_an_unchanged_screen_is_not_idle(scree
 
 
 def test_a_scroll_aims_at_the_named_item_and_a_missing_item_scrolls_nothing(screen, machine):
-    assert act(move("scroll_down", item="0"), screen, ITEMS) == "scrolled down over 'Archive'"
+    assert act(move("scroll_down", item="0", target="Archive"), screen, ITEMS) == "scrolled down over 'Archive'"
     assert act(move("scroll_up"), screen, ITEMS) == "scrolled up"
     assert act(move("scroll_down", item="7"), screen, ITEMS) == "scroll_down refused: there is no item '7' on this screen"
     assert machine == [("scroll", -10, (100.0, 60.0)), ("scroll", 10, None)]

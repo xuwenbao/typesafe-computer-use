@@ -17,7 +17,7 @@ from pathlib import Path
 from typesafe_sdk import TypeSafeClient
 
 from . import driver
-from .actions import Context, perform
+from .actions import Context, forget_clipboard, perform
 from .bound import CaptureTimeout
 from .calls import Calls, MeteredClassifier, MeteredWriter
 from .config import settings
@@ -29,7 +29,7 @@ from .perception import ParseCache, capture, ocr_region, perceive, pipeline_reco
 from .platform_adapter import desktop
 from .report import Log, annotate, ax_count, render_payload, top
 from .timing import format_timing, phase, summarize
-from .writer import Answer, WriterError, compose_answer
+from .writer import Answer, WriterError, compose_answer, denied_listed_names
 
 # ---- 判断“卡住了”的阈值 ----
 # 判断一个动作有没有效果，看的是动作之后的截图有没有变化，而不是看历史记录里写了什么。
@@ -101,6 +101,7 @@ class Handoff:
     outcome: str  # 分类器停下的原因
     focus: str  # 写手给的提示（下一步该关注什么）
     actions: int  # 当时一共做了多少个动作；之后若没再增加，说明这个提示没起作用
+    page: tuple[str, str | None] = ("", None)  # 交回时这一屏的（应用名，网址）
 
 
 @dataclass
@@ -124,6 +125,7 @@ class RunState:
     answer: Answer | None = None  # 写手最近一次的回答，运行结束时就是最终答案
     guidance: Guidance = field(default_factory=Guidance)  # 写手当前给的提示，以及用户对提问的回复
     handoffs: list[Handoff] = field(default_factory=list)  # 所有“交回”记录
+    route: str = ""  # 写手最后一次回答的去向：classifier、driver 或 end
     calls: Calls = field(default_factory=Calls)  # 整次运行里调用各模型的次数和用量
     image_refusals: list[dict] = field(default_factory=list)  # 截图被模型拒收、改成不带图重问的步骤及原因
     driver_actions: int = 0  # 接管实际执行的动作数，含被拒绝的
@@ -139,6 +141,7 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
     """
     cfg.out.mkdir(parents=True, exist_ok=True)
     log = Log(cfg.out / "run.log")
+    forget_clipboard()
     log(f"run folder: {cfg.out}")
     if cfg.act:
         log(f"driving the machine. abort: {desktop.abort_hint()}.")
@@ -191,20 +194,23 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
     return state
 
 
+def driver_ready(cfg: RunConfig, ctx: Context) -> bool:
+    """接管开着、是真操作、而且有写手可问。演练和重放不接管。"""
+    return cfg.driver_steps > 0 and cfg.act and not cfg.replay and ctx.writer is not None
+
+
 def wants_driver(cfg: RunConfig, ctx: Context, state: RunState) -> bool:
     """要不要交给接管模型。以下条件全部满足才接管：
 
     - 接管功能开着（driver_steps > 0），而且是真操作（不是演练或重放）；
-    - 写手可用，并且判断目标还没完成；
+    - 写手可用，并且判断目标还没完成，去向也不是结束；
     - 分类器停在 STOPPED 里的任一结局，包括把 --steps 走满。接管用自己的步数，不占用 --steps。
     """
     return (
-        cfg.driver_steps > 0
-        and cfg.act
-        and not cfg.replay
-        and ctx.writer is not None
+        driver_ready(cfg, ctx)
         and state.answer is not None
         and not state.answer.achieved
+        and state.route != "end"
         and state.outcome in STOPPED
     )
 
@@ -297,16 +303,33 @@ def hand_off(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
                 if cfg.act and not cfg.replay and state.view is not None:
                     desktop.activate(state.view[0].app)  # 用户在终端回答问题后，把原来操作的应用切回前台
                 continue
-            if resuming and answer.focus:
+            state.route = answer.route
+            screen = state.view[0] if state.view else None
+            page = (screen.app, screen.url) if screen is not None else ("", None)
+            # 同一应用、同一网址上已经交回过一次。接管开着就换人，不再把同一页交回分类器。
+            if (
+                resuming
+                and answer.route == "classifier"
+                and answer.focus
+                and any(earlier.page == page for earlier in state.handoffs)
+                and driver_ready(cfg, ctx)
+            ):
+                state.route = "driver"
+                log(
+                    f"\nreview ({verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n"
+                    "  the classifier already stopped on this page after a focus; the driver takes over"
+                )
+                return False
+            if resuming and answer.route == "classifier" and answer.focus:
                 log(
                     f"\nreview ({verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n  back to the classifier, focus: {answer.focus}"
                 )
                 record["handed_back"] = True
-                state.handoffs.append(Handoff(step, state.outcome, answer.focus, len(state.history)))
+                state.handoffs.append(Handoff(step, state.outcome, answer.focus, len(state.history), page))
                 state.guidance = state.guidance.focused(answer.focus)
                 state.idle = state.repeats = 0  # 有了新提示，卡住计数清零重来
                 return True
-            log(f"\nanswer ({verdict(answer)}, {seconds:.1f}s):\n  {answer.text}")
+            log(f"\nanswer ({verdict(answer)}, route {answer.route}, {seconds:.1f}s):\n  {answer.text}")
             return False
         finally:
             (cfg.out / f"step-{step:03d}-review.json").write_text(json.dumps(reviews, indent=2), encoding="utf-8")
@@ -345,8 +368,26 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
     screen, items = state.view
     earlier = earlier_screens(state, signature(screen, items))
     earlier_stops = stops_so_far(state)
-    return compose_answer(
+    answer = compose_answer(
         ctx.writer, cfg.goal, screen, items, state.history, stopped, earlier, state.guidance, earlier_stops, can_ask
+    )
+    # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准。
+    denied = denied_listed_names(f"{answer.text}\n{answer.focus}", answer.achieved, items)
+    if not denied:
+        return answer
+    return compose_answer(
+        ctx.writer,
+        cfg.goal,
+        screen,
+        items,
+        state.history,
+        stopped,
+        earlier,
+        state.guidance,
+        earlier_stops,
+        can_ask,
+        picture=False,
+        denied=denied,
     )
 
 

@@ -9,7 +9,7 @@ import pytest
 
 from typesafe_computer_use.calls import Calls, MeteredWriter
 from typesafe_computer_use.config import load_dotenv, reset_settings, settings
-from typesafe_computer_use.models import AxNode
+from typesafe_computer_use.models import AxNode, Field
 from typesafe_computer_use.writer import (
     ANSWER_SYSTEM,
     DRIVE_SYSTEM,
@@ -304,8 +304,49 @@ def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
     assert "do not tell it to repeat a click" in ANSWER_SYSTEM
     assert "click the heading that shows the month and year" in ANSWER_SYSTEM
     assert "offscreen_controls lists controls on this page" in ANSWER_SYSTEM
-    assert "shows none of them left" in ANSWER_SYSTEM
+    assert "a blank area of the capture cannot" in ANSWER_SYSTEM
+    assert "only when on_screen.file_rows lists it" in ANSWER_SYSTEM
+    assert "not a row of this folder" in ANSWER_SYSTEM
+    assert "on_screen" in DRIVE_SYSTEM
+    assert "a blank area of the capture cannot" in DRIVE_SYSTEM
+    assert "only when on_screen.file_rows lists it" in DRIVE_SYSTEM
+    assert "not a row of this folder" in DRIVE_SYSTEM
+    assert "set target to that item's text" in DRIVE_SYSTEM
+    assert "highlighted_menu_item" in DRIVE_SYSTEM
+    assert "Do not press up or down first." in DRIVE_SYSTEM
+    assert "highlighted_menu_item" in ANSWER_SYSTEM
+    assert "set focus to press Return" in ANSWER_SYSTEM
+    assert "Return on a file row opens" in ANSWER_SYSTEM
+    assert "Set route to classifier" in ANSWER_SYSTEM
+    assert "Set route to driver" in ANSWER_SYSTEM
+    assert "Set route to end" in ANSWER_SYSTEM
+    assert "cannot right-click, double-click" not in ANSWER_SYSTEM
     assert "give_up and say in the reason what is missing" in DRIVE_SYSTEM
+
+
+def test_a_highlighted_menu_item_is_named_and_a_plain_focus_is_not(screen, clean_env):
+    clean_env.setenv("CLICKER_WRITER_VISION", "false")
+    seen: list[dict] = []
+
+    def create(**kwargs):
+        seen.append(json.loads(kwargs["messages"][0]["content"][-1]["text"]))
+        asked = set(kwargs["output_config"]["format"]["schema"]["properties"])
+        if "actions" in asked:
+            payload = {"reason": "next", "actions": [{"action": "wait"}]}
+        else:
+            payload = {"achieved": False, "answer": "not yet", "focus": "", "question": "", "route": "driver"}
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+    writer = SimpleNamespace(messages=SimpleNamespace(create=create))
+    menu = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
+    compose_drive_step(writer, "make a folder", menu, [], [], "stuck", [], [], None, 3, None)
+    compose_answer(writer, "make a folder", menu, [], [], "stuck")
+    assert [packet["highlighted_menu_item"] for packet in seen] == ["文件夹", "文件夹"]
+
+    seen.clear()
+    compose_drive_step(writer, "make a folder", screen, [], [], "stuck", [], [], None, 3, None)
+    compose_answer(writer, "make a folder", screen, [], [], "stuck")
+    assert all("highlighted_menu_item" not in packet for packet in seen)
 
 
 def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_env):

@@ -533,7 +533,7 @@ class FakeWriter:
             reply = {"fill": bool(self.text), "text": self.text, "submit": self.submit, "reason": "the goal names what to type"}
         elif asked == {"ok", "url", "reason"}:
             reply = {"ok": bool(self.url), "url": self.url, "reason": "the goal names the site"}
-        elif asked == {"achieved", "answer", "focus", "question"}:
+        elif asked == {"achieved", "answer", "focus", "question", "route"}:
             self.packets.append(packet)
             earlier = [text for screen in packet.get("earlier_screens", []) for text in screen["text"]]
             scripted = self.reviews.pop(0) if self.reviews else {}
@@ -550,17 +550,25 @@ class FakeWriter:
             scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
             scripted = scripted(packet) if callable(scripted) else dict(scripted)
             numbers = {it["text"]: str(it["i"]) for it in packet["screen_items"]}
-            if scripted.get("item") and scripted.get("action") in (
+            by_number = {str(it["i"]): it["text"] for it in packet["screen_items"]}
+            raw_item = str(scripted.get("item") or "")
+            if raw_item and not str(scripted.get("target") or "").strip():
+                if raw_item in numbers:
+                    scripted["target"] = raw_item
+                elif raw_item in by_number:
+                    scripted["target"] = by_number[raw_item]
+            if raw_item and scripted.get("action") in (
                 "click",
                 "double_click",
                 "right_click",
                 "scroll_down",
                 "scroll_up",
             ):
-                scripted["item"] = numbers.get(scripted["item"], scripted["item"])
+                scripted["item"] = numbers.get(raw_item, raw_item)
             action = {
                 "action": "give_up",
                 "item": "",
+                "target": "",
                 "text": "",
                 "key": "",
                 "modifier": "",

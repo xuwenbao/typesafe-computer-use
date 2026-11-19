@@ -87,6 +87,16 @@ def fresh_settings(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def fresh_clipboard():
+    """A cut remembered by one test must not refuse a cut in the next."""
+    from typesafe_computer_use.actions import forget_clipboard
+
+    forget_clipboard()
+    yield
+    forget_clipboard()
+
+
+@pytest.fixture(autouse=True)
 def no_real_machine(monkeypatch):
     """No test reaches the computer it runs on, whoever wrote it.
 

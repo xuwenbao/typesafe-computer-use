@@ -63,7 +63,26 @@ def _menu_blocks(item: Item, screen: Screen) -> str | None:
         return None
     if item.role == "menu" and item.text == field.label:
         return None
-    return f"click refused: a menu is open on {field.label!r}; press return to take it, or up or down to move"
+    return (
+        f"click refused: {field.label!r} is highlighted in the open menu; "
+        "press return to choose it, or up or down to move the highlight"
+    )
+
+
+def _return_opens(screen: Screen) -> str | None:
+    """Return on a file row opens the file. A menu item, a button, and a text field still take Return."""
+    field = screen.field
+    if field is None or field.role != "AXRow" or field.is_text:
+        return None
+    return f"return refused: Return opens {field.label!r}"
+
+
+def _press_enter(decision, screen, items, ctx) -> str:
+    refused = _return_opens(screen)
+    if refused is not None:
+        return refused
+    desktop.press("return")
+    return "pressed Return"
 
 
 def open_item(item: Item, screen: Screen) -> str:
@@ -352,6 +371,14 @@ def _type_text(decision, screen: Screen, items, ctx: Context) -> str:
 
 # Copy and cut only change the clipboard, so an unchanged screen is not a failed action.
 _CLIPBOARD_KEYS = frozenset({"c", "x"})
+# 上一次真正放上剪贴板的键，和当时剪贴板里的文件名。同键、同文件、剪贴板没变，就不再按一次。
+_last_clipboard: tuple[str, frozenset[str]] | None = None
+
+
+def forget_clipboard() -> None:
+    """忘掉上一次剪切或复制。每次运行开始时调用，测试之间也调用，避免互相影响。"""
+    global _last_clipboard
+    _last_clipboard = None
 
 
 def clipboard_line(key: str, items: list[Item] | None = None) -> str:
@@ -365,8 +392,12 @@ def clipboard_line(key: str, items: list[Item] | None = None) -> str:
     if _file_rows(items) and not names:
         return "shortcut refused: no file is selected"
     before = desktop.clipboard_files()
+    if _already_on_clipboard(key, names, before):
+        shown = ", ".join(names)
+        return f"shortcut refused: {shown} are already on the clipboard; paste them in the destination"
     desktop.press(key, command=True)
     after = desktop.clipboard_files()
+    _remember_clipboard(key, before, after)
     line = f"pressed command+{key}"
     chosen = f"{', '.join(names)}; " if names else ""
     if after is None:
@@ -379,11 +410,42 @@ def clipboard_line(key: str, items: list[Item] | None = None) -> str:
     return f"{line} ({chosen}to the clipboard: {shown}; the screen need not change)"
 
 
+def _already_on_clipboard(key: str, names: list[str], before: tuple[str, ...] | None) -> bool:
+    """这批选中的文件刚用同一个键放上剪贴板，而且剪贴板现在还是它们。"""
+    if _last_clipboard is None or not names or before is None:
+        return False
+    remembered_key, remembered = _last_clipboard
+    held = frozenset(names)
+    return remembered_key == key and held == remembered and frozenset(before) == remembered
+
+
+def _remember_clipboard(key: str, before: tuple[str, ...] | None, after: tuple[str, ...] | None) -> None:
+    """剪贴板确实换了一批文件时才记住。读不到、没变、或变空，都不记。"""
+    global _last_clipboard
+    if after and before != after:
+        _last_clipboard = (key, frozenset(after))
+
+
+def _paste_lands_on_itself(items: list[Item] | None) -> str | None:
+    """A paste whose every clipboard file is already a row in this folder. None means the platform cannot say."""
+    held = desktop.clipboard_files()
+    if not held:
+        return None
+    rows = {it.text for it in _file_rows(items)}
+    if rows and all(name in rows for name in held):
+        return f"paste refused: {', '.join(held)} are already in this folder"
+    return None
+
+
 def _shortcut(decision: Decision, screen: Screen, items: list[Item], ctx: Context) -> str:
     key = decision.key.choice if decision.key is not None else ""
     allowed = ", ".join(SHORTCUT_KEYS)
     if key not in SHORTCUT_KEYS:
         return f"shortcut refused: {key!r} is not one of {allowed}"
+    if key == "v":
+        refused = _paste_lands_on_itself(items)
+        if refused is not None:
+            return refused
     if key in _CLIPBOARD_KEYS:
         return clipboard_line(key, items)
     desktop.press(key, command=True)
@@ -416,7 +478,7 @@ _HANDLERS = {
     "use_browser": _use_browser,
     "type_email": _type_email,
     "type_text": _type_text,
-    "press_enter": _key("return", "pressed Return"),
+    "press_enter": _press_enter,
     "press_escape": _key("escape", "pressed Escape"),
     "go_back": _key("[", "went back", command=True),
     "scroll_down": _scroll(-10, "scrolled down"),

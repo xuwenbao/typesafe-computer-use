@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -330,14 +331,15 @@ def compose_url(writer: Writer, goal: str, history: list[str], guidance: Guidanc
 class Answer:
     """What the writer made of a stop: the words for the user, and how the run goes on when it can.
 
-    At most one of `focus` and `question` is acted on. A focus sends the classifier back to work,
-    a question goes to the user first, and neither means the run is over.
+    At most one of `focus` and `question` is acted on. `route` says who moves next: the classifier,
+    the driver, or nobody. A question goes to the user first, before that choice is taken.
     """
 
     text: str
     achieved: bool  # whether the screen itself shows the goal reached, in the writer's judgement
     focus: str = ""  # the next sub-goal for the classifier, in terms of the screen
     question: str = ""  # what only the user can say
+    route: str = ""  # classifier, driver, or end
 
 
 ANSWER_SYSTEM = (
@@ -352,29 +354,46 @@ ANSWER_SYSTEM = (
     "taken only from those screens and from what the user said: never from memory, and never a "
     "guess. When the goal asks for something to be done, say whether the screen shows it done. "
     "When the screen does not hold the result, say so plainly, then say what is on screen and the "
-    "one next step that would get there. Trust the capture over the text where the two disagree, "
-    "except for the selection: a file is selected only when its name is in selected_items. The "
-    "highlight in the capture is not the selection. When several files must move and that list "
-    "names only some of them, the next focus adds one missing file to the selection. Do not say "
-    "the others are selected, and do not make the next step a cut. "
-    "Plain text, no markdown, four sentences at most. Set achieved to true only when the screen "
-    "itself shows the goal reached, every part of it: check each thing the goal names, such as "
-    "which item, where it goes, and what value it takes, and when the screen shows something done "
-    "but not one of those parts, the goal is not reached. When the goal is to move, delete, or "
-    "archive every file of one kind, it is not reached until the place they started shows none of "
-    "them left. A folder that already holds some of them does not count.\n\n"
-    "When the goal is not reached you may keep the run going, in one of two ways and never both. "
-    "Set focus to send the classifier back to work: one short imperative sentence naming the next "
-    "step in terms of what this screen shows, quoting the text of the item to use when there is "
-    "one. The classifier can click an on-screen item, type into a focused field, replacing what "
-    "the field holds, press Return or Escape, scroll, go back, wait, and open a website by its "
-    "https address; it cannot read, "
-    "compare, or remember, so a focus is one move, not a plan. Name that one action: do not tell "
-    "it to repeat a click, or to keep clicking until something appears. When a date on a calendar "
-    "is months away, the one action is to click the heading that shows the month and year, which "
-    "opens the year or month view. It has no other key or shortcut and "
-    "cannot right-click, double-click, or select text, so a focus that needs one of those is "
-    "refused: name the button, menu, or link on screen that does the same. Never conclude from "
+    "one next step that would get there. on_screen names what this screen lists. A name there is "
+    "on this screen: a blank area of the capture cannot say it is absent. Text from an earlier "
+    "screen, such as an empty folder, describes only that screen. A file or folder is in this "
+    "folder only when on_screen.file_rows lists it. A name in the sidebar, in Quick access, or in "
+    "the address bar is a place to go, not a row of this folder, and does not show that it is "
+    "here. When the goal asks for a new folder here and file_rows does not list it, the next step "
+    "creates it. Do not open a same-named item somewhere else. A file is selected only when "
+    "its name is in selected_items. The highlight in the capture is not the selection. When "
+    "several files must move and that list names only some of them, the next focus adds one "
+    "missing file to the selection. Do not say the others are selected, and do not make the next "
+    "step a cut. "
+    "Plain text, no markdown, four sentences at most. Set achieved to true only when on_screen "
+    "and the goal together show the goal reached, every part of it: which item, where it goes, "
+    "and what value it takes. When this screen is the place the goal puts things, and "
+    "on_screen.file_rows lists them, the goal is reached. When this screen is the place the goal "
+    "clears, and on_screen.file_rows still lists them, the goal is not reached. Do not set a focus "
+    "only to confirm a name "
+    "on_screen already lists. Return on a file row opens that file. When "
+    "listed_names_the_previous_answer_denied is present, the previous answer said those names were "
+    "absent. They are on this screen. Judge again from on_screen. There is no capture this time.\n\n"
+    "When the goal is not reached, set route to classifier, driver, or end. "
+    "Set route to classifier when the next step is one action the classifier can take, and set "
+    "focus to that action: one short imperative sentence naming it in terms of what this screen "
+    "shows, quoting the text of the item to use when there is one. The classifier can click an "
+    "on-screen item, type into a focused field, replacing what the field holds, press Return or "
+    "Escape, scroll, go back, wait, and open a website by its https address. On the desktop it can "
+    "also double-click an item to open it, add an item to the selection, and press Control "
+    "(Command on a Mac) with x, c, v, or a. It cannot read, compare, or remember, so a focus is "
+    "one move, not a plan. Name that one action: do not tell it to repeat a click, or to keep "
+    "clicking until something appears. When highlighted_menu_item names the item the next step "
+    "needs, set focus to press Return. When a date on a calendar is months away, the one action "
+    "is to click the heading that shows the month and year, which opens the year or month view. "
+    "It cannot right-click, or press any other key. A focus that needs one of those is for the "
+    "driver: name the button, menu, or link on screen that does the same when one is there. "
+    "Set route to driver when the next step needs several actions in a row, such as opening a "
+    "menu, waiting for a rename box, and typing a name; or the classifier has already gone wrong "
+    "on this screen; or the next step needs a key the classifier does not have. Leave focus empty. "
+    "Set route to end when the goal is reached, when the next step is one only the user should "
+    "take, such as a login or a payment, or when no action would help. Leave focus empty. "
+    "Never conclude from "
     "memory that a setting, feature, or page does not exist: apps move and rename them between "
     "versions. While the screen still shows a place to look, such as a search result, a row "
     "marked as matching, a menu, or a section not yet opened, give opening it as the focus. "
@@ -385,15 +404,72 @@ ANSWER_SYSTEM = (
     "nothing. Set question to ask the user, only when user_can_be_asked is true, and only for what "
     "the screens cannot tell you and the goal leaves open: a choice between options the user would "
     "care about, or a fact only the user has. One short question. Never ask for a password or any "
-    "other credential, and never ask what user_said already answers. Leave both empty when the "
-    "goal is reached, when no action of the agent's would help, or when the next step is one only "
-    "the user should take, such as a login or a payment. When the run ends short of the goal, "
-    "because you leave both empty or because why_the_run_stopped says it ends, say plainly what "
-    "the agent could not do."
+    "other credential, and never ask what user_said already answers. When the run ends short of "
+    "the goal, say plainly what the agent could not do."
 )
 
 
+ROUTES = ("classifier", "driver", "end")
+
+
+def _settled_route(raw: str, achieved: bool, focus: str) -> str:
+    """One of classifier, driver, or end. A reached goal ends. A classifier with no focus is the driver."""
+    if achieved:
+        return "end"
+    route = raw.strip().lower()
+    if route == "classifier":
+        return "classifier" if focus else "driver"
+    if route in ("driver", "end"):
+        return route
+    return "classifier" if focus else "driver"
+
+
 OFFSCREEN_LIMIT = 40  # controls named to the writer; the rest stay on the page for a later step
+
+
+def _menu_highlight(screen: Screen) -> dict:
+    """The menu item Return would choose, named only while a menu item has the keyboard."""
+    field = screen.field
+    if field is None or field.role != "AXMenuBarItem" or not field.label:
+        return {}
+    return {"highlighted_menu_item": field.label}
+
+
+def _on_screen(items: list[Item]) -> dict:
+    """Names the current screen lists. A blank area of the capture cannot remove one."""
+    names: list[str] = []
+    file_rows: list[str] = []
+    for it in items:
+        if it.text and it.text not in names:
+            names.append(it.text)
+        if it.role == "cell" and "selection_item" in it.controls and it.text and it.text not in file_rows:
+            file_rows.append(it.text)
+    return {"names": names, "file_rows": file_rows}
+
+
+_QUOTED = re.compile(r"'([^']+)'|\"([^\"]+)\"|「([^」]+)」")
+_EMPTY = re.compile(r"\bempty\b|是空|为空|空的", re.IGNORECASE)
+_ABSENT = re.compile(r"\b(?:not|missing|absent)\b|不在|没有", re.IGNORECASE)
+
+
+def denied_listed_names(text: str, achieved: bool, items: list[Item]) -> list[str]:
+    """Names `on_screen` lists that this text calls missing or paints the screen empty over."""
+    if achieved:
+        return []
+    facts = _on_screen(items)
+    found: list[str] = []
+    blob = text
+    if facts["file_rows"] and _EMPTY.search(blob):
+        found.extend(facts["file_rows"])
+    listed = set(facts["names"])
+    for sentence in re.split(r"[.\n。!?]+", blob):
+        if _ABSENT.search(sentence) is None:
+            continue
+        for match in _QUOTED.finditer(sentence):
+            name = next(group for group in match.groups() if group)
+            if name in listed and name not in found:
+                found.append(name)
+    return found
 
 
 def _offscreen_controls(screen: Screen) -> list[dict]:
@@ -471,6 +547,17 @@ DRIVE_SYSTEM = (
     "nothing. already_tried_on_this_screen lists what was already done on this screen and whether "
     "it changed anything. When an action changed nothing, do not repeat it: try another kind of "
     "action, such as a key, a shortcut, a double-click, a right-click, or a different item.\n\n"
+    "on_screen names what this screen lists. A name there is on this screen: a blank area of the "
+    "capture cannot say it is absent. Text in earlier_screens, such as an empty folder, describes "
+    "only that screen. A file or folder is in this folder only when on_screen.file_rows lists it. "
+    "A name in the sidebar, in Quick access, or in the address bar is a place to go, not a row of "
+    "this folder, and does not show that it is here. When the goal asks for a new folder here and "
+    "file_rows does not list it, create it. Do not open a same-named item somewhere else. When "
+    "this screen is the place the goal puts things, and on_screen.file_rows lists them, reply done "
+    "and set achieved to true. Do not cut files just pasted into this folder and "
+    "paste them back into the same folder. When listed_names_the_previous_reply_denied is present, "
+    "those names are on this screen and the previous reply said they were not. Judge again from "
+    "on_screen. There is no capture this time.\n\n"
     "Work out how the goal can be done from this screen, then give the next actions, at most batch_size "
     "of them, in the order they should happen. Only list actions that do not need you to see the screen "
     "in between. A cut, a copy, a paste, typing, F2, or a double-click is the last action in a batch: "
@@ -482,7 +569,9 @@ DRIVE_SYSTEM = (
     "tree. Put done or give_up last, and nowhere else, to stop. A give_up, or a done that says the goal "
     "is not reached, has to be the only action in the batch: it is decided from the screen you have "
     "seen, and actions before it are taken without it. Choose each action from these, and fill "
-    "only the fields it uses:\n"
+    "only the fields it uses. When an action names a screen item in item, set target to that "
+    "item's text, copied from screen_items. Leave target empty when item is empty. An action whose "
+    "target does not match the item is refused:\n"
     "click: click item number `item`, one of the numbers on the screen now. Set `modifier` to add "
     "to add the item to the selection (Control, or Command on a Mac), range to extend the selection "
     "to it (Shift), or leave modifier empty for a plain click.\n"
@@ -539,9 +628,11 @@ DRIVE_SYSTEM = (
     "the goal assumes is not on the screen, such as a file that is playing or something that is "
     "there to be found, give_up and say in the reason what is missing. Do not keep clicking.\n"
     "A spinner, a number box, or one part of a time takes its value from type with item set to "
-    "it. When a menu is open and the choice you need is not on the screen, press up or down and "
-    "then return. When a menu item is focused, press return to take it. A click on any other item "
-    "is refused. Press up or down to move the highlight first. Do not click the menu itself again.\n"
+    "it. highlighted_menu_item is the item Return would choose right now. When it is the one you "
+    "need, press return. Do not press up or down first. When it is not, press up or down once and "
+    "look at the next screen before you decide. A click on any other item is refused. Do not click "
+    "the menu itself again. When the choice you need is not on the screen, press up or down once "
+    "and look at the next screen.\n"
     "After selecting files, do not press escape until the selection has been used. To select "
     "every file in a list, press the command key with a.\n"
     "To move files, cut them and paste them in the destination folder (the command key with v). "
@@ -569,6 +660,7 @@ class DriveStep:
     reason: str
     action: str
     item: str = ""  # an item number, for click, double_click, right_click, drag, and type
+    target: str = ""  # the text of that item, copied from the screen; checked before the action
     text: str = ""  # what to type, for type
     key: str = ""  # the key, for key and shortcut
     modifier: str = ""  # "", add, or range, for click
@@ -598,6 +690,8 @@ def compose_drive_step(
     picture: Image.Image | None,
     tried: list[dict] | None = None,
     batch: int | None = None,
+    *,
+    denied: list[str] | None = None,
 ) -> list[DriveStep]:
     """The next actions after the classifier stopped for good. The model reads the whole story of
     the run and the screen now, numbered as the capture shows it, and may name several actions."""
@@ -613,11 +707,14 @@ def compose_drive_step(
         "actions_left": steps_left,
         "batch_size": limit,
         "already_tried_on_this_screen": tried or [],
+        "on_screen": _on_screen(items),
+        **({"listed_names_the_previous_reply_denied": denied} if denied else {}),
         "selected_files": _selected_files(items),
         "last_action": _last_action(history),
         "frontmost_app": screen.app,
         "browser_active_tab_url": screen.url,
         "focused_field": screen.field.summary() if screen.field else None,
+        **_menu_highlight(screen),
         "offscreen_controls": _offscreen_controls(screen),
         "screen_items": [
             {
@@ -654,6 +751,7 @@ def _drive_properties(limit: int) -> dict:
     fields = {
         "action": {"type": "string", "enum": list(DRIVE_ACTIONS)},
         "item": {"type": "string"},
+        "target": {"type": "string"},
         "text": {"type": "string"},
         "key": {"type": "string"},
         "modifier": {"type": "string"},
@@ -718,6 +816,7 @@ def _drive_batch(data: dict, limit: int) -> list[DriveStep]:
                 reason=data["reason"].strip(),
                 action=action,
                 item=str(raw.get("item") or "").strip(),
+                target=str(raw.get("target") or "").strip(),
                 text=str(raw.get("text") or ""),
                 key=str(raw.get("key") or "").strip().lower(),
                 modifier=str(raw.get("modifier") or "").strip().lower(),
@@ -743,6 +842,9 @@ def compose_answer(
     guidance: Guidance | None = None,
     earlier_stops: list[dict] | None = None,
     can_ask: bool = False,
+    *,
+    picture: bool = True,
+    denied: list[str] | None = None,
 ) -> Answer:
     """What to tell the user now that the classifier has stopped, and how the run could go on.
 
@@ -762,7 +864,10 @@ def compose_answer(
         "user_can_be_asked": can_ask,
         "frontmost_app": screen.app,
         "browser_active_tab_url": screen.url,
+        **_menu_highlight(screen),
         "offscreen_controls": _offscreen_controls(screen),
+        "on_screen": _on_screen(items),
+        **({"listed_names_the_previous_answer_denied": denied} if denied else {}),
         "selected_items": list(dict.fromkeys(it.text for it in items if it.selected)),
         "screen_text_in_reading_order": [
             f"{it.text} (under {screen.covered[it.index].title})" if it.index in screen.covered else it.text for it in items
@@ -778,11 +883,18 @@ def compose_answer(
             "answer": {"type": "string"},
             "focus": {"type": "string"},
             "question": {"type": "string"},
+            "route": {"type": "string", "enum": list(ROUTES)},
         },
         max_tokens=2048,
         answering=True,
-        image=screen.image if settings().writer_vision else None,
+        image=screen.image if picture and settings().writer_vision else None,
     )
+    focus = data["focus"].strip()
+    achieved = bool(data["achieved"])
     return Answer(
-        text=data["answer"].strip(), achieved=data["achieved"], focus=data["focus"].strip(), question=data["question"].strip()
+        text=data["answer"].strip(),
+        achieved=achieved,
+        focus=focus,
+        question=data["question"].strip(),
+        route=_settled_route(str(data.get("route", "")), achieved, focus),
     )
