@@ -215,11 +215,8 @@ the OCR can read.
 
 ## Stopping a live run
 
-Ctrl-C when the terminal has focus, or slam the mouse into the
-top-left corner of the screen from any app. The corner is checked before every click, key,
-scroll, app switch and accessibility action, and between typed characters, so a run stops
-mid-word. A key or mouse button goes back up even when Ctrl-C lands between its down and
-its up. The loop also stops itself on `done` or `none`, on confidence under
+Ctrl-C when the terminal has focus. A key or mouse button goes back up even when Ctrl-C
+lands between its down and its up. The loop also stops itself on `done` or `none`, on confidence under
 `--min-confidence` (0.4), when it stalls, or at `--steps`. Each of those stops goes to the
 writer, which answers and may hand the run back (below).
 

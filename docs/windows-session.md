@@ -48,7 +48,7 @@ itself still in the console session. On startup it binds to that session's inter
 The pipe is created for the current user and rejects remote clients. Each message is one line
 of JSON. The `type` is one of `task`, `log`, `progress`, `question`, `answer`, `cancel`, or
 `done`. A question from the run is printed on the controller; the reply you type is the
-answer. Cancelling aborts the run the same way the top-left corner does.
+answer. Cancelling aborts the run the same way Ctrl-C does.
 
 ## Limits that the code does not work around
 

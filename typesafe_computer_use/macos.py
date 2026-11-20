@@ -19,8 +19,7 @@ import Quartz
 from PIL import Image
 
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
-from .config import settings
-from .models import Abort, AxNode, ElementState, Field
+from .models import AxNode, ElementState, Field
 
 # ANSI key codes. `delete` and `backspace` are the same key: on a Mac the key labeled Delete
 # erases backward. Digits are the number row, not the keypad.
@@ -90,14 +89,12 @@ def mouse_location() -> tuple[float, float]:
 
 
 def check_abort() -> None:
-    corner = settings().abort_corner_px
-    x, y = mouse_location()
-    if x <= corner and y <= corner:
-        raise Abort("mouse in top-left corner")
+    # TODO: 左上角叫停先去掉。画中画子会话里 GetCursorPos 会被拒绝（错误 5），要换一种不依赖读鼠标的叫停方式后再加回来。
+    return None
 
 
 def abort_hint() -> str:
-    return "Ctrl-C, or slam the mouse into the top-left corner"
+    return "Ctrl-C"
 
 
 def sleep_watching(seconds: float) -> None:

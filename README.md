@@ -93,7 +93,7 @@ their SHA-256. Without `clicker-models fetch`, the first run downloads them and 
 | `CLICKER_HANDOFFS` | no | times the writer may send a stopped run back; defaults to `10`. `--handoffs` wins |
 | `CLICKER_MAX_OPTIONS` | no | items offered to the classifier, at most `255`; defaults to `255` |
 | `CLICKER_MIN_OCR_CONFIDENCE` | no | OCR lines kept at or above this confidence; defaults to `0.3` |
-| `CLICKER_ABORT_CORNER_PX` | no | top-left square, in pixels, that aborts a run; defaults to `4` |
+| `CLICKER_ABORT_CORNER_PX` | no | kept for a later corner abort; unused, defaults to `4` |
 
 `.env` lives at the repo root and is read by every entry point (`clicker`, `clicker-inspect`,
 `clicker-bench`). `config.settings()` is the only way the program reads these, and it keeps one
@@ -121,8 +121,8 @@ Every step sends TypeSafe a picture of the frontmost window, with each item boxe
 Whatever is visible there leaves the machine, including text you typed into a field; jev blanks
 nothing out. The browser backend sends no picture.
 
-To stop a live run, press Ctrl-C in the terminal or slam the mouse into the top-left corner of
-the screen. The loop also stops itself on `done`, low confidence, a stall, or the step limit,
+To stop a live run, press Ctrl-C in the terminal. The loop also stops itself on `done`, low
+confidence, a stall, or the step limit,
 and the writer then reads the screen and prints the answer. Every run writes
 `runs/<timestamp>/`, so a stall can be [replayed offline](docs/run-folder.md).
 

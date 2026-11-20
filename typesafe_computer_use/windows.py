@@ -31,7 +31,6 @@ import win32process
 from PIL import Image, ImageGrab
 
 from .ax_walk import AX_PRESS, AxAttrs, AxFacts, Frame, walk_actionable
-from .config import settings
 from .models import Abort, AxNode, ElementState, Field, Missed
 from .uia_patterns import OPERATION_PATTERN, PATTERN_IDS
 from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
@@ -242,14 +241,23 @@ def check_abort() -> None:
 
         if session_cancelled():
             raise Abort("the session was cancelled")
-    corner = settings().abort_corner_px
-    x, y = mouse_location()
-    if x <= corner and y <= corner:
-        raise Abort("mouse in top-left corner")
+    # TODO: 左上角叫停先去掉。画中画子会话里 GetCursorPos 会被拒绝（错误 5），要换一种不依赖读鼠标的叫停方式后再加回来。
 
 
 def abort_hint() -> str:
-    return "Ctrl-C, or slam the mouse into the top-left corner"
+    return "Ctrl-C"
+
+
+def _cursor_after_move() -> tuple[float, float] | None:
+    """Where the cursor is, or None when Windows refuses the read.
+
+    A child session sometimes answers GetCursorPos with access denied. The click still goes
+    where the move sent it; skipping the check is safer than stopping the run.
+    """
+    try:
+        return mouse_location()
+    except pywintypes.error:
+        return None
 
 
 def sleep_watching(seconds: float) -> None:
@@ -279,14 +287,16 @@ def click_at(point: tuple[float, float], button: str = "left", count: int = 1, m
     """Move, read back where the cursor landed, then press and release there.
 
     A cursor that did not reach the target (another desktop has the input, or the point is off
-    every monitor) means the click would land somewhere unknown, so nothing is pressed. `button`
-    is left or right, `count` is 2 for a double-click, and `modifier` is `add` (Control) or
-    `range` (Shift), held around the click and released even when the click fails.
+    every monitor) means the click would land somewhere unknown, so nothing is pressed. When
+    Windows refuses the read, the check is skipped and the button is pressed at the point the
+    move was sent to. `button` is left or right, `count` is 2 for a double-click, and `modifier`
+    is `add` (Control) or `range` (Shift), held around the click and released even when the click
+    fails.
     """
     target = (round(point[0]), round(point[1]))
     _move(target)
-    actual = mouse_location()
-    if not landed(target, actual):
+    actual = _cursor_after_move()
+    if actual is not None and not landed(target, actual):
         raise Missed(f"the cursor went to {actual}, not {target}")
     if button == "left" and count == 1 and not modifier:
         _send(_mouse(MOUSEEVENTF_LEFTDOWN))
@@ -314,12 +324,16 @@ DRAG_STEPS = 8  # the button stays down across these moves, so a drop lands wher
 
 
 def drag(start: tuple[float, float], end: tuple[float, float]) -> None:
-    """Press at `start`, move to `end`, and release, including when a move in between fails."""
+    """Press at `start`, move to `end`, and release, including when a move in between fails.
+
+    When Windows refuses to say where the cursor landed, the check is skipped and the button
+    goes down at the point the move was sent to.
+    """
     origin = (round(start[0]), round(start[1]))
     dest = (round(end[0]), round(end[1]))
     _move(origin)
-    actual = mouse_location()
-    if not landed(origin, actual):
+    actual = _cursor_after_move()
+    if actual is not None and not landed(origin, actual):
         raise Missed(f"the cursor went to {actual}, not {origin}")
     _send(_mouse(MOUSEEVENTF_LEFTDOWN))
     try:

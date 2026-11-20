@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # 下面这些用 CLICKER_ 前缀。命令行有同名参数时以命令行为准。
     min_ocr_confidence: float = Field(0.3, ge=0, le=1)  # OCR 一行字的最低置信度。更低的丢掉
     max_options: int = Field(255, ge=1, le=255)  # 交给分类器的选项上限。TypeSafe Choice 最多 255 个
-    abort_corner_px: int = Field(4, ge=0)  # 鼠标进入左上角这么大的方块就中止运行。单位是像素
+    abort_corner_px: int = Field(4, ge=0)  # 鼠标进入左上角这么大的方块就中止运行。单位是像素。当前未使用，见 check_abort 的 TODO
     min_confidence: float = Field(0.4, ge=0, le=1)  # 分类器置信度低于这个就停。--min-confidence 优先
     steps: int = Field(100, ge=1)  # 一轮最多走多少步。--steps 优先
     delay: float = Field(2.0, ge=0)  # 每一步做完后等待的秒数。--delay 优先

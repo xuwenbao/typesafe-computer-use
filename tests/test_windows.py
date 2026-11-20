@@ -261,6 +261,46 @@ def test_a_drag_releases_the_button_when_a_move_fails(monkeypatch):
     assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
 
 
+def _cursor_denied(monkeypatch):
+    """Make `mouse_location` raise the error `except pywintypes.error` catches.
+
+    Off Windows, pywin32 is a stand-in whose attributes raise, so the test installs an exception
+    class for the duration of the test. The class goes into the module dict: looking the name up
+    on the stand-in raises before `setattr` can see it.
+    """
+    try:
+        denied = windows.pywintypes.__dict__["error"]
+    except KeyError:
+        denied = type("error", (Exception,), {})
+    monkeypatch.setitem(windows.pywintypes.__dict__, "error", denied)
+
+    def refuse() -> tuple[float, float]:
+        raise denied(5, "GetCursorPos", "Access is denied.")
+
+    monkeypatch.setattr(windows, "mouse_location", refuse)
+
+
+def test_a_click_presses_when_the_cursor_cannot_be_read(monkeypatch):
+    sent = []
+    _cursor_denied(monkeypatch)
+    monkeypatch.setattr(windows, "_move", lambda point: None)
+    monkeypatch.setattr(windows, "_send", sent.append)
+    windows.click_at((640.0, 480.0))
+    assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_LEFTDOWN, windows.MOUSEEVENTF_LEFTUP]
+
+
+def test_a_drag_proceeds_when_the_cursor_cannot_be_read(monkeypatch):
+    sent = []
+    moved = []
+    _cursor_denied(monkeypatch)
+    monkeypatch.setattr(windows, "_move", moved.append)
+    monkeypatch.setattr(windows, "_send", sent.append)
+    windows.drag((10.0, 20.0), (18.0, 28.0))
+    assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
+    assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
+    assert len(moved) == windows.DRAG_STEPS + 1
+
+
 def test_a_click_that_landed_presses_and_releases(monkeypatch):
     sent = []
     monkeypatch.setattr(windows, "_move", lambda point: None)
