@@ -1,0 +1,113 @@
+"""The host opens or focuses an application, and the existing loop still runs when that fails."""
+
+import json
+from types import SimpleNamespace
+
+from world import FakeWriter, Page, World, drive, scripted
+
+from typesafe_computer_use import host
+from typesafe_computer_use.platform_adapter import desktop
+from typesafe_computer_use.report import Log
+from typesafe_computer_use.runner import RunConfig, RunState
+
+
+def _reply(body: dict):
+    text = json.dumps(body)
+
+    def create(**_request):
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+    return SimpleNamespace(messages=SimpleNamespace(create=create))
+
+
+class _Launched(list):
+    activated: list
+
+    def __init__(self):
+        super().__init__()
+        self.activated = []
+
+
+def _desktop(monkeypatch, windows, front):
+    launched = _Launched()
+    open_windows = list(windows)
+
+    def launch(name):
+        launched.append(name)
+        process = name if name.endswith(".exe") else f"{name}.exe"
+        front["app"] = process
+        open_windows.append(("1", "Untitled", process))
+
+    def activate(app, timeout=3.0):
+        launched.activated.append(app)
+        front["app"] = app if str(app).endswith(".exe") else f"{app}.exe"
+        return True
+
+    monkeypatch.setattr(desktop, "list_windows", lambda: list(open_windows))
+    monkeypatch.setattr(desktop, "launch_app", launch)
+    monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: (front["app"], 1))
+    monkeypatch.setattr(desktop, "activate", activate)
+    monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
+    monkeypatch.setattr(desktop, "check_abort", lambda: None)
+    return launched
+
+
+def test_an_open_window_is_focused_and_not_launched(monkeypatch, tmp_path):
+    state = RunState()
+    shown = {"app": "explorer.exe"}
+    launched = _desktop(monkeypatch, [("1", "Untitled - Notepad", "notepad.exe")], shown)
+    host.prepare(
+        RunConfig(goal="type into notepad", out=tmp_path, act=True),
+        SimpleNamespace(writer=_reply({"action": "focus", "id": "1", "executable": "", "reason": "Notepad is open"})),
+        state,
+        Log(),
+    )
+    assert launched == []
+    assert shown["app"] == "notepad.exe"
+    assert state.history == ["host: focused notepad.exe"]
+
+
+def test_a_missing_app_is_launched_by_name(monkeypatch, tmp_path):
+    state = RunState()
+    shown = {"app": "explorer.exe"}
+    launched = _desktop(monkeypatch, [], shown)
+    host.prepare(
+        RunConfig(goal="type into notepad", out=tmp_path, act=True),
+        SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "notepad", "reason": "open it"})),
+        state,
+        Log(),
+    )
+    assert launched == ["notepad"]
+    assert launched.activated == ["notepad"]
+    assert state.history == ["host: launched notepad"]
+
+
+def test_a_name_with_a_path_or_arguments_is_refused(monkeypatch, tmp_path):
+    assert host.executable_name("notepad") == "notepad"
+    assert host.executable_name("notepad.exe") == "notepad.exe"
+    assert host.executable_name(r"C:\Windows\notepad.exe") is None
+    assert host.executable_name("notepad /c calc") is None
+    state = RunState()
+    launched = _desktop(monkeypatch, [], {"app": "explorer.exe"})
+    host.prepare(
+        RunConfig(goal="open notepad", out=tmp_path, act=True),
+        SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "notepad /c calc", "reason": "no"})),
+        state,
+        Log(),
+    )
+    assert launched == []
+    assert state.history == ["host: refused 'notepad /c calc'"]
+
+
+def test_the_loop_still_runs_when_the_host_cannot_choose(monkeypatch, tmp_path):
+    world = World([Page(name="desk", items=["This PC"])])
+    state = drive(
+        world,
+        scripted(("done", None)),
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=FakeWriter(host_fails=True),
+    )
+    assert state.outcome == "done"
+    assert state.calls.count["classifier"] == 1
+    assert state.history[0].startswith("host: could not choose an app")

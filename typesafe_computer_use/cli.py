@@ -28,9 +28,13 @@ def _require_perception() -> None:
 
 
 def _prepare() -> None:
-    config.load_dotenv(DOTENV)
-    if not os.environ.get("TYPESAFE_API_KEY"):
+    if not config.settings().typesafe_api_key:
         sys.exit("TYPESAFE_API_KEY is not set (export it or put it in .env)")
+
+
+def child_argv(goal: str, passed: list[str]) -> list[str]:
+    """The child's arguments: the goal from the pipe, then the flags the launch command added."""
+    return [goal, *passed]
 
 
 def ask_user(question: str) -> str:
@@ -45,19 +49,44 @@ def ask_user(question: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
+    args = list(sys.argv[1:] if argv is None else argv)
+    # 隔离会话只在 Windows 上导入。其它系统在导入之前就退出，避免把那条路径带进来。
+    if args[:1] == ["session"]:
+        if sys.platform != "win32":
+            sys.exit("clicker session only runs on Windows")
+        config.load_dotenv(DOTENV)
+        from .windows_session import run_controller
+
+        run_controller(args[1:])
+        return
+    # 子会话里的 jev 若仍在控制台会话，必须在截图和输入之前退出。提问走管道。
+    session_ask = None
+    session_done = None
+    if os.environ.get("JEV_SESSION") == "1":
+        from .windows_session import child_startup, end_child, refuse_if_console
+
+        refuse_if_console()
+        goal, session_ask, session_done = child_startup()
+        extra = list(sys.argv[1:] if argv is None else argv)
+        argv = child_argv(goal, extra)
+    config.load_dotenv(DOTENV)
+    try:
+        options = config.settings()
+    except ValueError as e:
+        sys.exit(str(e))
     parser = argparse.ArgumentParser(
         prog="clicker",
         description="Drive this computer toward a goal: screen OCR, a TypeSafe classifier, deterministic actions.",
     )
     parser.add_argument("goal", help="what you want done on this computer")
     parser.add_argument("--act", action="store_true", help="actually click and type (default: dry run, one step)")
-    parser.add_argument("--steps", type=int, default=config.DEFAULT_STEPS, help="max actions before stopping")
-    parser.add_argument("--min-confidence", type=float, default=config.DEFAULT_MIN_CONFIDENCE, help="stop below this confidence")
-    parser.add_argument("--delay", type=float, default=config.DEFAULT_DELAY, help="seconds to wait after each action")
+    parser.add_argument("--steps", type=int, default=options.steps, help="max actions before stopping")
+    parser.add_argument("--min-confidence", type=float, default=options.min_confidence, help="stop below this confidence")
+    parser.add_argument("--delay", type=float, default=options.delay, help="seconds to wait after each action")
     parser.add_argument(
         "--handoffs",
         type=int,
-        default=config.DEFAULT_HANDOFFS,
+        default=options.handoffs,
         help="times the writer may send a stopped run back to the classifier with a new focus (0: every stop is final)",
     )
     parser.add_argument("--out", type=Path, default=Path("runs") / time.strftime("%Y%m%d-%H%M%S"), help="run folder")
@@ -72,13 +101,11 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit("this terminal lacks Accessibility permission; grant it in System Settings > Privacy & Security")
     try:
         writer = make_writer()
-        config.writer_vision()  # a bad value stops the run here, not at its first stop
-        driver_steps = config.driver_steps()
     except ValueError as e:
         sys.exit(str(e))
     if writer is None:
         print(
-            "writer disabled: no ANTHROPIC_API_KEY or CLICKER_WRITER_BASE_URL; type_text, writer-proposed URLs and the final answer need one"
+            "writer disabled: no OPENAI_API_KEY, or ANTHROPIC_API_KEY when CLICKER_WRITER_API=anthropic; type_text, writer-proposed URLs and the final answer need one"
         )
     else:
         print(f"writer: {provider(writer)}")
@@ -91,7 +118,7 @@ def main(argv: list[str] | None = None) -> None:
         min_confidence=args.min_confidence,
         delay=args.delay,
         handoffs=args.handoffs,
-        driver_steps=driver_steps,
+        driver_steps=options.driver_budget,
         image=args.image,
         app=args.app,
         url=args.url,
@@ -100,20 +127,27 @@ def main(argv: list[str] | None = None) -> None:
     def ctx_factory(typesafe, history):
         return Context(
             goal=args.goal,
-            browser=config.browser(),
-            email=config.email(),
+            browser=options.browser,
+            email=options.email,
             typesafe=typesafe,
             writer=writer,
             history=history,
-            ask=ask_user if sys.stdin.isatty() else None,
+            ask=session_ask if session_ask is not None else (ask_user if sys.stdin.isatty() else None),
         )
 
     state = run(cfg, ctx_factory)
+    if session_done is not None:
+        end_child(session_done, state.outcome, str(args.out))
     if state.outcome.startswith("aborted"):
         sys.exit(130)
 
 
 def inspect(argv: list[str] | None = None) -> None:
+    config.load_dotenv(DOTENV)
+    try:
+        options = config.settings()
+    except ValueError as e:
+        sys.exit(str(e))
     parser = argparse.ArgumentParser(
         prog="clicker-inspect",
         description="Count down, capture the screen, and show exactly what the clicker would send to TypeSafe.",
@@ -124,7 +158,6 @@ def inspect(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=Path("inspections") / time.strftime("%Y%m%d-%H%M%S"))
     args = parser.parse_args(argv)
     _require_perception()
-    config.load_dotenv(DOTENV)
     args.out.mkdir(parents=True, exist_ok=True)
 
     for n in range(args.countdown, 0, -1):
@@ -132,15 +165,15 @@ def inspect(argv: list[str] | None = None) -> None:
         time.sleep(1)
     print("capture")
 
-    browser = config.browser()
+    browser = options.browser
     timing: dict[str, float] = {}
     screen = capture(browser=browser, timing=timing)
-    items = perceive(screen, config.MAX_OPTIONS, args.goal, timing)
+    items = perceive(screen, options.max_options, args.goal, timing)
     annotated = args.out / "annotated.png"
     text = args.out / "state.txt"
     screen.image.save(args.out / "raw.png")
     annotate(screen, items, chosen="", out=annotated)
-    text.write_text(render_payload(args.goal, screen, items, [], browser, config.email()), encoding="utf-8")
+    text.write_text(render_payload(args.goal, screen, items, [], browser, options.email), encoding="utf-8")
 
     print(
         f"app={screen.app!r} url={screen.url!r} items={len(items)} ax={ax_count(items)} icons={icon_count(items)} "

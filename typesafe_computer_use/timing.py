@@ -7,11 +7,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 PHASE_ORDER = ("capture", "screenshot", "app", "window", "field", "url", "ocr", "ax", "decide", "act", "total")
-# None of these is a phase: each prints on the ocr phase rather than as a phase of its own.
+# None of these is a phase. OCR details print on the ocr phase; a timeout prints on the read that missed.
 OCR_REGION_PCT = "ocr_region_pct"  # share of the capture handed to Vision
 OCR_RECTS = "ocr_rects"  # how many rectangles it took, 0 for a full read or for nothing to read
 OCR_AHEAD = "ocr_ahead"  # seconds the read took on a thread of its own, when it was read ahead of the step
-EXTRAS = (OCR_REGION_PCT, OCR_RECTS, OCR_AHEAD)
+FIELD_TIMEOUT = "field_timeout"  # 1 when the focused control did not answer in time
+URL_TIMEOUT = "url_timeout"  # 1 when the address bar did not answer in time
+SCREENSHOT_TIMEOUT = "screenshot_timeout"  # 1 when the screenshot itself did not return
+EXTRAS = (OCR_REGION_PCT, OCR_RECTS, OCR_AHEAD, FIELD_TIMEOUT, URL_TIMEOUT, SCREENSHOT_TIMEOUT)
 
 
 @contextmanager
@@ -38,8 +41,18 @@ def format_timing(timing: dict[str, float]) -> str:
     count is left off a full read and a step with nothing to re-read, where it says nothing.
     """
     shown = [(name, s) for name, s in ordered(timing) if name not in EXTRAS and not (name == "act" and s == 0)]
-    parts = [f"{name} {seconds:.2f}s" + (ocr_note(timing) if name == "ocr" else "") for name, seconds in shown]
+    parts = [f"{name} {seconds:.2f}s" + phase_note(name, timing) for name, seconds in shown]
     return "  timing: " + "  ".join(parts)
+
+
+def phase_note(name: str, timing: dict[str, float]) -> str:
+    """A parenthetical on the phase it belongs to. Timeout flags are not phases of their own."""
+    if name == "ocr":
+        return ocr_note(timing)
+    timed_out = {"field": FIELD_TIMEOUT, "url": URL_TIMEOUT, "screenshot": SCREENSHOT_TIMEOUT}
+    if timing.get(timed_out.get(name, "")):
+        return " (timed out)"
+    return ""
 
 
 def ocr_note(timing: dict[str, float]) -> str:

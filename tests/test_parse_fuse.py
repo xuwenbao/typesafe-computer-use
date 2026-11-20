@@ -1,6 +1,6 @@
 import pytest
 
-from typesafe_computer_use.parse.fuse import Icon, distinct_icons, fuse, inside, overlap
+from typesafe_computer_use.parse.fuse import Icon, distinct_icons, fuse, inside, one_row, overlap
 
 
 def line(text, x1, y1, x2, y2, conf=0.9):
@@ -41,6 +41,23 @@ def test_an_icon_beside_a_paragraph_stays_because_fusion_runs_on_lines():
 def test_an_icon_without_text_is_left_to_caption():
     _, icons = fuse([], [icon(0, 0, 32, 32)])
     assert icons[0].text is None and icons[0].text_confidence is None
+
+
+def test_menu_rows_inside_one_tall_icon_stay_separate_lines():
+    # The VLC Tools menu: one icon box covered "Customize Interface..." and "Preferences Ctrl+P".
+    lines = [
+        line("Customize Interface...", 640, 375, 800, 392),
+        line("Preferences Ctrl+P", 640, 400, 820, 416),
+    ]
+    texts, icons = fuse(lines, [icon(631, 370, 865, 421)])
+    assert [t for t, _, _ in texts] == ["Customize Interface...", "Preferences Ctrl+P"]
+    assert icons == [Icon((631.0, 370.0, 865.0, 421.0), 0.5)]
+
+
+def test_one_row_is_false_when_the_boxes_stack():
+    assert one_row([(0, 0, 10, 10), (20, 0, 40, 10)])
+    assert not one_row([(0, 0, 10, 10), (0, 12, 10, 22)])
+    assert one_row([])
 
 
 def test_lines_inside_one_icon_join_in_order_with_the_least_confidence():

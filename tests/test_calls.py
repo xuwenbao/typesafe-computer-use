@@ -98,11 +98,18 @@ def test_run_json_shows_tokens_per_model_and_the_calls_line_is_unchanged(monkeyp
     drive(world, scripted(("done", None)), monkeypatch=monkeypatch, tmp_path=tmp_path, writer=writer)
 
     run = json.loads((tmp_path / "run" / "run.json").read_text())
-    (model,) = {request["model"] for request in writer.requests}
-    assert run["usage"] == {
-        "classifier": {"requests": 1, "input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
-        model: {"requests": len(writer.requests), "input_tokens": 700, "cached_input_tokens": 300, "output_tokens": 40},
-    }
+    by_model: dict[str, int] = {}
+    for request in writer.requests:
+        by_model[request["model"]] = by_model.get(request["model"], 0) + 1
+    assert set(run["usage"]) == {"classifier", *by_model}
+    assert run["usage"]["classifier"] == {"requests": 1, "input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+    for model, count in by_model.items():
+        assert run["usage"][model] == {
+            "requests": count,
+            "input_tokens": 700 * count,
+            "cached_input_tokens": 300 * count,
+            "output_tokens": 40 * count,
+        }
     assert run["calls"]["classifier"]["calls"] == 1
     log = (tmp_path / "run" / "run.log").read_text()
-    assert "calls: classifier 1 (50%, " in log and "writer 1 (50%, " in log
+    assert "calls: classifier 1 (33%, " in log and "writer 2 (67%, " in log

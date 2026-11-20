@@ -24,6 +24,7 @@ from typesafe_computer_use.helper import desk_lock as helper_desk
         lambda: macos.open_url("Google Chrome", "https://example.com"),
         lambda: macos.activate("Finder"),
         lambda: macos.screenshot(),
+        lambda: macos.element_state(object()),
     ],
 )
 def test_an_unpatched_call_refuses_instead_of_reaching_the_machine(touch):
@@ -52,6 +53,9 @@ def test_the_pointer_reads_as_mid_screen_so_no_test_aborts_by_chance():
         lambda: windows.ax_press(object()),
         lambda: windows.ax_focus(object()),
         lambda: windows.ax_set_value(object(), "hi"),
+        lambda: windows.ax_operate(object(), "toggle"),
+        lambda: windows.element_state(object()),
+        lambda: windows.element_frame(object()),
     ],
 )
 def test_an_unpatched_windows_call_refuses_instead_of_reaching_the_machine(touch):
@@ -74,6 +78,26 @@ def test_the_desktop_mutex_is_not_created_during_tests(touch):
 def test_the_windows_pointer_reads_as_mid_screen_too():
     assert windows.mouse_location() == (500.0, 500.0)
     windows.check_abort()
+
+
+def test_an_unpatched_session_call_refuses_instead_of_opening_one():
+    from typesafe_computer_use import windows_session
+
+    for touch in (
+        windows_session.enable_child_session,
+        windows_session.open_child_window,
+        windows_session.connect_child_session,
+        lambda: windows_session._remember_credentials("user", "secret"),
+        lambda: windows_session.wait_for_child_explorer(lambda: None, 0, None),
+        lambda: windows_session.launch_in_session("jev-session"),
+        windows_session.attach_input_desktop,
+        lambda: windows_session.create_session_pipe("jev-session"),
+        lambda: windows_session.attach_session_pipe("jev-session"),
+        windows_session.in_console_session,
+        windows_session.collect_facts,
+    ):
+        with pytest.raises(RuntimeError, match="real machine"):
+            touch()
 
 
 # ------------------------------------------------------------- the browser backend

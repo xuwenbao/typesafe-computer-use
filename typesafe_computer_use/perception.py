@@ -16,7 +16,8 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
-from .config import MAX_OPTIONS, MIN_OCR_CONFIDENCE
+from .bound import CaptureTimeout, call_within
+from .config import settings
 from .models import MENU_BAR_PT, AxNode, Box, Item, Screen
 from .parse import caption as parse_caption
 from .parse import detect as parse_detect
@@ -24,7 +25,14 @@ from .parse import ocr as parse_ocr
 from .parse import weights as parse_weights
 from .parse.fuse import fuse
 from .platform_adapter import desktop
-from .timing import OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, phase
+from .timing import FIELD_TIMEOUT, OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, SCREENSHOT_TIMEOUT, URL_TIMEOUT, phase
+
+# A control that does not answer is treated as absent. A screenshot that does not return ends the step.
+FIELD_WAIT = 2.0
+URL_WAIT = 2.0
+SCREENSHOT_WAIT = 3.0
+_MISSED = object()
+_TIMEOUT = {"field": FIELD_TIMEOUT, "url": URL_TIMEOUT, "screenshot": SCREENSHOT_TIMEOUT}
 
 Line = tuple[str, float, Box]
 Detection = tuple[Box, float]  # an icon box in capture pixels, and the detector's score
@@ -67,10 +75,33 @@ def capture(
     record the seconds each one costs under "screenshot", "app", "window", "field", and "url".
     Pass `ahead`, the run's OCR cache, to start reading the capture while those queries run (see
     `ParseCache.read_ahead`).
+
+    A field or address that does not answer counts as absent. A screenshot that does not answer
+    within SCREENSHOT_WAIT seconds raises CaptureTimeout. On Windows those three reads run in a
+    process of their own, so a stuck call can be killed instead of landing back on this thread.
     """
     replay = image_path is not None and app is not None
+    brought = None
     with phase(timing, "screenshot"):
-        image = Image.open(image_path).convert("RGB") if image_path else desktop.screenshot()
+        if image_path:
+            image = Image.open(image_path).convert("RGB")
+        else:
+            read_capture = getattr(desktop, "read_capture", None)
+            if read_capture is None:
+                # A desktop whose screenshot waits out the previous action, such as the benchmark
+                # VM, cannot be cut off here: that wait is the step, and it outlasts SCREENSHOT_WAIT.
+                if getattr(desktop, "screenshot_waits", False):
+                    image = desktop.screenshot()
+                else:
+                    image = _bounded(timing, "screenshot", SCREENSHOT_WAIT, desktop.screenshot)
+            else:
+                try:
+                    brought = read_capture(browser, SCREENSHOT_WAIT, FIELD_WAIT, timing)
+                except CaptureTimeout:
+                    if timing is not None:
+                        timing[_TIMEOUT["screenshot"]] = 1.0
+                    raise
+                image = brought[0]
     scale = desktop.display_scale(image)
     if ahead is not None:
         ahead.read_ahead(image, scale)
@@ -82,11 +113,36 @@ def capture(
             frontmost = app or frontmost
     with phase(timing, "window"):
         window = None if replay else desktop.frontmost_window_bounds(pid)
+        popups = () if replay else desktop.owned_popup_bounds(pid)
     with phase(timing, "field"):
-        field = None if replay else desktop.focused_field()
+        if replay or brought is not None:
+            field = None if brought is None else brought[1]
+        else:
+            field = _bounded(timing, "field", FIELD_WAIT, desktop.focused_field, absent=None)
     with phase(timing, "url"):
-        page_url = url if url is not None else (None if replay else desktop.browser_url(browser))
-    return Screen(image=image, scale=scale, app=frontmost, field=field, url=page_url, pid=pid, window=window)
+        if url is not None:
+            page_url = url
+        elif replay or brought is not None:
+            page_url = None if brought is None else brought[2]
+        else:
+            page_url = _bounded(timing, "url", URL_WAIT, desktop.browser_url, browser, absent=None)
+    return Screen(image=image, scale=scale, app=frontmost, field=field, url=page_url, pid=pid, window=window, popups=popups)
+
+
+def _bounded(timing: dict[str, float] | None, name: str, seconds: float, fn, *args, absent=None):
+    """What `fn` returns, or `absent` when it is still running after `seconds`.
+
+    A screenshot that misses raises CaptureTimeout after the timing flag is set. The sentinel is
+    not None: a focused control that is genuinely absent must not look like a timeout.
+    """
+    found = call_within(seconds, lambda: fn(*args), _MISSED)
+    if found is not _MISSED:
+        return found
+    if timing is not None:
+        timing[_TIMEOUT[name]] = 1.0
+    if name == "screenshot":
+        raise CaptureTimeout(name)
+    return absent
 
 
 def goal_echoes(goal: str) -> set[str]:
@@ -113,7 +169,9 @@ def perceive(
     """Everything worth clicking on this screen: text blocks and icons, plus the app's own controls.
 
     Fills `screen.ax_refs` on the way, so an item that came from the accessibility tree can be
-    pressed through it later. The merge renumbers everything, hence the side table over the
+    pressed through it later. A text block inside a text area gets that control's ref too, so a
+    read can ask the document for its text; a click on the block still goes to the pixel.
+    The merge renumbers everything, hence the side table over the
     final indices rather than a handle on the item itself, which has to stay printable.
     `screen.covered` is a side table the same way: the items under a popup, and which popup.
 
@@ -134,6 +192,7 @@ def perceive(
     merged = merge_with_origins(found, controls, budget)
     screen.ax_refs.clear()
     screen.ax_refs.update({it.index: nodes[origin].ref for it, origin in merged if origin is not None and nodes[origin].ref})
+    _attach_document_text(screen, nodes, merged)
     screen.covered.clear()
     screen.covered.update(
         {it.index: nodes[origin].covered_by for it, origin in merged if origin is not None and nodes[origin].covered_by}
@@ -175,10 +234,11 @@ def ocr(
         if ahead is not None:
             timing[OCR_AHEAD] = round(ahead.seconds, 3)
     echoes = goal_echoes(goal)
+    floor = settings().min_ocr_confidence
     kept: list[Line] = [
         (t.strip(), c, b)
         for t, c, b in reading.lines
-        if t.strip() and c >= MIN_OCR_CONFIDENCE and not is_echo(t, echoes) and not in_field(Item(0, t, c, *b), screen)
+        if t.strip() and c >= floor and not is_echo(t, echoes) and not in_field(Item(0, t, c, *b), screen)
     ]
     texts, icons = fuse(kept, reading.icons)
     items = [Item(0, t, c, *b) for t, c, b in merge_blocks(texts)]
@@ -406,9 +466,11 @@ def ocr_region(screen: Screen) -> Box:
     """The part of the capture worth reading, in capture pixels.
 
     The frontmost window with a margin, joined with the menu bar strip over the same columns and
-    clamped to the display. Text on the desktop and in background windows is noise to the decision,
-    so it is left unread. Clipping the strip to the window's x-range is what makes the crop worth
-    anything on a full-height window, whose own rectangle already reaches the bottom of the display.
+    clamped to the display. A popup owned by that window, or the focused control's own window, is
+    joined in too, so a menu that opens beside the window stays in the picture. Text on the desktop
+    and in background windows is noise to the decision, so it is left unread. Clipping the strip to
+    the window's x-range is what makes the crop worth anything on a full-height window, whose own
+    rectangle already reaches the bottom of the display.
 
     The cost is that status items to the right of the window, the clock and the menu extras, go
     unread. They stay clickable: the accessibility tree lists them as AXMenuBarItem controls.
@@ -419,8 +481,13 @@ def ocr_region(screen: Screen) -> Box:
     x, y, w, h = screen.window
     scale, margin = screen.scale, REGION_MARGIN_PT
     window = ((x - margin) * scale, (y - margin) * scale, (x + w + margin) * scale, (y + h + margin) * scale)
-    joined = (window[0], min(window[1], 0.0), window[2], max(window[3], MENU_BAR_PT * scale))
-    clamped = (max(0.0, joined[0]), max(0.0, joined[1]), min(width, joined[2]), min(height, joined[3]))
+    left, top, right, bottom = window[0], min(window[1], 0.0), window[2], max(window[3], MENU_BAR_PT * scale)
+    for px, py, pw, ph in screen.popups:
+        left = min(left, (px - margin) * scale)
+        top = min(top, (py - margin) * scale)
+        right = max(right, (px + pw + margin) * scale)
+        bottom = max(bottom, (py + ph + margin) * scale)
+    clamped = (max(0.0, left), max(0.0, top), min(width, right), min(height, bottom))
     return clamped if clamped[2] > clamped[0] and clamped[3] > clamped[1] else (0.0, 0.0, width, height)
 
 
@@ -720,6 +787,36 @@ def in_field(block: Item, screen: Screen) -> bool:
     return field.x < x < field.x + field.w and field.y < y < field.y + field.h
 
 
+def _carried_item(item: Item) -> dict:
+    """The same facts, copied from the control item onto the text or icon it replaces."""
+    return {
+        "controls": item.controls,
+        "enabled": item.enabled,
+        "checked": item.checked,
+        "expanded": item.expanded,
+        "selected": item.selected,
+        "current": item.current,
+        "low": item.low,
+        "high": item.high,
+        "writable": item.writable,
+    }
+
+
+def _carried(node: AxNode) -> dict:
+    """The control facts an item keeps when it came from the accessibility tree."""
+    return {
+        "controls": node.patterns,
+        "enabled": node.enabled,
+        "checked": node.checked,
+        "expanded": node.expanded,
+        "selected": node.selected,
+        "current": node.current,
+        "low": node.low,
+        "high": node.high,
+        "writable": node.writable,
+    }
+
+
 def to_ax_items(nodes: list[AxNode], scale: float) -> list[Item]:
     """Controls as items, converted from screen points to capture pixels."""
     return [
@@ -733,9 +830,39 @@ def to_ax_items(nodes: list[AxNode], scale: float) -> list[Item]:
             y2=(node.y + node.h) * scale,
             role=node.role_word,
             source="ax",
+            **_carried(node),
         )
         for i, node in enumerate(nodes)
     ]
+
+
+def _attach_document_text(screen: Screen, nodes: list[AxNode], merged: list[tuple[Item, int | None]]) -> None:
+    """Point the text block inside a text area at that control, so a read asks the document.
+
+    The block stays an OCR item. A click on the words still goes to the pixel under them. A block
+    that is only a slice of the control, such as a status line, is left on the picture.
+    """
+    scale = screen.scale
+    for node in nodes:
+        if node.role != "AXTextArea" or not node.ref:
+            continue
+        box = Item(0, "", 1.0, node.x * scale, node.y * scale, (node.x + node.w) * scale, (node.y + node.h) * scale)
+        control_area = max(box.x2 - box.x1, 0.0) * max(box.y2 - box.y1, 0.0)
+        if control_area <= 0:
+            continue
+        body, body_area = None, 0.0
+        for item, origin in merged:
+            if origin is not None or item.source != "ocr" or box_overlap(box, item) < MIN_BOX_OVERLAP:
+                continue
+            area = (item.x2 - item.x1) * (item.y2 - item.y1)
+            if area > body_area:
+                body, body_area = item, area
+        if body is None:
+            continue
+        tall = (body.y2 - body.y1) >= 0.4 * (box.y2 - box.y1)
+        if body_area < 0.2 * control_area and not tall:
+            continue
+        screen.ax_refs.setdefault(body.index, node.ref)
 
 
 def ax_items(screen: Screen, budget: int) -> list[Item]:
@@ -743,12 +870,12 @@ def ax_items(screen: Screen, budget: int) -> list[Item]:
     return [it for it in to_ax_items(ax_nodes(screen, budget)[0], screen.scale) if it.text]
 
 
-def merge_sources(found: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[Item]:
+def merge_sources(found: list[Item], ax_items: list[Item], budget: int | None = None) -> list[Item]:
     """One item per thing: a control that sits on the text block naming it, or on an icon, replaces both."""
     return [it for it, _ in merge_with_origins(found, ax_items, budget)]
 
 
-def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MAX_OPTIONS) -> list[tuple[Item, int | None]]:
+def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int | None = None) -> list[tuple[Item, int | None]]:
     """The merge, each item paired with the position of the control it came from, or None.
 
     A control pairs first with the text block it overlaps that names it ("ax+ocr"), and failing
@@ -762,6 +889,8 @@ def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MA
     The pairing survives the budget cut and the renumbering, which is the only way back from a
     final item to the accessibility element behind it.
     """
+    if budget is None:
+        budget = settings().max_options
     taken: set[int] = set()
     merged: list[tuple[Item, int | None]] = []
     for origin, control in enumerate(ax_items):
@@ -769,13 +898,24 @@ def merge_with_origins(found: list[Item], ax_items: list[Item], budget: int = MA
         if block is not None:
             taken.add(block)
             text = control.text if len(control.text) >= len(found[block].text) else found[block].text
-            merged.append((replace(found[block], text=text, role=control.role, source="ax+ocr"), origin))
+            merged.append(
+                (replace(found[block], text=text, role=control.role, source="ax+ocr", **_carried_item(control)), origin)
+            )
             continue
         icon = _best_icon(control, found, taken)
         if icon is not None and (control.text or found[icon].text):
             taken.add(icon)
             merged.append(
-                (replace(found[icon], text=control.text or found[icon].text, role=control.role, source="ax+icon"), origin)
+                (
+                    replace(
+                        found[icon],
+                        text=control.text or found[icon].text,
+                        role=control.role,
+                        source="ax+icon",
+                        **_carried_item(control),
+                    ),
+                    origin,
+                )
             )
         elif control.text:
             merged.append((control, origin))

@@ -17,9 +17,11 @@ classifier which action comes next, and only calls a writing model when a text f
 needs free text or the classifier has stopped and the screen needs reading.
 
 One idea runs through it: the classifier picks, code decides facts, and the writer only writes
-free text. Anything a model would have to work out (a date, whether a field is focused, whether
-a URL is clean) is computed in code and handed over as state. [VISION.md](VISION.md) says what
-it is for in a dozen lines.
+free text. When the classifier stops short of the goal, a driver on an OpenAI Chat Completions
+model (`CLICKER_WRITER_API=openai`) can take over with tools: it may read a control and count or
+calculate before it asks for one screen action. Anything a model would have to work out (a date,
+whether a field is focused, whether a URL is clean) is computed in code and handed over as state.
+[VISION.md](VISION.md) says what it is for in a dozen lines.
 
 ```
 clicker "go to techcrunch and take me to the checkout page for the cheapest tickets to their next upcoming event" --act
@@ -63,7 +65,9 @@ does for free has to be rebuilt here as deterministic state.
 ## Install
 
 macOS 14 or newer on Apple silicon, Python 3.12 or newer, [uv](https://docs.astral.sh/uv/).
-Windows 10 and 11 are experimental; see [Windows](docs/windows.md). An Intel Mac can run only the
+Windows 10 and 11 are experimental; see [Windows](docs/windows.md). On Windows Pro, Enterprise,
+or Education, `clicker session` runs the task in a child session; see
+[the isolated session](docs/windows-session.md). An Intel Mac can run only the
 [browser backend](docs/browser-backend.md): the desktop perception needs PyTorch, which ships no
 build for it.
 
@@ -85,8 +89,17 @@ their SHA-256. Without `clicker-models fetch`, the first run downloads them and 
 | `ANTHROPIC_API_KEY` | no | `type_text`, writer-proposed URLs, and the final answer |
 | `CLICKER_EMAIL` | no | enables the `type_email` action |
 | `CLICKER_BROWSER` | no | defaults to `Google Chrome` |
+| `CLICKER_STEPS` | no | actions before stopping; defaults to `100`. `--steps` wins |
+| `CLICKER_DELAY` | no | seconds after each action; defaults to `2`. `--delay` wins |
+| `CLICKER_MIN_CONFIDENCE` | no | stop below this confidence; defaults to `0.4`. `--min-confidence` wins |
+| `CLICKER_HANDOFFS` | no | times the writer may send a stopped run back; defaults to `10`. `--handoffs` wins |
+| `CLICKER_MAX_OPTIONS` | no | items offered to the classifier, at most `255`; defaults to `255` |
+| `CLICKER_MIN_OCR_CONFIDENCE` | no | OCR lines kept at or above this confidence; defaults to `0.3` |
+| `CLICKER_ABORT_CORNER_PX` | no | kept for a later corner abort; unused, defaults to `4` |
 
-`.env` lives at the repo root and is read by every entry point (`clicker`, `clicker-inspect`).
+`.env` lives at the repo root and is read by every entry point (`clicker`, `clicker-inspect`,
+`clicker-bench`). `config.settings()` is the only way the program reads these, and it keeps one
+`Settings` for the process. A value already in the environment is kept, so a shell export wins over `.env`.
 To run the writer on another model or endpoint (LM Studio, Ollama, any OpenAI-compatible
 server), see [writer endpoints](docs/writer-endpoints.md).
 
@@ -110,8 +123,8 @@ Every step sends TypeSafe a picture of the frontmost window, with each item boxe
 Whatever is visible there leaves the machine, including text you typed into a field; jev blanks
 nothing out. The browser backend sends no picture.
 
-To stop a live run, press Ctrl-C in the terminal or slam the mouse into the top-left corner of
-the screen. The loop also stops itself on `done`, low confidence, a stall, or the step limit,
+To stop a live run, press Ctrl-C in the terminal. The loop also stops itself on `done`, low
+confidence, a stall, or the step limit,
 and the writer then reads the screen and prints the answer. Every run writes
 `runs/<timestamp>/`, so a stall can be [replayed offline](docs/run-folder.md).
 

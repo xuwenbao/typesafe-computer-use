@@ -14,11 +14,16 @@ from typesafe_computer_use.windows import (
     display_name,
     key_events,
     landed,
+    placed_origin,
     pressable,
     role_for,
     unicode_events,
+    unsigned_pid,
     wheel_delta,
 )
+
+# Captured before the machine guard replaces it.
+_ELEMENT_TEXT = windows.element_text
 
 # ------------------------------------------------------------------ roles
 
@@ -29,6 +34,23 @@ def test_control_types_map_onto_the_roles_the_shared_code_knows():
     assert role_for("EditControl") in TEXT_ROLES  # a focused edit box is a text field
     assert role_for("ComboBoxControl") in TEXT_ROLES
     assert role_for("TextControl") == "AXStaticText"  # where a list row's label is recovered from
+    assert windows.focused_role("DocumentControl") == "AXTextArea"  # Notepad's editor, when its state is unreadable
+    assert windows.focused_role("DocumentControl", 0) == "AXTextArea"
+    assert windows.focused_role("DocumentControl", 0x40) == ""  # a read-only document, such as a web page
+
+
+def test_a_writable_document_is_a_text_area_for_the_walk(monkeypatch):
+    monkeypatch.setattr(windows, "_legacy_state", lambda element: 0)
+    monkeypatch.setattr(windows, "_ui_frame", lambda element: (1.0, 2.0, 300.0, 200.0))
+    attrs = windows._ui_attrs(type("El", (), {"Name": "文本编辑器", "ControlTypeName": "DocumentControl"})())
+    assert attrs.role == "AXTextArea" and attrs.label == "文本编辑器"
+
+
+def test_a_read_only_document_stays_out_of_the_walk(monkeypatch):
+    monkeypatch.setattr(windows, "_legacy_state", lambda element: 0x40)
+    monkeypatch.setattr(windows, "_ui_frame", lambda element: (0.0, 0.0, 10.0, 10.0))
+    attrs = windows._ui_attrs(type("El", (), {"Name": "Example", "ControlTypeName": "DocumentControl"})())
+    assert attrs.role == ""
 
 
 def test_an_unknown_control_type_has_no_role():
@@ -60,6 +82,12 @@ def test_the_legacy_pattern_alone_is_not_pressable():
 
 
 # ------------------------------------------------------------------ which window is the app
+
+
+def test_a_window_process_id_keeps_its_high_bit():
+    assert unsigned_pid(4) == 4
+    assert unsigned_pid(-1504199776) == 2790767520
+    assert unsigned_pid(0) == 0
 
 
 def test_an_app_matches_its_own_process_exactly():
@@ -111,6 +139,15 @@ def test_delete_is_an_extended_key():
     assert key_events("delete") == [(0x2E, KEYEVENTF_EXTENDEDKEY), (0x2E, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
 
 
+def test_start_is_the_windows_key():
+    assert key_events("start") == [(0x5B, KEYEVENTF_EXTENDEDKEY), (0x5B, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
+
+
+def test_run_is_the_windows_key_held_around_r():
+    ext = KEYEVENTF_EXTENDEDKEY
+    assert key_events("run") == [(0x5B, ext), (0x52, 0), (0x52, KEYEVENTF_KEYUP), (0x5B, ext | KEYEVENTF_KEYUP)]
+
+
 def test_text_is_typed_as_unicode_characters_not_keys():
     down, up = KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
     assert unicode_events("aé") == [(ord("a"), down), (ord("a"), up), (0xE9, down), (0xE9, up)]
@@ -150,6 +187,21 @@ def test_a_click_lands_only_where_the_cursor_went():
     assert not landed((100, 200), (100.0, 260.0))
 
 
+WORK = (0.0, 0.0, 1280.0, 800.0)
+
+
+def test_a_window_inside_the_work_area_stays_where_it_is():
+    assert placed_origin((10.0, 20.0, 100.0, 80.0), WORK) is None
+    assert placed_origin((0.0, 0.0, 2000.0, 2000.0), WORK) is None  # already at the origin, though larger
+
+
+def test_a_window_outside_the_work_area_is_moved_back_inside():
+    assert placed_origin((-40.0, 20.0, 100.0, 80.0), WORK) == (0.0, 20.0)
+    assert placed_origin((1250.0, 20.0, 100.0, 80.0), WORK) == (1180.0, 20.0)
+    assert placed_origin((10.0, 900.0, 100.0, 80.0), WORK) == (10.0, 720.0)
+    assert placed_origin((50.0, 10.0, 2000.0, 80.0), WORK) == (0.0, 10.0)
+
+
 def test_a_click_that_did_not_land_presses_nothing(monkeypatch):
     sent = []
     monkeypatch.setattr(windows, "_move", lambda point: None)
@@ -187,6 +239,85 @@ def test_a_double_right_click_is_two_presses_of_the_right_button(monkeypatch):
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_RIGHTDOWN, windows.MOUSEEVENTF_RIGHTUP] * 2
 
 
+def test_a_scroll_aimed_at_a_point_parks_the_pointer_there(monkeypatch):
+    moved = []
+    monkeypatch.setattr(windows, "_move", moved.append)
+    monkeypatch.setattr(windows, "_send", lambda event: None)
+    windows.scroll(-10, at=(30.2, 40.8))
+    assert moved == [(30, 41)]
+
+
+def test_a_drag_presses_moves_and_releases(monkeypatch):
+    sent = []
+    moved = []
+    monkeypatch.setattr(windows, "_move", moved.append)
+    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 20.0))
+    monkeypatch.setattr(windows, "_send", sent.append)
+    windows.drag((10.0, 20.0), (18.0, 28.0))
+    assert moved[0] == (10, 20) and moved[-1] == (18, 28)
+    assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
+    assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
+    assert len(moved) == windows.DRAG_STEPS + 1
+
+
+def test_a_drag_releases_the_button_when_a_move_fails(monkeypatch):
+    sent = []
+    moved = []
+
+    def move(point):
+        moved.append(point)
+        if len(moved) > 2:
+            raise OSError("blocked")
+
+    monkeypatch.setattr(windows, "_move", move)
+    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 20.0))
+    monkeypatch.setattr(windows, "_send", sent.append)
+    with pytest.raises(OSError):
+        windows.drag((10.0, 20.0), (50.0, 20.0))
+    assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
+    assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
+
+
+def _cursor_denied(monkeypatch):
+    """Make `mouse_location` raise the error `except pywintypes.error` catches.
+
+    Off Windows, pywin32 is a stand-in whose attributes raise, so the test installs an exception
+    class for the duration of the test. The class goes into the module dict: looking the name up
+    on the stand-in raises before `setattr` can see it.
+    """
+    try:
+        denied = windows.pywintypes.__dict__["error"]
+    except KeyError:
+        denied = type("error", (Exception,), {})
+    monkeypatch.setitem(windows.pywintypes.__dict__, "error", denied)
+
+    def refuse() -> tuple[float, float]:
+        raise denied(5, "GetCursorPos", "Access is denied.")
+
+    monkeypatch.setattr(windows, "mouse_location", refuse)
+
+
+def test_a_click_presses_when_the_cursor_cannot_be_read(monkeypatch):
+    sent = []
+    _cursor_denied(monkeypatch)
+    monkeypatch.setattr(windows, "_move", lambda point: None)
+    monkeypatch.setattr(windows, "_send", sent.append)
+    windows.click_at((640.0, 480.0))
+    assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_LEFTDOWN, windows.MOUSEEVENTF_LEFTUP]
+
+
+def test_a_drag_proceeds_when_the_cursor_cannot_be_read(monkeypatch):
+    sent = []
+    moved = []
+    _cursor_denied(monkeypatch)
+    monkeypatch.setattr(windows, "_move", moved.append)
+    monkeypatch.setattr(windows, "_send", sent.append)
+    windows.drag((10.0, 20.0), (18.0, 28.0))
+    assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
+    assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
+    assert len(moved) == windows.DRAG_STEPS + 1
+
+
 def test_a_click_that_landed_presses_and_releases(monkeypatch):
     sent = []
     monkeypatch.setattr(windows, "_move", lambda point: None)
@@ -194,3 +325,34 @@ def test_a_click_that_landed_presses_and_releases(monkeypatch):
     monkeypatch.setattr(windows, "_send", sent.append)
     windows.click_at((640.4, 479.6))
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_LEFTDOWN, windows.MOUSEEVENTF_LEFTUP]
+
+
+def test_element_text_reads_the_document_then_the_value_then_nothing(monkeypatch):
+    monkeypatch.setattr(windows, "element_text", _ELEMENT_TEXT)
+
+    class Document:
+        class DocumentRange:
+            @staticmethod
+            def GetText(limit):
+                return ("the whole note",)
+
+    class Value:
+        Value = "just the value"
+
+    class Element:
+        def __init__(self, document=None, value=None):
+            self.document = document
+            self.value = value
+
+        def GetPattern(self, pattern_id):
+            if pattern_id == 1:
+                return self.document
+            if pattern_id == 2:
+                return self.value
+            return None
+
+    monkeypatch.setattr(windows, "_pattern_id", lambda name: 1 if name == "TextPattern" else 2)
+    assert windows.element_text(Element(Document(), Value())) == "the whole note"
+    assert windows.element_text(Element(value=Value())) == "just the value"
+    assert windows.element_text(Element()) is None
+    assert windows.element_text(None) is None

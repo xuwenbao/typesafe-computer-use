@@ -10,8 +10,8 @@ from PIL import Image
 
 from typesafe_computer_use import runner, writer
 from typesafe_computer_use.actions import Context
-from typesafe_computer_use.models import Field, Guidance, Popup
-from typesafe_computer_use.runner import RunConfig, RunState, hand_off, resolve
+from typesafe_computer_use.models import Field, Guidance, Item, Popup
+from typesafe_computer_use.runner import RunConfig, RunState, answer_last, hand_off, resolve, wants_driver
 from typesafe_computer_use.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
 
 GOAL = "find the next upcoming bruno mars concert"
@@ -45,7 +45,7 @@ def test_the_answer_request_carries_the_capture_and_the_run(screen, make_item, m
 
     answer = compose_answer(fake, GOAL, screen, [make_item(0, "SEP 19, 2026")], ["clicked 'TOUR'"], "the goal is achieved")
 
-    assert answer == Answer(text="Sep 19, 2026 in Miami.", achieved=True)
+    assert answer == Answer(text="Sep 19, 2026 in Miami.", achieved=True, route="end")
     request = fake.requests[0]
     assert request["model"] == "answer-model"
     image, text = request["messages"][0]["content"]
@@ -55,6 +55,7 @@ def test_the_answer_request_carries_the_capture_and_the_run(screen, make_item, m
     assert packet["why_the_run_stopped"] == "the goal is achieved"
     assert packet["actions_taken"] == ["clicked 'TOUR'"]
     assert packet["screen_text_in_reading_order"] == ["SEP 19, 2026"]
+    assert packet["on_screen"] == {"names": ["SEP 19, 2026"], "file_rows": []}
 
 
 def test_the_answer_reads_which_text_is_under_a_popup(screen, make_item):
@@ -75,9 +76,16 @@ def test_the_answer_request_carries_what_the_run_has_learned_and_offers_both_way
 
     answer = compose_answer(fake, GOAL, screen, [], [], "stopped", guidance=guided, earlier_stops=stops, can_ask=True)
 
-    assert answer == Answer(text="Two sizes.", achieved=False, focus="Click '15 inch'", question="")
+    assert answer == Answer(text="Two sizes.", achieved=False, focus="Click '15 inch'", question="", route="classifier")
     request = fake.requests[0]
-    assert set(request["output_config"]["format"]["schema"]["required"]) == {"achieved", "answer", "focus", "question"}
+    assert set(request["output_config"]["format"]["schema"]["required"]) == {
+        "achieved",
+        "answer",
+        "focus",
+        "question",
+        "route",
+        "missing",
+    }
     packet = json.loads(request["messages"][0]["content"][1]["text"])
     assert packet["current_focus"] == "Open the size menu"
     assert packet["user_said"] == [{"asked": "13 or 15 inch?", "replied": "15"}]
@@ -168,7 +176,7 @@ def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path,
 
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(fake), state, 1, log)
 
-    assert state.answer == Answer(text="Sep 19, 2026 in Miami.", achieved=True)
+    assert state.answer == Answer(text="Sep 19, 2026 in Miami.", achieved=True, route="end")
     assert "goal achieved" in lines[0] and "Sep 19, 2026 in Miami." in lines[0]
     assert not (tmp_path / "answer-raw.png").exists()
     assert "already achieved" in json.loads(fake.requests[0]["messages"][0]["content"][1]["text"])["why_the_run_stopped"]
@@ -184,7 +192,7 @@ def test_the_screen_is_captured_again_when_an_action_made_the_last_capture_stale
 
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(fake), state, 1, log)
 
-    assert state.answer == Answer(text="No dates on screen.", achieved=False)
+    assert state.answer == Answer(text="No dates on screen.", achieved=False, route="driver")
     assert "goal not achieved" in lines[0]
     assert (tmp_path / "answer-raw.png").exists()
     assert json.loads(fake.requests[0]["messages"][0]["content"][1]["text"])["screen_text_in_reading_order"] == ["TICKETS"]
@@ -234,6 +242,323 @@ def test_every_stop_names_its_outcome(kind, confidence, outcome, tmp_path, scree
     assert not keep_going
     assert state.outcome == outcome
     assert (outcome in runner.STOPPED) == (outcome != "dry run")
+
+
+class Replies:
+    """Returns a different JSON answer on each call, so a second look can disagree with the first."""
+
+    def __init__(self, replies: list[dict]):
+        self.requests: list[dict] = []
+        self._replies = list(replies)
+        self.messages = SimpleNamespace(create=self._create)
+
+    def _create(self, **request):
+        self.requests.append(request)
+        reply = {"focus": "", "question": "", **self._replies.pop(0)}
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(reply))])
+
+
+def file_rows(*names: str) -> list[Item]:
+    return [Item(i, name, 1.0, 0, i * 20, 20, 20, role="cell", controls=("selection_item",)) for i, name in enumerate(names)]
+
+
+def packet_of(request: dict) -> dict:
+    return json.loads(request["messages"][0]["content"][-1]["text"])
+
+
+def test_a_listed_name_called_absent_is_judged_again_without_the_capture(tmp_path, screen):
+    fake = Replies(
+        [
+            {"achieved": False, "answer": "The folder is empty. 'Doc01.docx' is not there.", "focus": "Press Return"},
+            {"achieved": True, "answer": "Doc01.docx and Doc02.docx are in the folder.", "focus": ""},
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
+    lines, log = logged()
+
+    keep = hand_off(
+        RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log
+    )
+
+    assert keep is False
+    assert state.answer == Answer(text="Doc01.docx and Doc02.docx are in the folder.", achieved=True, route="end")
+    assert "goal achieved" in lines[0]
+    assert len(fake.requests) == 2
+    assert fake.requests[0]["messages"][0]["content"][0]["type"] == "image"
+    assert [block["type"] for block in fake.requests[1]["messages"][0]["content"]] == ["text"]
+    second = packet_of(fake.requests[1])
+    assert second["on_screen"]["file_rows"] == ["Doc01.docx", "Doc02.docx"]
+    assert second["listed_names_the_previous_answer_denied"] == ["Doc01.docx", "Doc02.docx"]
+
+
+def test_files_still_in_the_place_being_cleared_stay_unfinished(tmp_path, screen):
+    fake = Replies(
+        [
+            {"achieved": False, "answer": "The folder is empty.", "focus": "Press Return"},
+            {"achieved": False, "answer": "Both files are still in Documents.", "focus": "Open Archive"},
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
+    lines, log = logged()
+
+    keep = hand_off(
+        RunConfig(goal="move the docx files out of Documents", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log
+    )
+
+    assert keep is True
+    assert state.answer is not None and state.answer.achieved is False
+    assert state.guidance.focus == "Open Archive"
+    assert "back to the classifier" in lines[0]
+    assert len(fake.requests) == 2
+
+
+def test_missing_is_empty_when_the_goal_is_reached_and_an_unknown_state_is_other(screen):
+    reached = compose_answer(
+        FakeWriter({"achieved": True, "answer": "done", "missing": [{"name": "Doc01.docx", "state": "absent"}]}),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+    odd = compose_answer(
+        FakeWriter(
+            {
+                "achieved": False,
+                "answer": "not yet",
+                "missing": [{"name": "Save", "state": "gone"}, {"name": "", "state": "absent"}],
+            }
+        ),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+
+    assert reached.missing == ()
+    assert odd.missing == (("Save", "other"),)
+
+
+def test_a_file_row_named_absent_in_missing_is_judged_again_without_the_capture(tmp_path, screen):
+    fake = Replies(
+        [
+            {"achieved": False, "answer": "not moved", "missing": [{"name": "Doc01.docx", "state": "absent"}]},
+            {"achieved": True, "answer": "they are listed", "missing": []},
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
+    _, log = logged()
+
+    hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
+
+    assert len(fake.requests) == 2
+    assert [block["type"] for block in fake.requests[1]["messages"][0]["content"]] == ["text"]
+    assert packet_of(fake.requests[1])["listed_names_the_previous_answer_denied"] == ["Doc01.docx"]
+
+
+def test_a_file_row_that_should_have_left_is_not_asked_again(tmp_path, screen):
+    fake = Replies(
+        [
+            {
+                "achieved": False,
+                "answer": "Doc01.docx is still here",
+                "focus": "Open Archive",
+                "missing": [{"name": "Doc01.docx", "state": "still_here"}],
+            }
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    _, log = logged()
+
+    hand_off(
+        RunConfig(goal="move the docx files out of Documents", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log
+    )
+
+    assert len(fake.requests) == 1
+
+
+def test_an_absent_name_that_is_not_a_file_row_is_not_asked_again(tmp_path, screen):
+    fake = Replies(
+        [
+            {
+                "achieved": False,
+                "answer": "no folder",
+                "focus": "Create Archive",
+                "missing": [{"name": "Archive", "state": "absent"}],
+            }
+        ]
+    )
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    _, log = logged()
+
+    hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
+
+    assert len(fake.requests) == 1
+
+
+def test_a_writer_who_disagrees_with_a_finished_driver_is_asked_once_more(tmp_path, screen):
+    fake = Replies(
+        [
+            {"achieved": False, "answer": "not moved", "missing": []},
+            {"achieved": True, "answer": "both files are in Archive", "missing": []},
+        ]
+    )
+    state = RunState(
+        outcome="driver done",
+        driver_done="both files are listed",
+        view=(screen, file_rows("Doc01.docx", "Doc02.docx")),
+    )
+    lines, log = logged()
+
+    answer_last(RunConfig(goal="move the files into Archive", out=tmp_path), context(fake), state, log)
+
+    assert state.answer is not None and state.answer.achieved
+    assert "the driver said done; asking the writer once more" in "\n".join(lines)
+    assert "driver_said_done" not in packet_of(fake.requests[0])
+    assert packet_of(fake.requests[1])["driver_said_done"] == "both files are listed"
+    assert fake.requests[1]["messages"][0]["content"][0]["type"] == "image"
+
+
+@pytest.mark.parametrize(("driver_done", "achieved"), [("", False), ("both files are listed", True)])
+def test_the_writer_is_not_asked_again_when_there_is_no_disagreement(driver_done, achieved, tmp_path, screen):
+    fake = Replies([{"achieved": achieved, "answer": "the screen decides", "missing": []}])
+    state = RunState(
+        outcome="driver done" if driver_done else "driver gave up",
+        driver_done=driver_done,
+        view=(screen, file_rows("Doc01.docx")),
+    )
+    _, log = logged()
+
+    answer_last(RunConfig(goal="move the files into Archive", out=tmp_path), context(fake), state, log)
+
+    assert len(fake.requests) == 1
+    assert state.answer is not None and state.answer.achieved is achieved
+
+
+def test_a_missing_name_that_is_not_on_screen_is_not_asked_again(tmp_path, screen):
+    fake = Replies([{"achieved": False, "answer": "'Archive' is not on this screen.", "focus": "Open Archive"}])
+    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    _, log = logged()
+
+    hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
+
+    assert len(fake.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("reply", "route"),
+    [
+        ({"achieved": True, "answer": "done", "route": "driver"}, "end"),
+        ({"achieved": False, "answer": "next", "focus": "", "route": "classifier"}, "driver"),
+        ({"achieved": False, "answer": "next", "focus": "Click 'New'"}, "classifier"),
+        ({"achieved": False, "answer": "stuck", "route": "somewhere"}, "driver"),
+    ],
+)
+def test_a_route_is_settled_before_it_is_used(reply, route, screen):
+    answer = compose_answer(FakeWriter(reply), GOAL, screen, [], [], "stopped")
+
+    assert answer.route == route
+
+
+def _ready(tmp_path, driver_steps: int = 10) -> RunConfig:
+    return RunConfig(goal=GOAL, out=tmp_path, act=True, steps=10, handoffs=3, driver_steps=driver_steps)
+
+
+def test_a_driver_route_ends_the_classifier_and_the_driver_may_take_over(tmp_path, screen):
+    fake = FakeWriter({"achieved": False, "answer": "This needs several steps.", "route": "driver"})
+    state = RunState(outcome="nothing helps", view=(screen, []))
+    cfg = _ready(tmp_path)
+    lines, log = logged()
+
+    assert hand_off(cfg, context(fake), state, 1, log) is False
+
+    assert state.handoffs == [] and state.route == "driver"
+    assert wants_driver(cfg, context(fake), state)
+    assert "route driver" in lines[0]
+
+
+@pytest.mark.parametrize("state", ["absent", "still_here"])
+def test_an_end_route_that_names_a_gap_goes_to_the_driver(state, screen):
+    answer = compose_answer(
+        FakeWriter(
+            {
+                "achieved": False,
+                "answer": "not done",
+                "route": "end",
+                "missing": [{"name": "example.txt", "state": state}],
+            }
+        ),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+    assert answer.route == "driver"
+    assert answer.missing == (("example.txt", state),)
+
+
+def test_an_end_route_for_something_only_the_user_can_do_stays_end(screen):
+    answer = compose_answer(
+        FakeWriter(
+            {
+                "achieved": False,
+                "answer": "Only the user can sign in.",
+                "route": "end",
+                "missing": [{"name": "password", "state": "other"}],
+            }
+        ),
+        GOAL,
+        screen,
+        [],
+        [],
+        "stopped",
+    )
+    assert answer.route == "end"
+    assert answer.missing == (("password", "other"),)
+
+
+def test_an_end_route_short_of_the_goal_does_not_call_the_driver(tmp_path, screen):
+    fake = FakeWriter({"achieved": False, "answer": "Only the user can sign in.", "route": "end"})
+    state = RunState(outcome="nothing helps", view=(screen, []))
+    cfg = _ready(tmp_path)
+
+    assert hand_off(cfg, context(fake), state, 1, logged()[1]) is False
+
+    assert state.route == "end"
+    assert not wants_driver(cfg, context(fake), state)
+
+
+def test_a_second_stop_on_the_same_page_goes_to_the_driver(tmp_path, screen):
+    fake = FakeWriter({"achieved": False, "answer": "Click New.", "focus": "Click 'New'", "route": "classifier"})
+    state = RunState(outcome="nothing helps", view=(screen, []))
+    cfg = _ready(tmp_path)
+    lines, log = logged()
+
+    assert hand_off(cfg, context(fake), state, 1, log) is True
+    assert len(state.handoffs) == 1 and state.handoffs[0].page == (screen.app, screen.url)
+
+    state.history.append("clicked 'New'")
+    state.outcome = "nothing helps"
+    assert hand_off(cfg, context(fake), state, 2, log) is False
+
+    assert len(state.handoffs) == 1 and state.route == "driver"
+    assert any("already stopped on this page" in line for line in lines)
+
+
+def test_a_second_stop_on_the_same_page_is_handed_back_when_the_driver_is_off(tmp_path, screen):
+    fake = FakeWriter({"achieved": False, "answer": "Click New.", "focus": "Click 'New'", "route": "classifier"})
+    state = RunState(outcome="nothing helps", view=(screen, []))
+    cfg = _ready(tmp_path, driver_steps=0)
+    _, log = logged()
+
+    assert hand_off(cfg, context(fake), state, 1, log) is True
+    state.history.append("clicked 'New'")
+    state.outcome = "nothing helps"
+
+    assert hand_off(cfg, context(fake), state, 2, log) is True
+    assert len(state.handoffs) == 2 and state.route == "classifier"
 
 
 def test_an_action_makes_the_last_capture_stale(tmp_path, screen, monkeypatch):

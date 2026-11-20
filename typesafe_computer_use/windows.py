@@ -22,6 +22,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import psutil
+import pywintypes
 import uiautomation as auto
 import win32api
 import win32con
@@ -29,11 +30,14 @@ import win32gui
 import win32process
 from PIL import Image, ImageGrab
 
-from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
-from .config import ABORT_CORNER_PX
-from .models import Abort, AxNode, Field, Missed
+from .ax_walk import AX_PRESS, AxAttrs, AxFacts, Frame, walk_actionable
+from .models import Abort, AxNode, ElementState, Field, Missed
+from .uia_patterns import OPERATION_PATTERN, PATTERN_IDS
 from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
-from .uia_roles import pressable, role_for
+from .uia_roles import focused_role, pressable, role_for
+from .wheel import LINES_PER_NOTCH as LINES_PER_NOTCH
+from .wheel import WHEEL_DELTA as WHEEL_DELTA
+from .wheel import wheel_delta
 
 with suppress(AttributeError, OSError):  # pre-8.1 Windows without shcore, or awareness set by the host process
     ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
@@ -41,8 +45,6 @@ with suppress(AttributeError, OSError):  # pre-8.1 Windows without shcore, or aw
 MIN_WINDOW_SIDE_PT = 50.0  # anything smaller is a palette or a shadow, not the window being worked in
 EVENT_GAP = 0.04  # seconds between synthetic events, as on macOS
 CLICK_TOLERANCE_PX = 1  # how far the cursor may land from its target before a click is refused
-WHEEL_DELTA = 120  # one notch of the wheel
-LINES_PER_NOTCH = 3  # the Windows default; the actions ask for lines, as on macOS
 
 # The role table itself lives in uia_roles.py, shared with the WAA VM walk. The names below are
 # re-exported so this module still answers `role_for` and `pressable`.
@@ -78,13 +80,14 @@ VK = {
     "backspace": 0x08,
     "f2": 0x71,
     "f5": 0x74,
+    "start": 0x5B,  # VK_LWIN: the Start menu
     **{ch: ord(ch.upper()) for ch in "bdefghijklmnopqrtuwy"},
     **{d: ord(d) for d in "0123456789"},
 }
 VK_CONTROL = 0x11
 VK_SHIFT = 0x10
 VK_ALT = 0x12
-EXTENDED_KEYS = {0x2E, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28}  # Delete, the page keys, and the arrows
+EXTENDED_KEYS = {0x2E, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x5B}  # Delete, the page keys, the arrows, and Start
 COMMAND_CHORDS = {"[": (VK_ALT, VK["left"])}
 
 INPUT_MOUSE = 0
@@ -125,6 +128,16 @@ def display_name(process_name: str) -> str:
 
 def key_events(key: str, command: bool = False) -> list[tuple[int, int]]:
     """(virtual key, flags) for pressing a key, with its modifiers held around it."""
+    # `run` is the Run dialog: the Windows key held around R. It is not a key of its own.
+    if key == "run" and not command:
+        win = 0x5B  # VK_LWIN
+        letter = VK["r"]
+        return [
+            (win, KEYEVENTF_EXTENDEDKEY),
+            (letter, 0),
+            (letter, KEYEVENTF_KEYUP),
+            (win, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
+        ]
     keys = COMMAND_CHORDS.get(key, (VK_CONTROL, VK[key])) if command else (VK[key],)
     down = [(vk, KEYEVENTF_EXTENDEDKEY if vk in EXTENDED_KEYS else 0) for vk in keys]
     up = [(vk, flags | KEYEVENTF_KEYUP) for vk, flags in reversed(down)]
@@ -139,13 +152,23 @@ def unicode_events(text: str) -> list[tuple[int, int]]:
     return [(unit, flags) for unit in units for flags in (KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]
 
 
-def wheel_delta(lines: int) -> int:
-    """The wheel delta that scrolls `lines` lines; positive scrolls up, as on macOS."""
-    return round(lines * WHEEL_DELTA / LINES_PER_NOTCH)
-
-
 def landed(target: tuple[int, int], actual: tuple[float, float]) -> bool:
     return abs(actual[0] - target[0]) <= CLICK_TOLERANCE_PX and abs(actual[1] - target[1]) <= CLICK_TOLERANCE_PX
+
+
+def placed_origin(rect: tuple[float, float, float, float], work: tuple[float, float, float, float]) -> tuple[float, float] | None:
+    """Where to move `rect` so it sits inside `work`, or None when it already does.
+
+    Both are x, y, w, h. The size stays. A window larger than the work area keeps the work
+    area's origin, so it still starts on the visible desktop instead of off to one side.
+    """
+    x, y, w, h = rect
+    left, top, width, height = work
+    nx = left if w > width else min(max(x, left), left + width - w)
+    ny = top if h > height else min(max(y, top), top + height - h)
+    if nx == x and ny == y:
+        return None
+    return nx, ny
 
 
 # ------------------------------------------------------------------ SendInput
@@ -213,13 +236,28 @@ def mouse_location() -> tuple[float, float]:
 
 
 def check_abort() -> None:
-    x, y = mouse_location()
-    if x <= ABORT_CORNER_PX and y <= ABORT_CORNER_PX:
-        raise Abort("mouse in top-left corner")
+    if os.environ.get("JEV_SESSION") == "1":
+        from .windows_session import session_cancelled
+
+        if session_cancelled():
+            raise Abort("the session was cancelled")
+    # TODO: 左上角叫停先去掉。画中画子会话里 GetCursorPos 会被拒绝（错误 5），要换一种不依赖读鼠标的叫停方式后再加回来。
 
 
 def abort_hint() -> str:
-    return "Ctrl-C, or slam the mouse into the top-left corner"
+    return "Ctrl-C"
+
+
+def _cursor_after_move() -> tuple[float, float] | None:
+    """Where the cursor is, or None when Windows refuses the read.
+
+    A child session sometimes answers GetCursorPos with access denied. The click still goes
+    where the move sent it; skipping the check is safer than stopping the run.
+    """
+    try:
+        return mouse_location()
+    except pywintypes.error:
+        return None
 
 
 def sleep_watching(seconds: float) -> None:
@@ -249,14 +287,16 @@ def click_at(point: tuple[float, float], button: str = "left", count: int = 1, m
     """Move, read back where the cursor landed, then press and release there.
 
     A cursor that did not reach the target (another desktop has the input, or the point is off
-    every monitor) means the click would land somewhere unknown, so nothing is pressed. `button`
-    is left or right, `count` is 2 for a double-click, and `modifier` is `add` (Control) or
-    `range` (Shift), held around the click and released even when the click fails.
+    every monitor) means the click would land somewhere unknown, so nothing is pressed. When
+    Windows refuses the read, the check is skipped and the button is pressed at the point the
+    move was sent to. `button` is left or right, `count` is 2 for a double-click, and `modifier`
+    is `add` (Control) or `range` (Shift), held around the click and released even when the click
+    fails.
     """
     target = (round(point[0]), round(point[1]))
     _move(target)
-    actual = mouse_location()
-    if not landed(target, actual):
+    actual = _cursor_after_move()
+    if actual is not None and not landed(target, actual):
         raise Missed(f"the cursor went to {actual}, not {target}")
     if button == "left" and count == 1 and not modifier:
         _send(_mouse(MOUSEEVENTF_LEFTDOWN))
@@ -280,9 +320,53 @@ def click_at(point: tuple[float, float], button: str = "left", count: int = 1, m
             _send(_key(vk=vk, flags=KEYEVENTF_KEYUP))
 
 
+DRAG_STEPS = 8  # the button stays down across these moves, so a drop lands where the last one did
+
+
+def drag(start: tuple[float, float], end: tuple[float, float]) -> None:
+    """Press at `start`, move to `end`, and release, including when a move in between fails.
+
+    When Windows refuses to say where the cursor landed, the check is skipped and the button
+    goes down at the point the move was sent to.
+    """
+    origin = (round(start[0]), round(start[1]))
+    dest = (round(end[0]), round(end[1]))
+    _move(origin)
+    actual = _cursor_after_move()
+    if actual is not None and not landed(origin, actual):
+        raise Missed(f"the cursor went to {actual}, not {origin}")
+    _send(_mouse(MOUSEEVENTF_LEFTDOWN))
+    try:
+        for step in range(1, DRAG_STEPS + 1):
+            x = round(origin[0] + (dest[0] - origin[0]) * step / DRAG_STEPS)
+            y = round(origin[1] + (dest[1] - origin[1]) * step / DRAG_STEPS)
+            _move((x, y))
+    finally:
+        _send(_mouse(MOUSEEVENTF_LEFTUP))
+
+
 def press(key: str, command: bool = False) -> None:
     for vk, flags in key_events(key, command):
         _send(_key(vk=vk, flags=flags))
+
+
+def clipboard_files() -> tuple[str, ...]:
+    """File names on the clipboard, without their directories. Empty when it holds no files."""
+    import win32clipboard
+
+    try:
+        win32clipboard.OpenClipboard()
+    except Exception:
+        return ()
+    try:
+        if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
+            return ()
+        paths = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+    except Exception:
+        return ()
+    finally:
+        win32clipboard.CloseClipboard()
+    return tuple(Path(path).name for path in paths)
 
 
 def type_text(text: str) -> None:
@@ -295,9 +379,9 @@ def clear_field() -> None:
     press("delete")
 
 
-def scroll(lines: int) -> None:
-    """Scroll events go to the view under the cursor, so park it over the frontmost window first."""
-    center = frontmost_window_center()
+def scroll(lines: int, at: tuple[float, float] | None = None) -> None:
+    """Scroll the view under the cursor. Park it on `at`, or over the frontmost window."""
+    center = at if at is not None else frontmost_window_center()
     if center is not None:
         _move((round(center[0]), round(center[1])))
     _send(_mouse(MOUSEEVENTF_WHEEL, wheel_delta(lines)))
@@ -306,16 +390,23 @@ def scroll(lines: int) -> None:
 # ------------------------------------------------------------------ apps and windows
 
 
+def unsigned_pid(raw: int) -> int:
+    """A process id from the window manager. The API returns a DWORD, which arrives signed."""
+    return int(raw) & 0xFFFFFFFF
+
+
 def _process_name(pid: int) -> str:
+    if pid <= 0:
+        return ""
     try:
         return psutil.Process(pid).name()
-    except psutil.Error:
+    except (psutil.Error, ValueError):
         return ""
 
 
 def _window_pid(hwnd: int) -> int:
     _, pid = win32process.GetWindowThreadProcessId(hwnd)
-    return pid
+    return unsigned_pid(pid)
 
 
 def frontmost_app() -> str:
@@ -346,20 +437,81 @@ def _find_window(app: str) -> int | None:
     return found[0] if found else None
 
 
+def list_windows() -> list[tuple[str, str, str]]:
+    """Visible titled top-level windows as (id, title, process), frontmost first."""
+    found: list[tuple[str, str, str]] = []
+
+    def visit(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+        title = (win32gui.GetWindowText(hwnd) or "").strip()
+        process = _process_name(_window_pid(hwnd))
+        if title and process:
+            found.append((str(len(found) + 1), title, process))
+
+    win32gui.EnumWindows(visit, None)
+    return found
+
+
+def launch_app(name: str) -> None:
+    """Start `name` with ShellExecute. No arguments and no shell, so the name cannot carry a command."""
+    check_abort()
+    started = int(win32api.ShellExecute(0, "open", name, None, None, win32con.SW_SHOWNORMAL))
+    if started <= 32:
+        raise OSError(f"could not start {name}")
+
+
 def activate(app: str, timeout: float = 3.0) -> bool:
-    """Bring an app to the front and confirm it got there."""
+    """Bring an app's visible window to the front and confirm that window is the foreground one.
+
+    A process name on the foreground window is not enough: the window may be restored off the
+    desktop this session can show. A task-scheduler process is often refused `SetForegroundWindow`,
+    so a momentary Alt is sent once to let this session accept the change.
+    """
     hwnd = _find_window(app)
     if hwnd is None:
         return False
     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-    with suppress(Exception):  # Windows may refuse focus theft; the check below reports it
-        win32gui.SetForegroundWindow(hwnd)
+    _move_into_work_area(hwnd)
+    _claim_foreground(hwnd)
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if win32gui.GetForegroundWindow() == hwnd:
             return True
         time.sleep(0.1)
     return win32gui.GetForegroundWindow() == hwnd
+
+
+def _work_area() -> tuple[float, float, float, float]:
+    """The desktop's work area as x, y, w, h. The full screen stands in when Windows will not say."""
+    rect = ctypes.wintypes.RECT()
+    if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+        return float(rect.left), float(rect.top), float(rect.right - rect.left), float(rect.bottom - rect.top)
+    return 0.0, 0.0, float(win32api.GetSystemMetrics(0)), float(win32api.GetSystemMetrics(1))
+
+
+def _move_into_work_area(hwnd: int) -> None:
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    except pywintypes.error:
+        return
+    origin = placed_origin((float(left), float(top), float(right - left), float(bottom - top)), _work_area())
+    if origin is None:
+        return
+    win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, int(origin[0]), int(origin[1]), 0, 0, win32con.SWP_NOSIZE)
+
+
+def _claim_foreground(hwnd: int) -> None:
+    with suppress(Exception):
+        win32gui.SetForegroundWindow(hwnd)
+    if win32gui.GetForegroundWindow() == hwnd:
+        return
+    with suppress(Exception):
+        _send(_key(VK_ALT))
+    with suppress(Exception):
+        win32gui.SetForegroundWindow(hwnd)
+    with suppress(Exception):
+        _send(_key(VK_ALT, flags=KEYEVENTF_KEYUP))
 
 
 def open_url(browser: str, url: str) -> bool:
@@ -393,6 +545,18 @@ def open_path(path: Path, as_text: bool = False) -> None:
     os.startfile(path)
 
 
+def _window_rect(hwnd: int) -> tuple[float, float, float, float] | None:
+    """A visible window's bounds, or None when it is missing or only a shadow."""
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    except pywintypes.error:
+        return None
+    w, h = float(right - left), float(bottom - top)
+    if w > MIN_WINDOW_SIDE_PT and h > MIN_WINDOW_SIDE_PT:
+        return float(left), float(top), w, h
+    return None
+
+
 def frontmost_window_bounds(pid: int | None = None) -> tuple[float, float, float, float] | None:
     """The foreground window's bounds as x, y, w, h in screen pixels.
 
@@ -400,13 +564,70 @@ def frontmost_window_bounds(pid: int | None = None) -> tuple[float, float, float
     to that process rather than one that grabbed focus since.
     """
     hwnd = win32gui.GetForegroundWindow()
-    if pid is not None and _window_pid(hwnd) != pid:
+    if not hwnd or (pid is not None and _window_pid(hwnd) != pid):
         return None
-    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-    w, h = float(right - left), float(bottom - top)
-    if w > MIN_WINDOW_SIDE_PT and h > MIN_WINDOW_SIDE_PT:
-        return float(left), float(top), w, h
-    return None
+    return _window_rect(hwnd)
+
+
+def _focused_root() -> int:
+    """The top-level window that holds the focused control, or 0 when focus cannot be read."""
+    try:
+        element = auto.GetFocusedControl()
+    except Exception:
+        return 0
+    if element is None:
+        return 0
+    try:
+        handle = int(getattr(element, "NativeWindowHandle", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    if not handle:
+        return 0
+    try:
+        return int(win32gui.GetAncestor(handle, win32con.GA_ROOT) or 0)
+    except pywintypes.error:
+        return 0
+
+
+def _popup_hwnds(pid: int | None) -> list[int]:
+    """Owned top-level windows of the foreground window, plus the focused control's own root.
+
+    A menu that opens beside the window is a separate window. Both kinds have to be visible, belong
+    to the same process, and be large enough not to be a shadow.
+    """
+    foreground = win32gui.GetForegroundWindow()
+    if not foreground:
+        return []
+    owner_pid = _window_pid(foreground)
+    if pid is not None and owner_pid != pid:
+        return []
+    found: list[int] = []
+    seen = {foreground}
+
+    def consider(hwnd: int) -> None:
+        if not hwnd or hwnd in seen or not win32gui.IsWindowVisible(hwnd):
+            return
+        if _window_pid(hwnd) != owner_pid or _window_rect(hwnd) is None:
+            return
+        seen.add(hwnd)
+        found.append(hwnd)
+
+    def visit(hwnd, _lparam) -> bool:
+        try:
+            if win32gui.GetWindow(hwnd, win32con.GW_OWNER) == foreground:
+                consider(hwnd)
+        except pywintypes.error:
+            pass
+        return True
+
+    win32gui.EnumWindows(visit, None)
+    consider(_focused_root())
+    return found
+
+
+def owned_popup_bounds(pid: int | None = None) -> tuple[tuple[float, float, float, float], ...]:
+    """Those popups as x, y, w, h in screen pixels. Empty when the foreground window is not this process."""
+    return tuple(rect for hwnd in _popup_hwnds(pid) if (rect := _window_rect(hwnd)) is not None)
 
 
 def frontmost_window_center(pid: int | None = None) -> tuple[float, float] | None:
@@ -430,6 +651,61 @@ def display_scale(image: Image.Image) -> float:
     """Per-monitor DPI awareness keeps every coordinate in physical pixels, so a screen point
     already is a capture pixel; unlike macOS, there is no separate points-vs-pixels scale."""
     return 1.0
+
+
+def read_capture(browser: str, shot_wait: float, detail_wait: float, timing: dict | None = None):
+    """Screenshot, focused control, and address bar from a process this one can kill.
+
+    The screenshot is kept when the later read does not return. No screenshot raises CaptureTimeout.
+    The call stays off this thread, so a stuck UI Automation call cannot be delivered back here.
+    """
+    import sys
+    import tempfile
+    import threading
+
+    from .bound import CaptureLines, SilentEvent, assemble_capture, await_capture
+
+    folder = tempfile.mkdtemp(prefix="jev-capture-")
+    png = os.path.join(folder, "shot.png")
+    shot, done = SilentEvent(), SilentEvent()
+    lines = CaptureLines(shot, done)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "typesafe_computer_use.capture_proc", png, browser],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+    def pump() -> None:
+        if proc.stdout is None:
+            return
+        for line in proc.stdout:
+            lines.feed(line)
+
+    threading.Thread(target=pump, name="jev-capture", daemon=True).start()
+    try:
+        got_shot, got_detail = await_capture(shot, done, shot_wait, detail_wait, lambda: _stop_process(proc))
+        image = None
+        if got_shot and os.path.exists(png):
+            with Image.open(png) as opened:
+                image = opened.convert("RGB")
+        found, field_data, url = assemble_capture(got_shot, lines.detail if got_detail else None, image, timing)
+        field = None if field_data is None else Field(**field_data)
+        return found, field, url
+    finally:
+        _stop_process(proc)
+        shot.close()
+        done.close()
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _stop_process(proc) -> None:
+    with suppress(OSError):
+        proc.kill()
+    with suppress(Exception):
+        proc.wait(timeout=2)
 
 
 def _pattern(element, pattern_id):
@@ -464,6 +740,17 @@ def _ui_default_action(element) -> str:
         return ""
 
 
+def _legacy_state(element) -> int | None:
+    """The LegacyIAccessible state, or None when the control does not say."""
+    legacy = _pattern(element, auto.PatternId.LegacyIAccessiblePattern)
+    if legacy is None:
+        return None
+    try:
+        return int(legacy.State)
+    except Exception:
+        return None
+
+
 def focused_field() -> Field | None:
     try:
         element = auto.GetFocusedControl()
@@ -474,7 +761,7 @@ def focused_field() -> Field | None:
     frame = _ui_frame(element)
     x, y, w, h = frame if frame is not None else (0.0, 0.0, 0.0, 0.0)
     return Field(
-        role=role_for(getattr(element, "ControlTypeName", "")),
+        role=focused_role(getattr(element, "ControlTypeName", ""), _legacy_state(element)),
         label=(getattr(element, "Name", "") or "").strip(),
         placeholder=_ui_placeholder(element),
         value=_ui_value(element) or "",
@@ -530,6 +817,113 @@ def ax_value(ref) -> str | None:
     return _ui_value(ref)
 
 
+def _pattern_id(name: str):
+    """A UI Automation pattern id. Tests replace this; the real ids live on the stubbed module."""
+    return getattr(auto.PatternId, name)
+
+
+def _document_text(element) -> str | None:
+    """The whole document a text control holds, or None when it has no TextPattern."""
+    pattern = _pattern(element, _pattern_id("TextPattern"))
+    if pattern is None:
+        return None
+    try:
+        text = pattern.DocumentRange.GetText(-1)
+    except Exception:
+        return None
+    if isinstance(text, tuple):
+        text = text[0]
+    text = text or ""
+    return text if str(text).strip() else None
+
+
+def element_text(ref) -> str | None:
+    """The control's own text: the document range first, then its value. None when it has neither."""
+    check_abort()
+    if ref is None:
+        return None
+    document = _document_text(ref)
+    if document:
+        return document
+    pattern = _pattern(ref, _pattern_id("ValuePattern"))
+    try:
+        value = pattern.Value if pattern is not None else None
+    except Exception:
+        value = None
+    return value or None
+
+
+def ax_operate(ref, operation: str, value: str | None = None) -> bool:
+    """Run one UIA operation. False when the element does not support it or refuses it."""
+    check_abort()
+    pattern_name = OPERATION_PATTERN.get(operation)
+    if pattern_name is None:
+        return False
+    pattern = _pattern(ref, PATTERN_IDS[pattern_name])
+    if pattern is None:
+        return False
+    try:
+        if operation == "toggle":
+            pattern.Toggle()
+        elif operation == "select":
+            pattern.Select()
+        elif operation == "add_select":
+            pattern.AddToSelection()
+        elif operation == "expand_toggle":
+            if int(getattr(pattern, "ExpandCollapseState", 0)) == 0:
+                pattern.Expand()
+            else:
+                pattern.Collapse()
+        elif operation == "scroll_into_view":
+            pattern.ScrollIntoView()
+        elif operation == "set_range":
+            number = float(value) if value is not None else None
+            if number is None:
+                return False
+            low, high = float(pattern.Minimum), float(pattern.Maximum)
+            if number < low or number > high:
+                return False
+            pattern.SetValue(number)
+            return abs(float(pattern.Value) - number) < 1e-3
+        else:
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def element_state(ref) -> ElementState | None:
+    """Whether this element is still there, on screen, and enabled. None when it cannot be asked."""
+    return read_uia_state(ref)
+
+
+def element_frame(ref) -> Frame | None:
+    """The element's box in screen pixels, read now. None when it cannot be read.
+
+    The box captured with the screen is where the element was then. After ScrollIntoView the
+    element may have moved, and only this read knows the place a click would land.
+    """
+    if ref is None:
+        return None
+    check_abort()
+    return _ui_frame(ref)
+
+
+def read_uia_state(element) -> ElementState | None:
+    """The same facts from an element or a stand-in. A dead element, or one that raises, is unknown."""
+    if element is None:
+        return None
+    try:
+        offscreen = bool(element.IsOffscreen)
+        try:
+            enabled = bool(element.IsEnabled)
+        except Exception:
+            enabled = None
+    except Exception:
+        return None
+    return ElementState(True, not offscreen, enabled)
+
+
 # ------------------------------------------------------------------ actionable elements
 
 
@@ -551,24 +945,111 @@ def _ui_frame(element) -> Frame | None:
 
 
 def _ui_attrs(element) -> AxAttrs:
+    """Role, label, and frame. A writable document is a text area, the same rule as the focused field.
+
+    `role_for` has no Document control: a web page is read-only and is not a control, while Notepad's
+    editor is, and it is the element whose text a later read has to ask for.
+    """
     label = (getattr(element, "Name", "") or "").strip()
-    return AxAttrs(role_for(getattr(element, "ControlTypeName", "")), label, _ui_frame(element))
+    name = getattr(element, "ControlTypeName", "") or ""
+    role = focused_role(name, _legacy_state(element)) if name == "DocumentControl" else role_for(name)
+    return AxAttrs(role, label, _ui_frame(element))
 
 
-def _ui_actions(element) -> list[str]:
-    has_invoke = _pattern(element, auto.PatternId.InvokePattern) is not None
-    return [AX_PRESS] if pressable(has_invoke, "" if has_invoke else _ui_default_action(element)) else []
+def _toggle_state(element) -> bool | None:
+    pattern = _pattern(element, PATTERN_IDS["toggle"])
+    try:
+        return bool(int(pattern.ToggleState)) if pattern is not None else None
+    except Exception:
+        return None
+
+
+def _expand_state(element) -> bool | None:
+    pattern = _pattern(element, PATTERN_IDS["expand_collapse"])
+    try:
+        # 0 is collapsed. Anything expanded counts as open.
+        return int(pattern.ExpandCollapseState) != 0 if pattern is not None else None
+    except Exception:
+        return None
+
+
+def _range_bounds(element) -> tuple[float | None, float | None]:
+    pattern = _pattern(element, PATTERN_IDS["range_value"])
+    try:
+        return (float(pattern.Minimum), float(pattern.Maximum)) if pattern is not None else (None, None)
+    except Exception:
+        return None, None
+
+
+def ax_selected(ref) -> bool | None:
+    """Whether this element is in the selection now. None when it cannot say."""
+    if ref is None:
+        return None
+    check_abort()
+    return _selected(ref)
+
+
+def _selected(element) -> bool | None:
+    """Whether a list row is in the selection. None when it has no SelectionItem pattern."""
+    pattern = _pattern(element, PATTERN_IDS["selection_item"])
+    try:
+        return bool(pattern.IsSelected) if pattern is not None else None
+    except Exception:
+        return None
+
+
+def _writable(element) -> bool | None:
+    pattern = _pattern(element, PATTERN_IDS["value"])
+    try:
+        return (not bool(pattern.IsReadOnly)) if pattern is not None else None
+    except Exception:
+        return None
+
+
+def _ui_actions(element) -> AxFacts:
+    """Pressability, the operations the element supports, and the state a click needs to see."""
+    names: list[str] = []
+    for name, pattern_id in PATTERN_IDS.items():
+        if _pattern(element, pattern_id) is not None:
+            names.append(name)
+    has_invoke = "invoke" in names
+    if pressable(has_invoke, "" if has_invoke else _ui_default_action(element)):
+        names.insert(0, AX_PRESS)
+    try:
+        enabled: bool | None = bool(element.IsEnabled)
+    except Exception:
+        enabled = None
+    low, high = _range_bounds(element)
+    return AxFacts(
+        tuple(dict.fromkeys(names)),
+        enabled,
+        _toggle_state(element),
+        _expand_state(element),
+        _ui_value(element),
+        low,
+        high,
+        _writable(element),
+        _selected(element),
+    )
 
 
 def actionable_elements(pid: int, display_w_pt: float, display_h_pt: float) -> tuple[list[AxNode], list[AxNode], bool]:
-    """Labelled controls of the foreground window, in screen pixels, and the pressable off-screen
-    ones. Best effort: a window that refuses UI Automation, or belongs to a different process, or
-    has none, yields nothing."""
+    """Labelled controls of the foreground window and its popups, in screen pixels, and the pressable
+    off-screen ones. Best effort: a window that refuses UI Automation, or belongs to a different
+    process, or has none, yields nothing. A popup that refuses is skipped; the others are still walked."""
     hwnd = win32gui.GetForegroundWindow()
     if _window_pid(hwnd) != pid:
         return [], [], False
-    try:
-        root = auto.ControlFromHandle(hwnd)
-    except Exception:
-        return [], [], False
-    return walk_actionable(root, _ui_children, _ui_attrs, _ui_actions, display_w_pt, display_h_pt)
+    found: list[AxNode] = []
+    hidden: list[AxNode] = []
+    capped = False
+    for root_hwnd in (hwnd, *_popup_hwnds(pid)):
+        try:
+            root = auto.ControlFromHandle(root_hwnd)
+        except Exception:
+            continue
+        nodes, off, cut = walk_actionable(root, _ui_children, _ui_attrs, _ui_actions, display_w_pt, display_h_pt)
+        found.extend(nodes)
+        hidden.extend(off)
+        capped = capped or cut
+    return found, hidden, capped

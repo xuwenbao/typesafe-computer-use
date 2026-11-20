@@ -103,13 +103,15 @@ def test_earlier_screens_are_the_distinct_ones_before_the_last_oldest_first():
     checkout = ("Google Chrome", "https://a/checkout", None, texts("Order summary", "Pay now"))
     state = RunState(seen=[(home, "clicked 'Tickets'"), (tickets, "waited"), (tickets_later, "clicked 'Buy'")])
     assert earlier_screens(state, checkout) == [
-        {"app": "Google Chrome", "url": "https://a/", "text": ["Home", "Tickets"]},
-        {"app": "Google Chrome", "url": "https://a/tickets", "text": ["Standard $45", *rows, "12:01"]},
+        {"app": "Google Chrome", "url": "https://a/", "text": ["Home", "Tickets"], "actions_since": 3},
+        {"app": "Google Chrome", "url": "https://a/tickets", "text": ["Standard $45", *rows, "12:01"], "actions_since": 1},
     ]
     assert earlier_screens(state, checkout, budget=12) == [  # eleven lines fit; home's two more do not
-        {"app": "Google Chrome", "url": "https://a/tickets", "text": ["Standard $45", *rows, "12:01"]},
+        {"app": "Google Chrome", "url": "https://a/tickets", "text": ["Standard $45", *rows, "12:01"], "actions_since": 1},
     ]
-    assert earlier_screens(state, tickets) == [{"app": "Google Chrome", "url": "https://a/", "text": ["Home", "Tickets"]}]
+    assert earlier_screens(state, tickets) == [
+        {"app": "Google Chrome", "url": "https://a/", "text": ["Home", "Tickets"], "actions_since": 3}
+    ]
     assert earlier_screens(RunState(), checkout) == []
 
 

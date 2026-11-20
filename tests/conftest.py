@@ -60,7 +60,7 @@ for _windows_module in (
     "win32con",
     "win32gui",
     "win32process",
-    # the helper's named pipe
+    # the desktop mutex, and the child session's pipe
     "ntsecuritycon",
     "pywintypes",
     "win32event",
@@ -75,13 +75,41 @@ for _windows_module in (
 import pytest  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from typesafe_computer_use import macos, windows  # noqa: E402
+from typesafe_computer_use import config, macos, windows, windows_session  # noqa: E402
 from typesafe_computer_use.browser import cdp  # noqa: E402
 from typesafe_computer_use.helper import desk_lock as helper_desk  # noqa: E402
 from typesafe_computer_use.models import Item, Screen  # noqa: E402
 from typesafe_computer_use.parse import caption as parse_caption  # noqa: E402
 from typesafe_computer_use.parse import detect as parse_detect  # noqa: E402
 from typesafe_computer_use.parse import ocr as parse_ocr  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def fresh_settings(monkeypatch):
+    """Each test starts from a fresh settings singleton. Changing the environment through
+    monkeypatch drops it, so the next `settings()` reads the new value. Tests that change
+    `os.environ` directly call `config.reset_settings()` themselves."""
+    config.reset_settings()
+    for name in ("setenv", "delenv"):
+        original = getattr(monkeypatch, name)
+
+        def changed(*args, _original=original, **kwargs):
+            _original(*args, **kwargs)
+            config.reset_settings()
+
+        setattr(monkeypatch, name, changed)
+    yield
+    config.reset_settings()
+
+
+@pytest.fixture(autouse=True)
+def fresh_clipboard():
+    """A cut remembered by one test must not refuse a cut in the next."""
+    from typesafe_computer_use.actions import forget_clipboard
+
+    forget_clipboard()
+    yield
+    forget_clipboard()
 
 
 @pytest.fixture(autouse=True)
@@ -101,7 +129,7 @@ def no_real_machine(monkeypatch):
 
         return call
 
-    for name in ("_post", "osascript", "screenshot", "open_path"):
+    for name in ("_post", "osascript", "screenshot", "open_path", "list_windows", "launch_app", "element_state", "element_text"):
         monkeypatch.setattr(macos, name, refuse(f"macos.{name}"))
     monkeypatch.setattr(macos, "mouse_location", lambda: (500.0, 500.0))
     if REAL_ACCESSIBILITY:
@@ -109,8 +137,38 @@ def no_real_machine(monkeypatch):
             monkeypatch.setattr(macos.AS, name, refuse(f"ApplicationServices.{name}"))
     # The Windows adapter: SendInput and the cursor carry all input; the rest launch, activate,
     # open, capture, or act on another app's element.
-    for name in ("_send", "_move", "screenshot", "activate", "open_url", "open_path", "ax_press", "ax_focus", "ax_set_value"):
+    for name in (
+        "_send",
+        "_move",
+        "screenshot",
+        "activate",
+        "open_url",
+        "open_path",
+        "ax_press",
+        "ax_focus",
+        "ax_set_value",
+        "ax_operate",
+        "ax_selected",
+        "element_state",
+        "element_frame",
+        "element_text",
+        "owned_popup_bounds",
+    ):
         monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))
+    for name in (
+        "enable_child_session",
+        "open_child_window",
+        "connect_child_session",
+        "_remember_credentials",
+        "wait_for_child_explorer",
+        "launch_in_session",
+        "attach_input_desktop",
+        "create_session_pipe",
+        "attach_session_pipe",
+        "in_console_session",
+        "collect_facts",
+    ):
+        monkeypatch.setattr(windows_session, name, refuse(f"windows_session.{name}"))
     monkeypatch.setattr(windows, "mouse_location", lambda: (500.0, 500.0))
 
     # The browser backend: no Chrome and no process of any kind, nothing over CDP, and no
@@ -241,10 +299,32 @@ WRITER_ENV = (
     "CLICKER_WRITER_BASE_URL",
     "CLICKER_WRITER_API_KEY",
     "CLICKER_WRITER_VISION",
+    "CLICKER_WRITER_TIMEOUT",
+    "CLICKER_WRITER_MODEL",
+    "CLICKER_WRITER_REASONING",
+    "CLICKER_ANSWER_MODEL",
+    "CLICKER_ANSWER_REASONING",
+    "CLICKER_DRIVER",
+    "CLICKER_DRIVER_STEPS",
+    "CLICKER_DRIVER_MODEL",
+    "CLICKER_STEPS",
+    "CLICKER_DELAY",
+    "CLICKER_MIN_CONFIDENCE",
+    "CLICKER_HANDOFFS",
+    "CLICKER_MAX_OPTIONS",
+    "CLICKER_MIN_OCR_CONFIDENCE",
+    "CLICKER_ABORT_CORNER_PX",
+    "CLICKER_BROWSER",
+    "CLICKER_EMAIL",
+    "TYPESAFE_API_KEY",
+    "JEV_WAA_SAVE_TREE",
+    "WAA_COMMIT",
+    "WAA_IMAGE_DIGEST",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_PROFILE",
+    "OPENAI_API_KEY",
 )
 
 

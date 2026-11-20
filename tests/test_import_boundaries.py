@@ -104,6 +104,28 @@ def test_the_mcp_command_imports_only_the_front():
     assert function_imports(PACKAGE / "helper" / "cli.py", "serve_mcp") == {"helper.front"}
 
 
+def test_uia_patterns_imports_nothing_but_the_standard_library():
+    """The same script concatenates this file, so it stays free of jev and of Windows libraries."""
+    tree = ast.parse((PACKAGE / "uia_patterns.py").read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0, "uia_patterns imports another module of jev"
+            if node.module:
+                imported.add(node.module.split(".")[0])
+    assert imported <= sys.stdlib_module_names
+    assert not imported & {"win32api", "uiautomation", "comtypes", "pywin32"}
+
+
+def test_the_session_controller_is_not_on_the_macos_import_path():
+    """clicker on macOS never loads the child-session module, and that module never loads the adapter."""
+    assert "windows_session" not in imports_of(PACKAGE / "cli.py")
+    assert "windows_session" not in imports_of(PACKAGE / "windows.py")
+    assert "platform_adapter" not in imports_of(PACKAGE / "windows_session.py")
+
+
 @pytest.mark.parametrize("start", ["browser", "waa.tree", "waa.results", "helper.front"])
 def test_never_reaches_the_desktop_adapter(start):
     seen, todo = set(), [start]

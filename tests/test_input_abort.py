@@ -4,8 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from typesafe_computer_use import actions, macos
-from typesafe_computer_use.models import Abort
+from typesafe_computer_use import macos
 
 
 @pytest.fixture
@@ -15,6 +14,7 @@ def input_events(monkeypatch):
         kCGEventMouseMoved="move",
         kCGEventLeftMouseDown="down",
         kCGEventLeftMouseUp="up",
+        kCGEventLeftMouseDragged="dragged",
         kCGMouseButtonLeft=0,
         CGEventCreateMouseEvent=lambda _, kind, point, button: (kind, point),
         CGEventCreateKeyboardEvent=lambda _, code, down: {"down": down},
@@ -29,18 +29,9 @@ def input_events(monkeypatch):
     return events
 
 
-def test_corner_abort_prevents_the_click_from_moving_the_pointer(input_events, monkeypatch):
+def test_the_top_left_corner_no_longer_aborts(monkeypatch):
     monkeypatch.setattr(macos, "mouse_location", lambda: (0, 0))
-    with pytest.raises(Abort):
-        macos.click_at((200, 200))
-    assert input_events == []
-
-
-def test_typing_checks_abort_between_characters_and_releases_the_key(input_events, monkeypatch):
-    monkeypatch.setattr(macos, "mouse_location", lambda: (0, 0) if input_events else (500, 500))
-    with pytest.raises(Abort):
-        macos.type_text("abc")
-    assert input_events == [{"down": True, "text": "a"}, {"down": False, "text": "a"}]
+    macos.check_abort()
 
 
 def test_click_releases_the_button_when_interrupted_after_mouse_down(input_events, monkeypatch):
@@ -55,6 +46,34 @@ def test_click_releases_the_button_when_interrupted_after_mouse_down(input_event
     assert [event[0] for event in input_events] == ["move", "down", "up"]
 
 
+def test_a_drag_presses_drags_and_releases(input_events):
+    macos.drag((10.0, 20.0), (18.0, 28.0))
+    kinds = [event[0] for event in input_events]
+    assert kinds[0] == "move" and kinds[1] == "down" and kinds[-1] == "up"
+    assert kinds[2:-1] == ["dragged"] * macos.DRAG_STEPS
+    assert input_events[-1][1] == (18.0, 28.0)
+
+
+def test_a_drag_releases_the_button_when_a_move_fails(input_events, monkeypatch):
+    def post(event):
+        input_events.append(event)
+        if event[0] == "dragged":
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(macos, "_post", post)
+    with pytest.raises(KeyboardInterrupt):
+        macos.drag((10.0, 20.0), (50.0, 20.0))
+    assert [event[0] for event in input_events] == ["move", "down", "dragged", "up"]
+
+
+def test_start_opens_spotlight(input_events):
+    codes = []
+    macos.Quartz.CGEventCreateKeyboardEvent = lambda _, code, down: codes.append(code) or {"down": down}
+    macos.press("start")
+    assert codes == [macos.KEYCODES["space"], macos.KEYCODES["space"]]
+    assert input_events == [{"down": True, "flags": "command"}, {"down": False, "flags": "command"}]
+
+
 def test_a_key_goes_back_up_when_interrupted_after_key_down(input_events, monkeypatch):
     def post(event):
         input_events.append(dict(event))
@@ -65,36 +84,3 @@ def test_a_key_goes_back_up_when_interrupted_after_key_down(input_events, monkey
     with pytest.raises(KeyboardInterrupt):
         macos.press("a", command=True)
     assert input_events == [{"down": True, "flags": "command"}, {"down": False, "flags": "command"}]
-
-
-def test_corner_abort_stops_a_scroll_before_the_pointer_is_parked(input_events, monkeypatch):
-    monkeypatch.setattr(macos, "frontmost_window_center", lambda: (300.0, 300.0))
-    monkeypatch.setattr(macos, "mouse_location", lambda: (0, 0))
-    with pytest.raises(Abort):
-        macos.scroll(-10)
-    assert input_events == []
-
-
-@pytest.mark.parametrize(
-    "action", [lambda: macos.open_url("Google Chrome", "https://example.com"), lambda: macos.activate("Finder")]
-)
-def test_corner_abort_stops_an_app_switch_before_any_applescript(action, monkeypatch):
-    monkeypatch.setattr(macos, "mouse_location", lambda: (0, 0))
-    with pytest.raises(Abort):
-        action()
-
-
-def test_pending_abort_after_a_decision_prevents_dispatch(screen, monkeypatch):
-    monkeypatch.setattr(macos, "mouse_location", lambda: (0, 0))
-    monkeypatch.setattr(macos, "press", lambda *a: pytest.fail("must not submit after abort"))
-    with pytest.raises(Abort):
-        actions.perform(SimpleNamespace(chosen="press_enter"), screen, [], None)
-
-
-@pytest.mark.parametrize(
-    "action", [lambda: macos.ax_press(object()), lambda: macos.ax_focus(object()), lambda: macos.ax_set_value(object(), "text")]
-)
-def test_accessibility_helpers_do_not_swallow_abort(action, monkeypatch):
-    monkeypatch.setattr(macos, "mouse_location", lambda: (0, 0))
-    with pytest.raises(Abort):
-        action()

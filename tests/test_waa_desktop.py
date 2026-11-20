@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import busy_page
 
+from typesafe_computer_use.uia_patterns import PATTERN_IDS
 from typesafe_computer_use.waa import tree
 from typesafe_computer_use.waa.desktop import WAADesktop
 
@@ -115,6 +116,8 @@ def test_keys_map_onto_pyautogui():
     desktop.press("a", command=True)
     desktop.press("tab")
     desktop.press("delete")
+    desktop.press("start")
+    desktop.press("run")
     (code,) = desktop.actions
     assert code.splitlines() == [
         "pyautogui.press('enter')",
@@ -123,6 +126,8 @@ def test_keys_map_onto_pyautogui():
         "pyautogui.hotkey('ctrl', 'a')",
         "pyautogui.press('tab')",
         "pyautogui.press('backspace')",
+        "pyautogui.press('win')",
+        "pyautogui.hotkey('win', 'r')",
     ]
 
 
@@ -161,6 +166,15 @@ def test_text_goes_in_only_as_a_string_literal():
     assert ["cmd", "/c", "start", "", "msedge"] in calls
 
 
+def test_an_app_already_in_front_counts_as_forward_and_a_different_one_does_not():
+    body = raw("edge-address.json")
+    body["app"] = r"C:\Windows\System32\mspaint.exe"
+    desktop = over(None, None, body)
+    assert desktop.activate("mspaint") is True
+    assert desktop.actions == []
+    assert desktop.activate("notepad") is False
+
+
 def test_a_wait_stands_alone_and_a_pause_between_inputs_stays_in_their_code():
     desktop = over(None, None, raw("edge-address.json"))
     desktop.sleep_watching(3.0)
@@ -174,11 +188,17 @@ def test_a_wait_stands_alone_and_a_pause_between_inputs_stays_in_their_code():
     assert desktop.actions[1].splitlines() == [
         "pyautogui.click(12, 100)",
         "pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace')",
-        "pyautogui.scroll(-10, x=720, y=450)",
+        "pyautogui.scroll(-400, x=720, y=450)",
         "time.sleep(0.5)",
         "pyautogui.press('enter')",
     ]
     ast.parse(desktop.actions[1])
+
+
+def test_a_scroll_aimed_at_an_item_uses_that_point():
+    desktop = over()
+    desktop.scroll(-10, at=(12.4, 99.6))
+    assert desktop.actions == ["pyautogui.scroll(-400, x=12, y=100)"]
 
 
 def test_with_no_tree_nothing_is_known_but_the_screenshot():
@@ -192,7 +212,7 @@ def test_with_no_tree_nothing_is_known_but_the_screenshot():
     assert image.size == DISPLAY and image.mode == "RGB"
     assert desktop.display_scale(image) == 1.0
     desktop.scroll(5)
-    assert desktop.actions == ["pyautogui.scroll(5)"]
+    assert desktop.actions == ["pyautogui.scroll(200)"]
 
 
 def _explorer(title: str) -> dict:
@@ -213,6 +233,52 @@ def test_a_desktop_list_item_opens_by_its_default_action():
     assert repr("Recycle Bin") in code
 
 
+def test_focusing_a_named_element_queues_a_scroll_into_view_and_a_focus():
+    desktop = over()
+    assert desktop.ax_focus({"role": "AXTextField", "name": "Record directory"}) is True
+    code = desktop.actions[0]
+    # WAA joins its prefix onto the first line with a semicolon, so that line cannot be a block.
+    ast.parse("import pyautogui; import time; pyautogui.FAILSAFE = False; " + code)
+    assert "SetFocus" in code and "ScrollIntoView" in code and "Select(1)" in code
+    assert repr("Record directory") in code
+    assert "50004" in code  # Edit, so a label of the same name is not the field
+
+
+def test_a_drag_is_a_move_then_a_drag():
+    desktop = over()
+    desktop.drag((12.4, 20.6), (80.2, 40.8))
+    code = desktop.actions[0]
+    ast.parse(code)
+    assert code == "pyautogui.moveTo(12, 21); pyautogui.dragTo(80, 41, duration=0.5, button='left')"
+
+
+def test_a_focus_without_a_name_queues_nothing():
+    desktop = over()
+    assert desktop.ax_focus({"role": "AXTextField", "name": "  "}) is False
+    assert desktop.ax_focus({"role": "AXButton"}) is False
+    assert desktop.actions == []
+
+
+def test_a_focus_of_an_unknown_role_searches_by_name_alone():
+    desktop = over()
+    assert desktop.ax_focus({"role": "AXSearchField", "name": "Find"}) is True
+    code = desktop.actions[0]
+    ast.parse("import pyautogui; import time; pyautogui.FAILSAFE = False; " + code)
+    assert "30003" not in code
+    assert repr("Find") in code
+
+
+def test_a_queued_selection_is_not_read_back_before_the_next_screen():
+    handed: list = []
+    desktop = over(handed, observation(), _explorer("Documents"), None)
+    doc1 = {"role": "AXRow", "name": "Doc01.docx", "patterns": [PATTERN_IDS["selection_item"]]}
+
+    assert desktop.ax_operate(doc1, "select") is True
+    assert desktop.ax_selected(doc1) is None
+    desktop.screenshot()
+    assert handed
+
+
 def test_a_folder_window_list_item_stays_a_click():
     desktop = over(None, None, _explorer("Documents"))
     assert desktop.ax_press({"role": "AXRow", "name": "Doc01.docx"}) is False
@@ -220,7 +286,7 @@ def test_a_folder_window_list_item_stays_a_click():
 
 
 def test_nothing_can_be_pressed_through_the_tree(tmp_path, monkeypatch):
-    monkeypatch.setenv(tree.SAVE_TREE, "1")
+    monkeypatch.setenv("JEV_WAA_SAVE_TREE", "1")
     body = raw("edge-address.json")
     desktop = WAADesktop(observation(), lambda actions: observation(), start_tree=lambda: Ready(body), save_tree=tmp_path)
     assert desktop.ax_press(object()) is False
@@ -234,6 +300,19 @@ def test_nothing_can_be_pressed_through_the_tree(tmp_path, monkeypatch):
     desktop.focused_field()
     assert (tmp_path / "obs-000-uia.json").is_file()
     assert desktop.actions == []
+
+
+def test_element_text_uses_the_tree_value_and_the_script_reads_text_then_value():
+    from typesafe_computer_use.waa.desktop import read_text_code
+
+    desktop = over()
+    assert desktop.element_text({"name": "Editor", "role": "AXTextArea", "value": "hello"}) == "hello"
+    assert desktop.element_text({"name": "Editor"}) is None
+    assert desktop.element_text(object()) is None
+    assert desktop.actions == []
+    code = read_text_code("Editor", 50020)
+    assert "IUIAutomationTextPattern" in code
+    assert "CurrentValue" in code
 
 
 def test_an_observation_without_a_screenshot_says_so():

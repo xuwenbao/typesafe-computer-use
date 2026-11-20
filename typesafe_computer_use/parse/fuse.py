@@ -7,6 +7,8 @@ Pure geometry on capture pixels; no model, no PyTorch. The rules, in order:
 2. An icon box that lies mostly (`INSIDE`) within an OCR line is part of that text, and goes.
 3. An OCR line that lies mostly within an icon box is that icon's text, and leaves the lines.
    A line joins the first icon that holds it only, so one word never becomes two options.
+   Lines on more than one row do not join it: a box tall enough to cover two menu rows keeps
+   none of them, and the icon is left without text.
 4. Every other icon has no text: it is captioned later.
 
 Fusion runs on lines, before lines join into paragraphs: a paragraph's box is wide enough to
@@ -15,6 +17,7 @@ swallow the small icon beside it under rule 2.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 
 Box = tuple[float, float, float, float]
@@ -56,6 +59,16 @@ def inside(inner: Box, outer: Box, share: float = INSIDE) -> bool:
     return a > 0 and intersection(inner, outer) / a > share
 
 
+def one_row(boxes: list[Box]) -> bool:
+    """Whether the boxes sit on one row: each overlaps the next in y, top to bottom.
+
+    Two menu rows inside one tall icon box do not. Their y ranges are disjoint, so the lines
+    stay text and the icon is left without a name.
+    """
+    ordered = sorted(boxes, key=lambda box: (box[1], box[0]))
+    return all(min(a[3], b[3]) > max(a[1], b[1]) for a, b in itertools.pairwise(ordered))
+
+
 def distinct_icons(icons: list[tuple[Box, float]], threshold: float = ICON_OVERLAP) -> list[tuple[Box, float]]:
     """Rule 1: drop each icon box that overlaps a smaller one by more than `threshold`."""
     kept = []
@@ -79,6 +92,8 @@ def fuse(lines: list[Line], icons: list[tuple[Box, float]]) -> tuple[list[Line],
         if any(inside(box, line_box) for _, _, line_box in lines):
             continue
         held = [i for i, (_, _, line_box) in enumerate(lines) if i not in taken and inside(line_box, box)]
+        if held and not one_row([lines[i][2] for i in held]):
+            held = []
         taken.update(held)
         if held:
             text = " ".join(lines[i][0] for i in held)

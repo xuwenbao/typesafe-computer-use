@@ -13,14 +13,17 @@ and opening it would skip a move. Text reaches the code only through `repr()`.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
 
-from ..models import AxNode, Field
+from ..config import settings
+from ..models import AxNode, ElementState, Field
+from ..uia_patterns import ID_TO_NAME, OPERATION_PATTERN, OPERATIONS, PATTERN_IDS, VALUE
+from ..uia_roles import ROLE_TO_CONTROL_TYPE_ID
+from ..wheel import wheel_delta
 from . import tree
 
 NextObs = Callable[[list[str]], dict]
@@ -37,6 +40,10 @@ DESKTOP_TITLES = {"program manager", "desktop"}
 class WAADesktop:
     """One WAA run's computer: the observation in hand, and the actions not yet handed over."""
 
+    # screenshot() hands the previous action to the VM and waits for the next picture. That wait
+    # is the benchmark step, so the capture bound must not abandon it.
+    screenshot_waits = True
+
     def __init__(
         self, obs: dict, next_obs: NextObs, *, start_tree: StartTree | None = None, save_tree: Path | None = None
     ) -> None:
@@ -44,7 +51,7 @@ class WAADesktop:
         folder that receives each observation's raw tree when `JEV_WAA_SAVE_TREE=1`."""
         self._next_obs = next_obs
         self._start_tree = start_tree
-        self._save_tree = save_tree if os.environ.get(tree.SAVE_TREE) == "1" else None
+        self._save_tree = save_tree if settings().waa_save_tree else None
         self._seen = 0
         self.fetches: list[tree.Fetch] = []
         self.actions: list[str] = []
@@ -138,6 +145,11 @@ class WAADesktop:
         else:
             self._do(f"pyautogui.click({x}, {y})")
 
+    def drag(self, start: tuple[float, float], end: tuple[float, float]) -> None:
+        x1, y1 = round(start[0]), round(start[1])
+        x2, y2 = round(end[0]), round(end[1])
+        self._do(f"pyautogui.moveTo({x1}, {y1}); pyautogui.dragTo({x2}, {y2}, duration=0.5, button='left')")
+
     def press(self, key: str, command: bool = False) -> None:
         if command and key == "[":
             self._do("pyautogui.hotkey('alt', 'left')")  # Back, where Command-[ is Back on a Mac
@@ -146,7 +158,10 @@ class WAADesktop:
         else:
             # `delete` stays Backspace: that is the key the Mac adapter's Delete presses, and the
             # classifier's delete was aimed at it. The key named `backspace` is the same key here.
-            pressed = {"return": "enter", "escape": "esc", "delete": "backspace"}.get(key, key)
+            if key == "run":
+                self._do("pyautogui.hotkey('win', 'r')")  # the Run dialog; Start search is not a launch path here
+                return
+            pressed = {"return": "enter", "escape": "esc", "delete": "backspace", "start": "win"}.get(key, key)
             self._do(f"pyautogui.press({pressed!r})")
 
     def type_text(self, text: str) -> None:
@@ -155,26 +170,51 @@ class WAADesktop:
     def clear_field(self) -> None:
         self._do("pyautogui.hotkey('ctrl', 'a'); pyautogui.press('backspace')")
 
-    def scroll(self, lines: int) -> None:
-        """Scroll under the pointer, parked over the active window's center when the tree gives it."""
+    def scroll(self, lines: int, at: tuple[float, float] | None = None) -> None:
+        """Scroll under the pointer: on `at`, or over the active window's center when the tree gives it.
+
+        The actions ask for lines. pyautogui on Windows sends that number as a wheel delta, and one
+        notch is 120, so the lines are converted first. Ten lines is a few notches, not a twelfth.
+        """
+        delta = wheel_delta(lines)
+        if at is not None:
+            self._do(f"pyautogui.scroll({delta}, x={round(at[0])}, y={round(at[1])})")
+            return
         window = self._current().window
         if window is None:
-            self._do(f"pyautogui.scroll({int(lines)})")
+            self._do(f"pyautogui.scroll({delta})")
             return
         x, y, w, h = window
-        self._do(f"pyautogui.scroll({int(lines)}, x={round(x + w / 2)}, y={round(y + h / 2)})")
+        self._do(f"pyautogui.scroll({delta}, x={round(x + w / 2)}, y={round(y + h / 2)})")
 
     def frontmost_app_and_pid(self) -> tuple[str, int]:
         view = self._view()
         return view.app, view.pid
 
+    def list_windows(self) -> list[tuple[str, str, str]]:
+        """The one window this observation shows, when it has a title."""
+        view = self._view()
+        title = view.title.strip()
+        if not title or not view.app:
+            return []
+        return [("1", title, view.app)]
+
+    def launch_app(self, name: str) -> None:
+        """Start `name` in the VM. `start` also focuses it when it is already running."""
+        self._do(_launch(name, None))
+
     def activate(self, app: str, timeout: float = 3.0) -> bool:
-        """Bring a browser forward, starting it when it is not running. No other app."""
+        """Bring a browser forward, starting it when it is not running.
+
+        Any other app is already forward when its process is the window in front. Launching
+        that app is `launch_app`. Reporting failure while the window is the one on screen
+        makes the host tell the model the program never appeared.
+        """
         exe = BROWSERS.get(app)
-        if exe is None:
-            return False
-        self._do(_launch(exe, None))
-        return True
+        if exe is not None:
+            self._do(_launch(exe, None))
+            return True
+        return _same_process(app, self._current().app)
 
     def open_url(self, browser: str, url: str) -> bool:
         """Open `url` in the browser, starting it when it is not running."""
@@ -192,6 +232,10 @@ class WAADesktop:
 
     def frontmost_window_bounds(self, pid: int | None = None) -> tuple[float, float, float, float] | None:
         return self._view().window
+
+    def owned_popup_bounds(self, pid: int | None = None) -> tuple[tuple[float, float, float, float], ...]:
+        """The VM observation is one window. A menu in it is already part of that tree."""
+        return ()
 
     def screenshot(self) -> Image.Image:
         self._step()
@@ -222,13 +266,270 @@ class WAADesktop:
         return True
 
     def ax_focus(self, ref) -> bool:
-        return False
+        """Queue a focus of the named element. Whether it took is the next screen's focused field.
+
+        The code runs on the VM with the rest of this step, so True means it was queued, not that
+        the element already has the focus. A control that supports it is scrolled into view first.
+        """
+        if not isinstance(ref, dict):
+            return False
+        name = (ref.get("name") or "").strip()
+        if not name:
+            return False
+        self._do(_focus_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or "")))
+        return True
 
     def ax_set_value(self, ref, text: str) -> bool:
-        return False
+        """Queue a Value-pattern write, after this observation's tree has arrived.
+
+        True means it was queued. The script sets the value and reads it back; a mismatch is caught
+        inside the VM and does not abort the step.
+        """
+        self._ensure()
+        if not isinstance(ref, dict):
+            return False
+        supported = {ID_TO_NAME.get(pattern_id) for pattern_id in ref.get("patterns") or []}
+        if VALUE not in supported:
+            return False
+        name = (ref.get("name") or "").strip()
+        if not name:
+            return False
+        self._do(_set_value_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""), text))
+        return True
 
     def ax_value(self, ref) -> str | None:
         return None
+
+    def ax_selected(self, ref) -> bool | None:
+        """Each step reads the selection from its own tree; nothing is read between steps."""
+        return None
+
+    def clipboard_files(self) -> tuple[str, ...] | None:
+        """The benchmark desktop does not read the file clipboard."""
+        return None
+
+    def ax_operate(self, ref, operation: str, value: str | None = None) -> bool:
+        """Queue one UIA operation, after this observation's tree has arrived.
+
+        True means the operation was queued, which is how `ax_focus` reports a focus. The element
+        has to list the pattern; otherwise the click falls through to the pointer.
+        """
+        self._ensure()
+        if operation not in OPERATIONS or not isinstance(ref, dict):
+            return False
+        pattern = OPERATION_PATTERN[operation]
+        supported = {ID_TO_NAME.get(pattern_id) for pattern_id in ref.get("patterns") or []}
+        if pattern not in supported:
+            return False
+        name = (ref.get("name") or "").strip()
+        if not name:
+            return False
+        self._do(_operate_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""), operation, value))
+        return True
+
+    def element_frame(self, ref) -> tuple[float, float, float, float] | None:
+        """Accessibility work is queued for the VM, so this step cannot read the box after a scroll."""
+        return None
+
+    def element_text(self, ref) -> str | None:
+        """The value the tree already read. The script `read_text_code` builds is what a direct read sends."""
+        if not isinstance(ref, dict):
+            return None
+        self._last_read = read_text_code((ref.get("name") or "").strip(), ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""))
+        value = ref.get("value")
+        return value if isinstance(value, str) and value else None
+
+    def element_state(self, ref) -> ElementState | None:
+        """Hand over whatever input is waiting, then answer from the tree of the screen that follows."""
+        self._step()
+        if self._ensure().raw is None or not isinstance(ref, dict):
+            return None
+        reading = self._current()
+        name = (ref.get("name") or "").strip()
+        role = ref.get("role") or ""
+        for node in reading.found:
+            if node.label == name and node.role == role:
+                return ElementState(True, True, node.enabled)
+        for node in reading.offscreen:
+            if node.label == name and node.role == role:
+                return ElementState(True, False, node.enabled)
+        return ElementState(False, False, None)
+
+
+_PATTERN_INTERFACE = {
+    "toggle": "IUIAutomationTogglePattern",
+    "select": "IUIAutomationSelectionItemPattern",
+    "add_select": "IUIAutomationSelectionItemPattern",
+    "expand_toggle": "IUIAutomationExpandCollapsePattern",
+    "scroll_into_view": "IUIAutomationScrollItemPattern",
+    "set_range": "IUIAutomationRangeValuePattern",
+}
+
+
+def _operate_element(name: str, control_type: int | None, operation: str, value: str | None) -> str:
+    """VM code that runs one pattern on the named element. `name` is one Python literal.
+
+    The pattern id is the shared table's. A missing element or a refused call is caught, so input
+    queued after this in the same step still runs.
+    """
+    pattern_id = PATTERN_IDS[OPERATION_PATTERN[operation]]
+    interface = _PATTERN_INTERFACE[operation]
+    if operation == "set_range":
+        number = float(value or "")
+        call = (
+            f"if {number!r} < _p.CurrentMinimum or {number!r} > _p.CurrentMaximum:\n"
+            f"            print('operate failed: outside the range')\n"
+            f"        else:\n"
+            f"            _p.SetValue({number!r})"
+        )
+    elif operation == "expand_toggle":
+        call = "_p.Expand() if _p.CurrentExpandCollapseState == 0 else _p.Collapse()"
+    else:
+        call = {
+            "toggle": "_p.Toggle()",
+            "select": "_p.Select()",
+            "add_select": "_p.AddToSelection()",
+            "scroll_into_view": "_p.ScrollIntoView()",
+        }[operation]
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"
+        "    if _item is None:\n"
+        "        print('operate failed: element not found')\n"
+        "    else:\n"
+        f"        _raw = _item.GetCurrentPattern({pattern_id})\n"
+        f"        _p = _raw.QueryInterface(api.{interface})\n"
+        f"        {call}\n"
+        "except Exception as _err:\n"
+        "    print('operate failed:', _err)"
+    )
+
+
+def read_text_code(name: str, control_type: int | None) -> str:
+    """VM code that prints an element's document text, or its value when it has no text range.
+
+    `name` is one Python literal. The print is the read; nothing here runs until a step is handed over.
+    """
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    text_id = PATTERN_IDS.get("text", 10014)
+    value_id = PATTERN_IDS[VALUE]
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"
+        "    _text = ''\n"
+        "    if _item is not None:\n"
+        "        try:\n"
+        f"            _raw = _item.GetCurrentPattern({text_id})\n"
+        "            _range = _raw.QueryInterface(api.IUIAutomationTextPattern).DocumentRange\n"
+        "            _text, _ = _range.GetText(-1)\n"
+        "        except Exception:\n"
+        "            _text = ''\n"
+        "        if not _text:\n"
+        "            try:\n"
+        f"                _raw = _item.GetCurrentPattern({value_id})\n"
+        "                _text = _raw.QueryInterface(api.IUIAutomationValuePattern).CurrentValue\n"
+        "            except Exception:\n"
+        "                _text = ''\n"
+        "    print(_text or '')\n"
+        "except Exception as _err:\n"
+        "    print('read failed:', _err)"
+    )
+
+
+def _set_value_element(name: str, control_type: int | None, text: str) -> str:
+    """VM code that sets a Value-pattern control and reads it back. `text` is one Python literal."""
+    pattern_id = PATTERN_IDS[VALUE]
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"
+        "    if _item is None:\n"
+        "        print('operate failed: element not found')\n"
+        "    else:\n"
+        f"        _raw = _item.GetCurrentPattern({pattern_id})\n"
+        "        _p = _raw.QueryInterface(api.IUIAutomationValuePattern)\n"
+        f"        _p.SetValue({text!r})\n"
+        "        _got = _p.CurrentValue\n"
+        f"        if _got != {text!r}:\n"
+        "            print('operate failed: read back', _got)\n"
+        "except Exception as _err:\n"
+        "    print('operate failed:', _err)"
+    )
+
+
+def _focus_element(name: str, control_type: int | None) -> str:
+    """VM code that focuses the named element, scrolling it into view when the control allows it.
+
+    `name` is one Python literal. A missing element, or one that cannot scroll, is caught, so
+    input queued after this in the same step still runs.
+    """
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"  # UIA_NamePropertyId
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"  # UIA_ControlTypePropertyId
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    # The first line stays a simple statement: WAA prefixes it with `... False; `, and a `try`
+    # there is a syntax error. The block below is where a missing element is swallowed.
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"  # TreeScope_Descendants
+        "    if _item is None:\n"
+        "        print('focus failed: element not found')\n"
+        "    else:\n"
+        "        try:\n"
+        "            _scroll = _item.GetCurrentPattern(10017)\n"  # UIA_ScrollItemPatternId
+        "            _scroll.QueryInterface(api.IUIAutomationScrollItemPattern).ScrollIntoView()\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "        try:\n"
+        "            _item.SetFocus()\n"
+        "        except Exception as _err:\n"
+        "            print('focus failed: SetFocus', _err)\n"
+        "        try:\n"
+        "            _legacy = _item.GetCurrentPattern(10018)\n"  # UIA_LegacyIAccessiblePatternId
+        "            _legacy.QueryInterface(api.IUIAutomationLegacyIAccessiblePattern).Select(1)\n"  # SELFLAG_TAKEFOCUS
+        "        except Exception as _err:\n"
+        "            print('focus failed: Select', _err)\n"
+        "except Exception as _err:\n"
+        "    print('focus failed:', _err)"
+    )
 
 
 def _open_list_item(name: str) -> str:
@@ -247,6 +548,15 @@ def _open_list_item(name: str) -> str:
     )
 
 
+def _same_process(wanted: str, process: str) -> bool:
+    """`mspaint` and `C:\\Windows\\System32\\mspaint.exe` are the same program."""
+
+    def stem(value: str) -> str:
+        return value.replace("\\", "/").rsplit("/", 1)[-1].strip().lower().removesuffix(".exe")
+
+    return bool(stem(wanted)) and stem(wanted) == stem(process)
+
+
 def _launch(exe: str, url: str | None) -> str:
     """VM code that runs `start <exe> [url]`. `start` focuses a running program or launches it.
 
@@ -254,7 +564,10 @@ def _launch(exe: str, url: str | None) -> str:
     The URL is one argument, through `repr()` of the whole list, never part of a shell string.
     """
     command = ["cmd", "/c", "start", "", exe] if url is None else ["cmd", "/c", "start", "", exe, url]
+    # The VM runs this as a script that already has pyautogui, and does not import subprocess.
+    # A test can still hand in its own subprocess through the globals.
     return (
-        "subprocess.Popen("
-        f"{command!r}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)"
+        "_sp = globals().get('subprocess') or __import__('subprocess')\n"
+        "_sp.Popen("
+        f"{command!r}, stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, start_new_session=True)"
     )

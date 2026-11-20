@@ -14,7 +14,7 @@ import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
 from typesafe_computer_use import driver
-from typesafe_computer_use.driver import DEAD
+from typesafe_computer_use.driver import BANNED, DONE_BEFORE
 from typesafe_computer_use.runner import MAX_REPEATS, MAX_STALLS, STOPPED, UNCHANGED
 
 GOAL = "buy a ticket to the next show"
@@ -1721,12 +1721,12 @@ def test_l52_the_run_counts_the_requests_each_model_took(monkeypatch, tmp_path):
     )
 
     assert world.page.name == "checkout"
-    # Five decisions and the check of what was typed; the typed text and two readings of a stopped screen.
-    assert state.calls.count == {"classifier": 6, "writer": 3, "driver": 0}
+    # Five decisions and the check of what was typed; the host, the typed text, and two readings.
+    assert state.calls.count == {"classifier": 6, "writer": 4, "driver": 0}
     summary = json.loads((tmp_path / "run" / "run.json").read_text())
-    assert summary["calls"]["classifier"]["calls"] == 6 and summary["calls"]["classifier"]["share"] == 0.667
-    assert summary["calls"]["writer"]["calls"] == 3 and summary["calls"]["writer"]["share"] == 0.333
-    assert "calls: classifier 6 (67%, " in (tmp_path / "run" / "run.log").read_text()
+    assert summary["calls"]["classifier"]["calls"] == 6 and summary["calls"]["classifier"]["share"] == 0.6
+    assert summary["calls"]["writer"]["calls"] == 4 and summary["calls"]["writer"]["share"] == 0.4
+    assert "calls: classifier 6 (60%, " in (tmp_path / "run" / "run.log").read_text()
 
 
 def test_l53_unverified_keystrokes_stay_when_the_field_will_not_take_a_value(monkeypatch, tmp_path):
@@ -1841,7 +1841,11 @@ def test_l56_a_name_the_writer_submits_is_typed_and_saved_in_one_step(monkeypatc
     assert state.outcome == "done" and world.page.name == "saved"
     assert state.history == ["typed 'Favorites' into 'Name' via accessibility and pressed Return"]
     assert world.log == ["type:Favorites", "enter"]
-    assert state.calls.count == {"classifier": 2, "writer": 2, "driver": 0}  # two decisions and no check; the name and the answer
+    assert state.calls.count == {
+        "classifier": 2,
+        "writer": 3,
+        "driver": 0,
+    }  # two decisions and no check; the host, the name, and the answer
 
 
 def test_l57_an_item_under_a_popup_is_reached_by_closing_the_popup_in_the_same_step(monkeypatch, tmp_path):
@@ -1885,8 +1889,8 @@ ARCHIVE_GOAL = "move Doc01.docx into the Archive folder"
 
 
 def archive_world() -> World:
-    """file_explorer/0c9dda13: the file is selected, and moving it takes Cut, the folder, and Paste,
-    which no classifier action can do: the classifier has no shortcut."""
+    """file_explorer/0c9dda13: the file is selected, then this policy stops.
+    The driver finishes the move with Cut, the folder, and Paste."""
     explorer = "File Explorer"
     return World(
         [
@@ -1902,6 +1906,67 @@ def archive_world() -> World:
 def archive_classifier(state: dict, questions: dict) -> tuple:
     """Selects the file, then finds nothing on screen that moves it."""
     return ("none", None) if state["previous_actions"] else ("click_item", "Doc01.docx")
+
+
+def test_the_classifier_adds_a_file_then_cuts_and_pastes_it(monkeypatch, tmp_path):
+    explorer = "File Explorer"
+    world = World(
+        [
+            Page(
+                name="folder",
+                items=["Doc01.docx", "Doc02.docx", "Archive"],
+                app=explorer,
+                on={"click:Doc01.docx": "one"},
+            ),
+            Page(
+                name="one",
+                items=["Doc01.docx selected", "Doc02.docx", "Archive"],
+                app=explorer,
+                on={"add+click:Doc02.docx": "both"},
+            ),
+            Page(
+                name="both",
+                items=["Doc01.docx selected", "Doc02.docx selected", "Archive"],
+                app=explorer,
+                on={"command+x": "cut"},
+            ),
+            Page(
+                name="cut",
+                items=["Doc01.docx cut", "Doc02.docx cut", "Archive"],
+                app=explorer,
+                on={"double:Archive": "empty"},
+            ),
+            Page(name="empty", items=["Archive", "This folder is empty."], app=explorer, on={"command+v": "moved"}),
+            Page(name="moved", items=["Archive", "Doc01.docx", "Doc02.docx"], app=explorer),
+        ]
+    )
+
+    state = drive(
+        world,
+        scripted(
+            ("click_item", "Doc01.docx"),
+            ("add_item", "Doc02.docx"),
+            ("shortcut", "x"),
+            ("open_item", "Archive"),
+            ("shortcut", "v"),
+        ),
+        goal=ARCHIVE_GOAL,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+    )
+
+    assert state.outcome == "done" and world.page.name == "moved"
+    assert world.log == ["click:Doc01.docx", "add+click:Doc02.docx", "command+x", "double:Archive", "command+v"]
+    assert state.history == [
+        "clicked 'Doc01.docx'",
+        "clicked 'Doc02.docx' with add",
+        "pressed command+x (to the clipboard; the screen need not change)",
+        "opened 'Archive'",
+        "pressed command+v",
+    ]
+    assert "add_item" in world.fake.asked[0]["kind"].criteria
+    assert "shortcut" in world.fake.asked[0]["kind"].criteria
+    assert list(world.fake.asked[0]["key"].criteria) == ["x", "c", "v", "a"]
 
 
 def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of_the_run(monkeypatch, tmp_path):
@@ -1930,7 +1995,7 @@ def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of
     assert world.log == ["click:Doc01.docx", "command+x", "click:Archive", "command+v"]
     assert state.history == [
         "clicked 'Doc01.docx'",
-        "driver: pressed command+x",
+        "driver: pressed command+x (to the clipboard; the screen need not change)",
         "driver: clicked 'Archive'",
         "driver: pressed command+v",
     ]
@@ -1939,10 +2004,77 @@ def test_l58_the_driver_finishes_what_the_classifier_could_not_with_the_story_of
     assert first["actions_taken"] == ["clicked 'Doc01.docx'"]
     assert first["why_the_classifier_stopped"] == STOPPED["nothing helps"]
     assert first["actions_left"] == 10
-    assert writer.drive_packets[1]["actions_taken"][-1] == "driver: pressed command+x"
+    assert (
+        writer.drive_packets[1]["actions_taken"][-1] == "driver: pressed command+x (to the clipboard; the screen need not change)"
+    )
     assert state.calls.count["driver"] == 4
     assert writer.packets[-1]["why_the_run_stopped"] == driver.STOPPED["driver done"]
     assert (tmp_path / "run" / "step-003-driver.json").is_file()
+
+
+def test_a_driver_that_finished_is_checked_once_more_against_the_screen(monkeypatch, tmp_path):
+    writer = FakeWriter(
+        reviews=[
+            {"achieved": False},
+            {"achieved": False, "missing": [], "answer": "the files were not moved"},
+            {"achieved": True, "answer": "Doc01.docx is in Archive"},
+        ],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world := archive_world(),
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert state.outcome == "driver done" and state.answer.achieved
+    assert world.page.name == "moved"
+    assert state.driver_done == "scripted"
+    assert writer.packets[-1]["driver_said_done"] == "scripted"
+    assert "driver_said_done" not in writer.packets[-2]
+
+
+def test_a_second_stop_in_the_same_app_goes_to_the_driver(monkeypatch, tmp_path):
+    world = World([Page(name="docs", items=["Doc01.docx", "新建"], app="File Explorer")])
+
+    def policy(state: dict, questions: dict) -> tuple:
+        acted = len(state["previous_actions"])
+        if "current_focus" not in state:
+            return ("click_item", "Doc01.docx") if acted == 0 else ("none", None)
+        return ("click_item", "新建") if acted == 1 else ("none", None)
+
+    writer = FakeWriter(
+        reviews=[
+            {"focus": "Click 'Doc01.docx'", "route": "classifier"},
+            {"focus": "Click '新建'", "route": "classifier"},
+        ],
+        drives=[{"action": "done", "achieved": True}],
+    )
+
+    state = drive(
+        world,
+        policy,
+        goal="Create a folder named Archive",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert len(state.handoffs) == 1
+    assert state.handoffs[0].page == ("File Explorer", None)
+    assert state.outcome == "driver done" and state.answer is not None and state.answer.achieved
+    assert world.log == ["click:Doc01.docx", "click:新建"]
 
 
 def test_l59_with_the_driver_off_the_run_ends_where_the_classifier_stopped(monkeypatch, tmp_path):
@@ -1993,12 +2125,17 @@ def test_l61_a_driver_whose_actions_change_nothing_stops_as_stalled(monkeypatch,
 
     assert state.outcome == "driver stalled" and not state.answer.achieved
     # The takeover's first look sees the screen the classifier stopped on, so two idle presses make three.
-    assert world.log == ["click:Doc01.docx", "tab"]
+    # That changes course. The next tab is the third on this screen, so the takeover stops instead of
+    # refusing it a second time.
+    assert world.log == ["click:Doc01.docx", "tab", "tab"]
     assert state.history[1:] == [
         f"driver: pressed tab{UNCHANGED}",
-        f"driver: {DEAD}",
+        f"driver: pressed tab (note: {DONE_BEFORE}){UNCHANGED}",
+        "driver: changed course: the last 3 actions changed nothing on screen",
+        f"driver: {BANNED}",
     ]
     assert writer.drive_packets[1]["actions_taken"][-1] == f"driver: pressed tab{UNCHANGED}"
+    assert writer.drive_packets[2]["change_course"]["do_not_repeat"] == ["key tab"]
 
 
 def test_l62_the_driver_takes_no_more_actions_than_it_is_allowed(monkeypatch, tmp_path):
@@ -2104,23 +2241,15 @@ def test_l66_a_driver_that_loops_between_two_screens_stalls(monkeypatch, tmp_pat
     )
 
     assert state.outcome == "driver stalled"
-    assert world.log == ["click:Tools", "click:Cancel", "click:Tools", "click:Cancel", "click:Tools"]
+    # Tools twice in a row changes course. The next Cancel is the third on the menu, and a takeover
+    # that already changed course stops there. The click still lands; the banned Tools click is not reached.
+    assert world.log == ["click:Tools", "click:Cancel"] * 3
+    assert state.history[-1] == "driver: clicked 'Cancel'"
+    assert any(line.startswith("driver: changed course:") for line in state.history)
 
 
 def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
-    inner = FakeWriter(reviews=[{"achieved": False}, {"achieved": False}])
-
-    class Broken:
-        def __init__(self):
-            self.left = 2
-            self.messages = type("M", (), {"create": self._create})()
-
-        def _create(self, **request):
-            asked = set(request["output_config"]["format"]["schema"]["properties"])
-            if "action" in asked and self.left:
-                self.left -= 1
-                return type("R", (), {"content": [type("B", (), {"type": "text", "text": "not json"})()]})()
-            return inner._create(**request)
+    writer = FakeWriter(reviews=[{"achieved": False}, {"achieved": False}], drives=[{"action": "text"}, {"action": "text"}])
 
     state = drive(
         world := archive_world(),
@@ -2128,10 +2257,132 @@ def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
         goal=ARCHIVE_GOAL,
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        writer=Broken(),
+        writer=writer,
         driver_steps=5,
     )
 
     assert state.outcome == "driver failed"
     assert world.log == ["click:Doc01.docx"]
     assert state.history[1:] == [f"driver: {driver.UNUSABLE}"] * 2
+
+
+def test_l68_a_cut_that_leaves_the_screen_alone_does_not_stall_the_takeover(monkeypatch, tmp_path):
+    explorer = "File Explorer"
+    world = World(
+        [
+            Page(name="folder", items=["Doc01.docx", "Archive"], app=explorer, on={"click:Doc01.docx": "selected"}),
+            Page(name="selected", items=["Doc01.docx selected", "Archive"], app=explorer, on={"double:Archive": "inside"}),
+            Page(name="inside", items=["This folder is empty."], app=explorer, on={"command+v": "moved"}),
+            Page(name="moved", items=["Doc01.docx"], app=explorer),
+        ]
+    )
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "double_click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world,
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=6,
+    )
+
+    assert state.outcome == "driver done" and world.page.name == "moved"
+    assert world.log == ["click:Doc01.docx", "command+x", "double:Archive", "command+v"]
+    assert UNCHANGED not in state.history[1]
+    assert state.history[1] == "driver: pressed command+x (to the clipboard; the screen need not change)"
+    assert writer.drive_packets[1]["last_action"] == {"did": state.history[1], "refused": False}
+
+
+def test_l69_the_driver_scrolls_the_pane_an_item_is_in_until_the_target_shows(monkeypatch, tmp_path):
+    world = World(
+        [
+            Page(name="top", items=["Input / Codecs"], app="VLC", on={"scroll_down": "bottom"}),
+            Page(name="bottom", items=["Input / Codecs", "Record directory"], app="VLC", on={"click:Record directory": "set"}),
+            Page(name="set", items=["Record directory", "Downloads"], app="VLC"),
+        ]
+    )
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "scroll_down", "item": "Input / Codecs"},
+            {"action": "click", "item": "Record directory"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world,
+        scripted(("none", None)),
+        goal="set the recording folder",
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=5,
+    )
+
+    assert state.outcome == "driver done" and world.page.name == "set"
+    assert world.log == ["scroll_down", "click:Record directory"]
+    assert state.history == ["driver: scrolled down over 'Input / Codecs'", "driver: clicked 'Record directory'"]
+    assert world.mouse  # the scroll was aimed at the pane's item, not the window center
+
+
+def test_l70_using_every_classifier_step_still_hands_the_run_to_the_driver(monkeypatch, tmp_path):
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+            {"action": "done", "achieved": True},
+        ],
+    )
+
+    state = drive(
+        world := archive_world(),
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        steps=1,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert state.outcome == "driver done" and state.answer.achieved and world.page.name == "moved"
+    assert writer.drive_packets[0]["why_the_classifier_stopped"] == STOPPED["step limit"]
+    assert writer.drive_packets[0]["actions_left"] == 10
+
+
+def test_l71_the_driver_keeps_its_own_budget_when_the_classifier_has_one_step_left(monkeypatch, tmp_path):
+    writer = FakeWriter(
+        reviews=[{"achieved": False}],
+        drives=[
+            {"action": "shortcut", "key": "x"},
+            {"action": "click", "item": "Archive"},
+            {"action": "shortcut", "key": "v"},
+        ],
+    )
+
+    state = drive(
+        archive_world(),
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        steps=2,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=3,
+    )
+
+    assert state.outcome == "driver step limit"
+    assert [p["actions_left"] for p in writer.drive_packets] == [3, 2, 1]

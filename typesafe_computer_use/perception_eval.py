@@ -201,7 +201,7 @@ def summarize(images: list[dict]) -> dict:
 
 def current_pipeline(image: Image.Image) -> tuple[list[Item], dict[str, float]]:
     """The desktop perception's text and icons on one capture, without an accessibility tree."""
-    from .config import MAX_OPTIONS
+    from .config import settings
     from .models import Screen
     from .perception import ocr
     from .timing import EXTRAS, phase
@@ -209,7 +209,7 @@ def current_pipeline(image: Image.Image) -> tuple[list[Item], dict[str, float]]:
     timing: dict[str, float] = {}
     screen = Screen(image=image, scale=1.0, app="", field=None, url=None)
     with phase(timing, "total"):
-        items = ocr(screen, MAX_OPTIONS, "", None, timing)
+        items = ocr(screen, settings().max_options, "", None, timing)
     return items, {name: seconds for name, seconds in timing.items() if name not in EXTRAS}
 
 

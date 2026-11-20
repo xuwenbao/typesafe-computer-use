@@ -17,7 +17,19 @@ DISPLAY = (1440.0, 900.0)
 class Node:
     """One element of a tree the walk can be pointed at."""
 
-    def __init__(self, name, control_type, rect, children=(), focused=False, value="", invoke=False, action="", runtime_id=None):
+    def __init__(
+        self,
+        name,
+        control_type,
+        rect,
+        children=(),
+        focused=False,
+        value="",
+        invoke=False,
+        action="",
+        runtime_id=None,
+        selected=None,
+    ):
         self._name = name
         self._control_type = control_type
         self._rect = rect
@@ -27,6 +39,7 @@ class Node:
         self._invoke = invoke
         self._action = action
         self._runtime_id = runtime_id
+        self._selected = selected
 
     def name(self):
         return self._name
@@ -55,6 +68,9 @@ class Node:
     def runtime_id(self):
         return self._runtime_id
 
+    def selected(self):
+        return self._selected
+
 
 def test_a_button_comes_back_as_a_button():
     window = Node("Edge", 50032, (0, 0, 800, 600), [Node("保存", 50000, (10, 10, 40, 20), invoke=True)])
@@ -67,11 +83,25 @@ def test_a_button_comes_back_as_a_button():
             "focused": False,
             "value": "",
             "pressable": True,
+            "enabled": None,
+            "patterns": [],
+            "checked": None,
+            "expanded": None,
+            "selected": None,
             "children": [],
         }
     ]
     assert got["truncated"] is False
     assert got["window"] == {"name": "Edge", "x": 0, "y": 0, "w": 800, "h": 600}
+
+
+def test_a_selected_row_is_read_as_selected():
+    window = Node("Documents", 50032, (0, 0, 800, 600), [Node("Doc01.docx", 50000, (10, 10, 40, 20), selected=True)])
+    got = walk(window, clock=lambda: 0)
+    assert got["nodes"][0]["selected"] is True
+    reading = tree.read(got, *DISPLAY)
+    row = next(node for node in reading.found if node.label == "Doc01.docx")
+    assert row.selected is True
 
 
 def test_a_wide_node_is_truncated_at_the_width_limit():
@@ -209,6 +239,7 @@ def test_an_editable_document_is_a_text_area_and_a_web_page_is_not():
 def test_the_script_embeds_the_one_role_table_and_fits_a_windows_command():
     source = tree.script()
     assert (tree.PACKAGE / "uia_roles.py").read_text(encoding="utf-8") in source
+    compile(source, "<waa-tree>", "exec")
     assert windows.CONTROL_TYPE_TO_ROLE == uia_roles.CONTROL_TYPE_TO_ROLE
     assert windows.pressable is uia_roles.pressable
     for name, role in uia_roles.CONTROL_TYPE_TO_ROLE.items():

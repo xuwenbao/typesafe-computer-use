@@ -3,7 +3,7 @@ import json
 import pytest
 
 from typesafe_computer_use.calls import Calls, MeteredWriter
-from typesafe_computer_use.config import writer_api, writer_base_url
+from typesafe_computer_use.config import settings
 from typesafe_computer_use.writer import WriterError, compose_answer, compose_url, make_writer, parse_json
 
 ANSWER = '{"achieved": true, "answer": "Sep 19 in Miami.", "focus": "", "question": ""}'
@@ -168,20 +168,23 @@ def test_a_text_only_model_gets_the_screen_text_and_no_capture(openai_env, endpo
 def test_the_openai_endpoint_keeps_its_v1(clean_env, given, expected):
     clean_env.setenv("CLICKER_WRITER_API", "openai")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", given)
-    assert writer_base_url() == expected
+    assert settings().writer_base_url == expected
 
 
-def test_the_openai_api_needs_its_endpoint_named(clean_env):
-    clean_env.setenv("CLICKER_WRITER_API", "openai")
-    clean_env.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")  # never read: it may point anywhere
-    with pytest.raises(ValueError, match="needs CLICKER_WRITER_BASE_URL"):
-        make_writer()
+def test_the_official_openai_endpoint_uses_its_own_key(clean_env):
+    assert make_writer() is None
+    clean_env.setenv("OPENAI_API_KEY", "sk-openai-real")
+    client = make_writer()
+    assert str(client.base_url).rstrip("/") == "https://api.openai.com/v1"
+    assert client._client.api_key == "sk-openai-real"
+    clean_env.setenv("CLICKER_WRITER_API_KEY", "named-key")
+    assert make_writer()._client.api_key == "named-key"
 
 
 def test_an_unknown_api_is_named_in_the_error(clean_env):
     clean_env.setenv("CLICKER_WRITER_API", "openai-compatible")
     with pytest.raises(ValueError, match="anthropic, openai"):
-        writer_api()
+        settings()
 
 
 @pytest.mark.parametrize(

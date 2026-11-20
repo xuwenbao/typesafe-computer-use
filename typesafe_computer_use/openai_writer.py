@@ -23,8 +23,8 @@ class OpenAIWriter:
     OpenAI reasoning model is asked for, dropped the same way.
     """
 
-    def __init__(self, base_url: str, api_key: str):
-        self._client = openai.OpenAI(base_url=base_url, api_key=api_key)
+    def __init__(self, base_url: str, api_key: str, timeout: float):
+        self._client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=1)
         self.base_url = self._client.base_url
         self.messages = SimpleNamespace(create=self._create)
         self._formats = list(RESPONSE_FORMATS)  # those this endpoint has not refused yet

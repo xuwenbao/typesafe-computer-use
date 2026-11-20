@@ -5,7 +5,7 @@ parts, and acts. This page follows it from the capture to the stop that ends a r
 
 ```
 screencapture ─► RapidOCR lines + YOLOv9 icon boxes, over the frontmost window
-                 ─► fuse: text inside an icon names it, an icon inside text goes
+                 ─► fuse: text inside an icon names it, unless the lines sit on more than one row; an icon inside text goes
                  ─► merge the remaining lines into blocks ─► drop lines echoing the goal
                  ─► Florence-2 describes each icon left without text, in English
 accessibility ─► actionable elements (role, label, frame), pruned to the display,
@@ -71,7 +71,9 @@ of text, the detector by the region it looks at, and the captioner by the number
 without text, so the savings are reading less of the screen and reading it less often.
 
 - **Crop.** Each step reads the frontmost window with an 8 pt margin, plus the menu bar
-  strip over the same columns, clamped to the display. Text on the desktop and in
+  strip over the same columns, clamped to the display. A popup owned by that window, and the
+  window of the focused control when it is not the front window, is joined into the same crop,
+  so a menu that opens beside the window stays in the picture. Text on the desktop and in
   background windows is noise to the decision. Clipping the strip to the window's width is
   what makes the crop pay on a full-height window. The cost: the clock and the menu extras
   to the right of the window go unread. They stay clickable through the accessibility tree.
@@ -161,9 +163,9 @@ on the app, and the node and time caps bind first on a big tree: Notes and Chrom
 
 | key | does |
 |---|---|
-| `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one |
+| `click_item` | press the element through the accessibility tree when the item came from it, so the press lands on the control rather than on whatever covers it; a mouse click at the center of the box otherwise, and as the fallback when the press is refused, after closing the popup in front of it when there is one. On Windows the press tries Invoke, then a named default action, then Toggle, SelectionItem.Select, and ExpandCollapse, and only then the mouse. A control the tree says is disabled is still clicked, and the line notes it. Double-click, right-click, and a modified click stay pointer clicks |
 | `open_item` | double-click that same item, to open a file, a folder, or a list entry a single click only selects. Offered only while the frontmost app is not the browser and the screen has no URL |
-| `press_offscreen` | `AXPress` a labelled control the app exposes but does not show, chosen from the off-screen list; offered only when that list is not empty, and a refusal counts as a no-op since there is no pixel to fall back on |
+| `press_offscreen` | `AXPress` a labelled control the app exposes but does not show, chosen from the off-screen list; offered only when that list is not empty, and a refusal counts as a no-op since there is no pixel to fall back on. On Windows a control that supports ScrollItem is scrolled into view first |
 | `use_browser` | go to the browser, showing the website the `site` answer names: `none` brings it forward on the page already open there, a `SITES` catalog key opens that URL through AppleScript `open location`, and `other` opens a URL the writer proposes |
 | `type_text` | the writer composes the string; it is set on the focused element through the accessibility tree, with keystrokes as the fallback when the value does not read back, and a TypeSafe Noul then checks the field's value; text the writer submits gets Return at once instead, and the next screen is the check |
 | `type_email` | fills in `$CLICKER_EMAIL` the same way; refused unless a text field is focused |
@@ -213,11 +215,8 @@ the OCR can read.
 
 ## Stopping a live run
 
-Ctrl-C when the terminal has focus, or slam the mouse into the
-top-left corner of the screen from any app. The corner is checked before every click, key,
-scroll, app switch and accessibility action, and between typed characters, so a run stops
-mid-word. A key or mouse button goes back up even when Ctrl-C lands between its down and
-its up. The loop also stops itself on `done` or `none`, on confidence under
+Ctrl-C when the terminal has focus. A key or mouse button goes back up even when Ctrl-C
+lands between its down and its up. The loop also stops itself on `done` or `none`, on confidence under
 `--min-confidence` (0.4), when it stalls, or at `--steps`. Each of those stops goes to the
 writer, which answers and may hand the run back (below).
 
@@ -239,7 +238,9 @@ the rules err toward running on, never toward stopping a run that is making prog
 The same comparison feeds the history. A click, key, or scroll that left the screen as it was
 has "; the screen did not change" added to its line, so the classifier, the writer, and the
 driver all read which moves did not take, rather than just how many. Typing and waits are
-never marked: a field that took the text may show one line of difference or none.
+never marked: a field that took the text may show one line of difference or none. Copy and cut
+are not marked either, and an unchanged screen after one of them does not count as idle: the
+clipboard changes, and the screen need not.
 
 ## The answer
 
@@ -277,36 +278,68 @@ A `done` the writer does not see on the screen is sent back like any other stop.
 
 Some stops have no way back: a third stall, a focus the classifier takes no action under,
 the hand-offs spent, a composite control (a time picker, a calendar, a canvas) the classifier
-cannot score with confidence. With `CLICKER_DRIVER` on, such a run is not over while the
-writer says the goal is not reached and steps remain. A stronger model, `CLICKER_DRIVER_MODEL`
-(the answer model by default), takes over and picks one action per capture, with the whole
-story: the goal, every action taken with its "did not change" marks, every earlier stop and
-the focus given at it, why the classifier stopped, the text of the earlier screens, and the
-marked capture with its numbered items.
+cannot score with confidence, and so does using up `--steps`. `CLICKER_DRIVER` defaults to on, so
+such a run is not over while the writer says the goal is not reached. A stronger model, `CLICKER_DRIVER_MODEL`
+(the answer model by default), takes over through the OpenAI Agents SDK. It only runs when
+`CLICKER_WRITER_API` is `openai` (including an OpenAI-compatible `CLICKER_WRITER_BASE_URL`); an
+Anthropic writer stops at the classifier. The model holds a conversation: it may call `read_text`,
+`count`, and `calculate` any number of times on the current screen, then one screen tool. The
+screen tool is not performed inside that call. jev checks it and performs it, then takes a new
+capture. Only the last two screen pictures and item lists stay in the conversation; older screens
+become one line each. The tools' results are the memory, so the model does not keep a separate
+notes field.
 
 It picks from a whitelist, and code checks every move before anything reaches the machine:
 
 | action | taken when |
 |---|---|
-| `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift |
+| `click` | the number is an item on this screen; pressed the way `click_item` presses it. `modifier` `add` holds Control (Command on a Mac) so the click adds to the selection, and `range` holds Shift. `control`, `ctrl`, `command`, and `cmd` are read as `add`, and `shift` as `range` |
 | `double_click` | the same item, clicked twice, so a file or folder opens |
 | `right_click` | the same item, with the right button |
-| `type` | a text field is focused, the text is 1 to 2000 characters, and neither the field's label nor the text looks like a credential |
-| `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5 |
+| `type` | the text is 1 to 2000 characters and looks like no credential. With `item`, the item is clicked and the text is typed there. Without `item`, the focused text field takes it and is read back; with no text field seen focused, the keystrokes are still sent and the line says so |
+| `set_value` | set `item` to `text`. A slider uses RangeValue, checked against its minimum and maximum and read back; a text value uses the existing value write and is read back. A password, a read-only control, or a control that accepts neither is refused. The classifier does not gain this action |
+| `key` | one of Return, Escape, Tab, the arrows, Page Up/Down, Home, End, Delete, Space, Backspace, F2, F5, and Start, which opens the Start menu on Windows and Spotlight on a Mac |
 | `shortcut` | Cmd/Ctrl with a letter or a digit, except Q, W, H, and M, which quit, close, hide, or minimize |
-| `scroll_down`, `scroll_up`, `wait` | always |
+| `scroll_down`, `scroll_up` | the window under the pointer, or the pane of `item` when a number on this screen is given |
+| `drag` | from `item` to `to`, or by `dx` and `dy` capture pixels, each within 600, and both ends stay on the screen. Draws a shape, moves a slider, or drags a link or a file |
+| `focus_offscreen` | the number is a control on this page that is not in view; it counts only once the next read shows that control focused. On Windows it is scrolled into view first when the control supports that |
+| `wait` | always |
 | `done`, `give_up` | stop |
 
-A refused move goes into the history as refused and costs a step. An action that already changed
-nothing on this screen is refused without being taken again, and two repeats of an action already
-taken on this screen stall the takeover the way they stall the classifier, which is what stops a
-loop through two screens. A reply that is not an action is recorded and the takeover continues;
-the second such reply in a row ends it. A missing `achieved` counts as false. The takeover ends on
-`done` or `give_up`, on the same stall rules as the classifier, after `CLICKER_DRIVER_STEPS`
-(20) actions, or at `--steps`, whichever comes first; then the writer answers once more on
-the final screen. The driver's history lines start with `driver: `, and each of its steps
-leaves a `step-NNN-driver.json` beside the capture. On WindowsAgentArena its actions spend
-the same `max_steps` as the classifier's.
+The checks fall into three kinds.
+
+Safety checks refuse the move and leave the machine alone: a number that is not on this screen,
+a `target` that is not that item's text, a key or shortcut outside the lists, Q, W, H, or M, a
+credential, text over 2000 characters, a drag that leaves the screen or goes past 600 pixels, a
+modifier or an action that does not exist.
+
+State checks do not refuse. They read facts that may already be stale, so the move is taken and
+the line ends with `(note: ...)` for the next step to check against the new screen: a plain
+click that replaces two or more selected files, a control the tree says is disabled, a cut or a
+copy with every file row known unselected or of files the clipboard already holds, a paste of
+files already in this folder, Return on a file row, typing with no text field seen focused, and
+an action that already changed nothing on this screen. The classifier's clicks, Return, and
+shortcuts carry the same notes.
+
+Loop checks are the classifier's stall rules: three actions in a row that left the screen as it
+was, two repeats of an action already taken on this screen, and the same action four times in a
+row. The same action on the same screen also counts when other actions come between them: the
+third time it happens in one takeover is a loop, and only actions this takeover took are counted.
+The first time one fires in a takeover, the takeover does not end. It writes
+`driver: changed course: ...`, clears the counts, and the next question carries `change_course`:
+why it looped, the action in `do_not_repeat`, and what was tried on this screen. Back on the
+screen it looped on, that action is refused. The second time one fires, the takeover stalls.
+
+A refused move goes into the history as refused and costs an action. `done` and `give_up` do
+not. A reply with no usable action is recorded and the takeover continues; the second such
+reply in a row ends it. A missing `achieved` counts as false. The takeover ends on `done` or
+`give_up`, on a second loop, or after `CLICKER_DRIVER_STEPS` (20) actions, which do not come out
+of `--steps`; then the writer answers once more on the final screen. History lines start with
+`driver: `. One screen writes one `step-NNN-driver.json` with the call index, the action's
+result, and the `tools` called on that screen in order (name, arguments, and a truncated result).
+`read_text`, `count`, and `calculate` do not spend `CLICKER_DRIVER_STEPS`. `run.json` records
+the action count, the call count, and `driver_tool_calls`. An older file with
+no call index is read as one call and one action.
 
 ## Who did the work
 

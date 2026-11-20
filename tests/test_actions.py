@@ -6,7 +6,7 @@ import pytest
 
 from typesafe_computer_use import actions
 from typesafe_computer_use.actions import click_item, fill_field, press_offscreen
-from typesafe_computer_use.models import AxNode, Field, Item, Missed, Popup
+from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Missed, Popup
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.writer import Fill, make_writer
 
@@ -19,6 +19,9 @@ def calls(monkeypatch):
     monkeypatch.setattr(desktop, "type_text", lambda text: log.append(("type", text)))
     monkeypatch.setattr(desktop, "ax_focus", lambda ref: log.append(("focus", ref)) or True)
     monkeypatch.setattr(desktop, "clear_field", lambda: log.append(("clear",)))
+    # A fake element has no box. A test that reveals one replaces this.
+    monkeypatch.setattr(desktop, "element_frame", lambda ref: None)
+    monkeypatch.setattr(desktop, "element_state", lambda ref: None)
     return log
 
 
@@ -40,7 +43,7 @@ def test_a_refused_press_falls_back_to_the_mouse(screen, calls, monkeypatch):
     monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
     item = Item(3, "Register Now", 1.0, 100.0, 100.0, 300.0, 140.0, role="link", source="ax")
     live = replace(screen, ax_refs={3: object()})
-    assert click_item(item, live) == "clicked 'Register Now' (accessibility press did not take)"
+    assert click_item(item, live) == "clicked 'Register Now'"
     assert calls == [("click", (100.0, 60.0))]
 
 
@@ -48,6 +51,14 @@ def test_an_ocr_only_item_is_clicked_without_asking_accessibility(screen, calls,
     monkeypatch.setattr(desktop, "ax_press", lambda ref: pytest.fail("no element to press"))
     item = Item(3, "Register Now", 0.9, 100.0, 100.0, 300.0, 140.0)
     assert click_item(item, screen) == "clicked 'Register Now'"
+    assert calls == [("click", (100.0, 60.0))]
+
+
+def test_an_ocr_block_with_a_document_behind_it_is_still_clicked_on_the_pixel(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: pytest.fail("the document is not the click"))
+    item = Item(3, "In many fields", 0.9, 100.0, 100.0, 300.0, 140.0)
+    live = replace(screen, ax_refs={3: object()})
+    assert click_item(item, live) == "clicked 'In many fields'"
     assert calls == [("click", (100.0, 60.0))]
 
 
@@ -68,6 +79,54 @@ def test_an_off_screen_control_is_pressed_through_accessibility(screen, calls, m
     live = replace(screen, offscreen=[node])
     assert press_offscreen("0", live) == "pressed 'Register Now' (off-screen control) via accessibility"
     assert pressed == [ref] and calls == []
+
+
+def test_a_refused_press_of_an_offscreen_text_field_focuses_it(screen, calls, monkeypatch):
+    ref = {"role": "AXTextField", "name": "Record directory"}
+    focused = []
+    monkeypatch.setattr(desktop, "ax_press", lambda r: False)
+    monkeypatch.setattr(desktop, "ax_focus", lambda r: focused.append(r) or True)
+    monkeypatch.setattr(desktop, "focused_field", lambda: Field("AXTextField", "Record directory", "", "", 0, 0, 10, 10))
+    node = AxNode(role="AXTextField", label="Record directory", x=0.0, y=900.0, w=200.0, h=24.0, pressable=True, ref=ref)
+    assert press_offscreen("0", replace(screen, offscreen=[node])) == "focused 'Record directory' (off-screen control)"
+    assert focused == [ref] and calls == []
+
+
+def test_a_focus_that_does_not_land_is_refused(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: True)
+    monkeypatch.setattr(desktop, "focused_field", lambda: Field("AXTextField", "Other", "", "", 0, 0, 10, 10))
+    node = AxNode(role="AXTextField", label="Record directory", x=0.0, y=900.0, w=200.0, h=24.0, pressable=True, ref=object())
+    refusal = press_offscreen("0", replace(screen, offscreen=[node]))
+    assert refusal == "press_offscreen refused: 'Record directory' did not take the focus"
+
+
+def test_a_revealed_offscreen_control_is_clicked_at_its_new_center(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "element_frame", lambda ref: (100.0, 80.0, 40.0, 20.0))
+    monkeypatch.setattr(desktop, "element_state", lambda ref: ElementState(True, True, True))
+    node = AxNode(role="AXButton", label="文档 (已固定)", x=0.0, y=-400.0, w=80.0, h=24.0, pressable=True, ref=object())
+    assert press_offscreen("0", replace(screen, offscreen=[node])) == "clicked '文档 (已固定)' (off-screen control)"
+    assert calls == [("click", (120.0, 90.0))]
+
+
+def test_a_revealed_box_outside_the_capture_is_not_clicked(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "element_frame", lambda ref: (0.0, 4000.0, 40.0, 20.0))
+    monkeypatch.setattr(desktop, "element_state", lambda ref: ElementState(True, True, True))
+    node = AxNode(role="AXButton", label="文档 (已固定)", x=0.0, y=-400.0, w=80.0, h=24.0, pressable=True, ref=object())
+    refusal = press_offscreen("0", replace(screen, offscreen=[node]))
+    assert refusal == "press_offscreen refused: '文档 (已固定)' did not accept the press"
+    assert calls == []
+
+
+def test_a_refused_press_of_an_offscreen_button_stays_a_refusal(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "ax_focus", lambda ref: pytest.fail("a button is not focused"))
+    node = AxNode(role="AXButton", label="Save", x=0.0, y=900.0, w=80.0, h=24.0, pressable=True, ref=object())
+    refusal = press_offscreen("0", replace(screen, offscreen=[node]))
+    assert refusal == "press_offscreen refused: 'Save' did not accept the press"
+    assert calls == []
 
 
 def test_a_refused_off_screen_press_is_a_no_op_with_nothing_to_click(screen, calls, monkeypatch):
@@ -213,6 +272,7 @@ def test_use_browser_refuses_when_the_writer_proposes_nothing(screen, browser, m
 @pytest.fixture
 def broken_writer(clean_env, endpoint):
     """A real writer whose endpoint refuses every request."""
+    clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", endpoint.url)
     endpoint.state["reject"] = lambda body: "model 'nope' not found"
     return make_writer()

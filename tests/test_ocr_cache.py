@@ -39,7 +39,7 @@ def detections(monkeypatch):
     return seen
 
 
-def screen_with(window, width=2000, height=1200, scale=2.0, app="Google Chrome", image=None):
+def screen_with(window, width=2000, height=1200, scale=2.0, app="Google Chrome", image=None, popups=()):
     return perception.Screen(
         image=image if image is not None else Image.new("RGB", (width, height)),
         scale=scale,
@@ -47,6 +47,7 @@ def screen_with(window, width=2000, height=1200, scale=2.0, app="Google Chrome",
         field=None,
         url=None,
         window=window,
+        popups=popups,
     )
 
 
@@ -61,6 +62,18 @@ def test_region_covers_the_window_with_a_margin_and_the_menu_bar():
     # window 100..500 pt vertically, scale 2, so 200..1000 px, plus an 8 pt margin below it
     region = ocr_region(screen_with((50.0, 100.0, 600.0, 400.0)))
     assert region == ((50.0 - 8.0) * 2, 0.0, (50.0 + 600.0 + 8.0) * 2, (100.0 + 400.0 + 8.0) * 2)
+
+
+def test_region_includes_a_popup_that_opens_to_the_left_of_the_window():
+    """The window sits on the right. The menu hangs off its left side and must stay inside the crop."""
+    window = (400.0, 100.0, 500.0, 400.0)
+    popup = (10.0, 150.0, 180.0, 500.0)
+    region = ocr_region(screen_with(window, popups=(popup,)))
+    assert region[0] == (10.0 - 8.0) * 2
+    assert region[0] < (400.0 - 8.0) * 2
+    assert region[2] == (400.0 + 500.0 + 8.0) * 2
+    assert region[1] == 0.0
+    assert region[3] == 1200.0
 
 
 def test_region_clips_the_menu_bar_strip_to_the_window_columns():
@@ -459,6 +472,7 @@ def test_capture_starts_the_read_before_it_asks_which_app_and_window_it_shows(mo
     monkeypatch.setattr(desktop, "display_scale", lambda image: 2.0)
     monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: events.append("app") or ("Google Chrome", 7))
     monkeypatch.setattr(desktop, "frontmost_window_bounds", lambda pid: (0.0, 0.0, 1024.0, 512.0))
+    monkeypatch.setattr(desktop, "owned_popup_bounds", lambda pid: ())
     monkeypatch.setattr(desktop, "focused_field", lambda: None)
     monkeypatch.setattr(desktop, "browser_url", lambda browser: None)
     perception.capture(browser="Google Chrome", ahead=cache)

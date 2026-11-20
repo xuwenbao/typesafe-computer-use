@@ -19,8 +19,7 @@ import Quartz
 from PIL import Image
 
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
-from .config import ABORT_CORNER_PX
-from .models import Abort, AxNode, Field
+from .models import AxNode, ElementState, Field
 
 # ANSI key codes. `delete` and `backspace` are the same key: on a Mac the key labeled Delete
 # erases backward. Digits are the number row, not the keypad.
@@ -90,13 +89,12 @@ def mouse_location() -> tuple[float, float]:
 
 
 def check_abort() -> None:
-    x, y = mouse_location()
-    if x <= ABORT_CORNER_PX and y <= ABORT_CORNER_PX:
-        raise Abort("mouse in top-left corner")
+    # TODO: 左上角叫停先去掉。画中画子会话里 GetCursorPos 会被拒绝（错误 5），要换一种不依赖读鼠标的叫停方式后再加回来。
+    return None
 
 
 def abort_hint() -> str:
-    return "Ctrl-C, or slam the mouse into the top-left corner"
+    return "Ctrl-C"
 
 
 def sleep_watching(seconds: float) -> None:
@@ -166,8 +164,32 @@ def click_at(point: tuple[float, float], button: str = "left", count: int = 1, m
         one(click)
 
 
+DRAG_STEPS = 8
+
+
+def drag(start: tuple[float, float], end: tuple[float, float]) -> None:
+    """Press at `start`, drag to `end`, and release, including when a move in between fails."""
+    check_abort()
+    mouse = Quartz.kCGMouseButtonLeft
+    _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, start, mouse))
+    check_abort()
+    _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, start, mouse))
+    try:
+        for step in range(1, DRAG_STEPS + 1):
+            point = (
+                start[0] + (end[0] - start[0]) * step / DRAG_STEPS,
+                start[1] + (end[1] - start[1]) * step / DRAG_STEPS,
+            )
+            _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDragged, point, mouse))
+    finally:
+        _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, end, mouse))
+
+
 def press(key: str, command: bool = False) -> None:
     check_abort()
+    # `start` is the Windows key and `run` is Win+R. On a Mac both open Spotlight, Command-Space.
+    if key in ("start", "run"):
+        key, command = "space", True
     code = KEYCODES[key]
 
     def event(down: bool):
@@ -197,9 +219,9 @@ def clear_field() -> None:
     press("delete")
 
 
-def scroll(lines: int) -> None:
-    """Scroll events go to the view under the cursor, so park it over the frontmost window first."""
-    center = frontmost_window_center()
+def scroll(lines: int, at: tuple[float, float] | None = None) -> None:
+    """Scroll the view under the cursor. Park it on `at`, or over the frontmost window."""
+    center = at if at is not None else frontmost_window_center()
     check_abort()
     if center is not None:
         _post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, center, Quartz.kCGMouseButtonLeft))
@@ -227,6 +249,44 @@ def frontmost_app_and_pid() -> tuple[str, int]:
 
 def frontmost_pid() -> int:
     return int(osascript('tell application "System Events" to get unix id of first application process whose frontmost is true'))
+
+
+_LIST_WINDOWS = """
+tell application "System Events"
+    set sep to ASCII character 31
+    set rows to {}
+    set i to 0
+    repeat with proc in (every process whose background only is false)
+        try
+            set window_name to name of window 1 of proc
+            if window_name is not "" then
+                set i to i + 1
+                set end of rows to ((i as text) & sep & window_name & sep & (name of proc))
+            end if
+        end try
+    end repeat
+    if i is 0 then return ""
+    set AppleScript's text item delimiters to linefeed
+    return rows as text
+end tell
+"""
+
+
+def list_windows() -> list[tuple[str, str, str]]:
+    """Visible apps' front windows as (id, title, process)."""
+    found: list[tuple[str, str, str]] = []
+    for line in osascript(_LIST_WINDOWS).splitlines():
+        ident, _sep, rest = line.partition("\x1f")
+        title, sep, process = rest.partition("\x1f")
+        if sep and ident and process:
+            found.append((ident, title, process))
+    return found
+
+
+def launch_app(name: str) -> None:
+    """Start the named app with `open -a`. No arguments and no shell."""
+    check_abort()
+    subprocess.run(["open", "-a", name], check=False)
 
 
 def activate(app: str, timeout: float = 3.0) -> bool:
@@ -276,6 +336,11 @@ def frontmost_window_bounds(pid: int | None = None) -> tuple[float, float, float
             if b["Width"] > MIN_WINDOW_SIDE_PT and b["Height"] > MIN_WINDOW_SIDE_PT:
                 return float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"])
     return None
+
+
+def owned_popup_bounds(pid: int | None = None) -> tuple[tuple[float, float, float, float], ...]:
+    """Menus on macOS belong to the front window, so none is collected as its own window."""
+    return ()
 
 
 def frontmost_window_center(pid: int | None = None) -> tuple[float, float] | None:
@@ -375,6 +440,42 @@ def ax_value(ref) -> str | None:
     """An element's value, when it has a textual one."""
     value = _ax_attr(ref, AS.kAXValueAttribute)
     return value if isinstance(value, str) else None
+
+
+def element_text(ref) -> str | None:
+    """The text an element holds, which on macOS is its AXValue."""
+    check_abort()
+    return ax_value(ref)
+
+
+def ax_operate(ref, operation: str, value: str | None = None) -> bool:
+    """macOS has no UI Automation patterns. A click falls back to the pointer."""
+    return False
+
+
+def ax_selected(ref) -> bool | None:
+    """macOS does not re-read a list selection here. None leaves the captured value as it was."""
+    return None
+
+
+def clipboard_files() -> tuple[str, ...] | None:
+    """macOS does not read the file clipboard here. None means the shortcut line stays unmarked."""
+    return None
+
+
+def element_frame(ref) -> tuple[float, float, float, float] | None:
+    """macOS clicks an off-screen control through AXPress. There is no fresh box to aim at."""
+    return None
+
+
+def element_state(ref) -> ElementState | None:
+    """Whether the element is still there. macOS does not report an enabled bit here."""
+    if ref is None:
+        return None
+    check_abort()
+    if _ax_attr(ref, AS.kAXRoleAttribute) is None:
+        return None
+    return ElementState(True, True, None)
 
 
 # ------------------------------------------------------------------ actionable elements

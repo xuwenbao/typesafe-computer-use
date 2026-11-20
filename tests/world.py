@@ -24,9 +24,10 @@ from typesafe_sdk import Noul
 
 from typesafe_computer_use import actions, runner
 from typesafe_computer_use.actions import Context
-from typesafe_computer_use.models import AxNode, Field, Item, Popup, Screen
+from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import RunConfig, RunState, run
+from typesafe_computer_use.writer import WriterError
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -328,8 +329,15 @@ class World:
             return
         self.apply("enter" if name == "return" else name)
 
-    def scroll(self, lines: int) -> None:
+    def scroll(self, lines: int, at: tuple[float, float] | None = None) -> None:
+        if at is not None:
+            self.mouse.append(at)
         self.apply("scroll_down" if lines < 0 else "scroll_up")
+
+    def drag(self, start: tuple[float, float], end: tuple[float, float]) -> None:
+        self.mouse.append(start)
+        self.mouse.append(end)
+        self.apply(f"drag:{start}->{end}")
 
     def type_text(self, text: str) -> None:
         self.apply(f"type:{text}", append=True)
@@ -366,6 +374,9 @@ class World:
         monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
         monkeypatch.setattr(desktop, "click_at", self.click_at)
         monkeypatch.setattr(desktop, "ax_press", self.ax_press)
+        monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: False)
+        monkeypatch.setattr(desktop, "element_state", lambda ref: ElementState(True, True, None))
+        monkeypatch.setattr(desktop, "element_frame", lambda ref: None)
         monkeypatch.setattr(desktop, "press", self.press)
         monkeypatch.setattr(desktop, "scroll", self.scroll)
         monkeypatch.setattr(desktop, "type_text", self.type_text)
@@ -375,6 +386,9 @@ class World:
         monkeypatch.setattr(desktop, "clear_field", self.clear_field)
         monkeypatch.setattr(desktop, "focused_field", self.focused_field)
         monkeypatch.setattr(desktop, "activate", self.activate)
+        monkeypatch.setattr(desktop, "list_windows", lambda: [])
+        monkeypatch.setattr(desktop, "launch_app", lambda name: self.apply(f"launch:{name}"))
+        monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: (self.page.app, 1))
         monkeypatch.setattr(desktop, "open_url", self.open_url)
         # `wait` is the one action that touches no machine call, so the only way the world hears
         # about it is the handler itself. Without this a loading page would never finish loading.
@@ -388,8 +402,9 @@ class FakeTypeSafe:
     """The classifier, replaced by a policy over the state the real `decide` builds.
 
     A policy returns (kind, target) and this maps the target to whatever key the question wants:
-    the item's index for click_item, the off-screen control's key for press_offscreen, the site key
-    for use_browser. So a scenario never writes an index, and renumbering the page cannot break it.
+    the item's index for a click, the off-screen control's key for press_offscreen, the site key
+    for use_browser, and the letter for a shortcut. So a scenario never writes an index, and
+    renumbering the page cannot break it.
 
     Every decision state lands in `states`, so a test can assert what the model was shown. The
     `verify_typed` Noul that `actions._type_text` makes is a different question about a different
@@ -424,10 +439,14 @@ class FakeTypeSafe:
     def _answers(self, state: dict, questions: dict, kind: str, target, confidence: float) -> dict:
         answers = {"kind": _answer(kind, confidence), "site": _answer(target if kind == "use_browser" else "none", confidence)}
         if "item" in questions:
-            answers["item"] = _answer(self._item_key(state, target) if kind in ("click_item", "open_item") else "0", confidence)
+            answers["item"] = _answer(
+                self._item_key(state, target) if kind in ("click_item", "open_item", "add_item") else "0", confidence
+            )
         if "offscreen" in questions:
             key = self._offscreen_key(state, target) if kind == "press_offscreen" else "0"
             answers["offscreen"] = _answer(key, confidence)
+        if "key" in questions:
+            answers["key"] = _answer(target if kind == "shortcut" else "x", confidence)
         return answers
 
     @staticmethod
@@ -487,7 +506,13 @@ class FakeWriter:
     """
 
     def __init__(
-        self, text: str = "", url: str = "", reviews: list | None = None, submit: bool = False, drives: list | None = None
+        self,
+        text: str = "",
+        url: str = "",
+        reviews: list | None = None,
+        submit: bool = False,
+        drives: list | None = None,
+        host_fails: bool = False,
     ):
         self.requests: list[dict] = []
         self.text = text
@@ -495,6 +520,7 @@ class FakeWriter:
         self.url = url
         self.reviews = list(reviews or [])
         self.drives = list(drives or [])
+        self.host_fails = host_fails
         self.packets: list[dict] = []  # the packet of every answer asked for, in order
         self.drive_packets: list[dict] = []  # the packet of every driver action asked for, in order
         self.messages = SimpleNamespace(create=self._create)
@@ -507,7 +533,7 @@ class FakeWriter:
             reply = {"fill": bool(self.text), "text": self.text, "submit": self.submit, "reason": "the goal names what to type"}
         elif asked == {"ok", "url", "reason"}:
             reply = {"ok": bool(self.url), "url": self.url, "reason": "the goal names the site"}
-        elif asked == {"achieved", "answer", "focus", "question"}:
+        elif asked == {"achieved", "answer", "focus", "question", "route", "missing"}:
             self.packets.append(packet)
             earlier = [text for screen in packet.get("earlier_screens", []) for text in screen["text"]]
             scripted = self.reviews.pop(0) if self.reviews else {}
@@ -517,24 +543,13 @@ class FakeWriter:
                 "answer": " ".join(packet["screen_text_in_reading_order"] + earlier),
                 "focus": "",
                 "question": "",
+                "missing": [],
                 **scripted,
             }
-        elif asked == {"reason", "action", "item", "text", "key", "modifier", "achieved"}:
-            self.drive_packets.append(packet)
-            scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
-            scripted = scripted(packet) if callable(scripted) else dict(scripted)
-            numbers = {it["text"]: str(it["i"]) for it in packet["screen_items"]}
-            if scripted.get("action") in ("click", "double_click", "right_click"):
-                scripted["item"] = numbers.get(scripted["item"], scripted["item"])
-            reply = {
-                "reason": "scripted",
-                "item": "",
-                "text": "",
-                "key": "",
-                "modifier": "",
-                "achieved": False,
-                **scripted,
-            }
+        elif asked == {"action", "executable", "id", "reason"}:
+            if self.host_fails:
+                raise WriterError("the host could not be asked")
+            reply = {"action": "ready", "id": "", "executable": "", "reason": "the frontmost app is the one"}
         else:
             raise AssertionError(f"the writer was asked for {sorted(asked)}")
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(reply))])
@@ -567,6 +582,15 @@ def drive(
     if handoffs is not None:
         cfg.handoffs = handoffs
     client = writer or FakeWriter()
+    from scripted_driver import ScriptedModel
+
+    from typesafe_computer_use import driver_agent
+
+    scripts = getattr(client, "drives", None)
+    packets = getattr(client, "drive_packets", None)
+    model = ScriptedModel(scripts if scripts is not None else [], packets if packets is not None else [])
+    model.on_request = getattr(client, "on_drive_request", None)
+    monkeypatch.setattr(driver_agent, "model_for", lambda: model)
     left = list(replies or [])
 
     def ask(question: str) -> str:

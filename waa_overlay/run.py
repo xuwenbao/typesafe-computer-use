@@ -18,6 +18,7 @@ from tqdm import tqdm
 import lib_run_single
 from desktop_env.envs.desktop_env import DesktopEnv
 from mm_agents.jev.agent import JevAgent, browser_for  # jev: the only agent this copy builds
+from typesafe_computer_use.waa.chrome import chrome_cdp_config, install_chrome_setup  # jev: Chrome's debugging port needs a private profile
 import requests
 import time
 
@@ -30,6 +31,7 @@ def _request_with_timeout(self, method, url, **kwargs):  # jev: a call that name
     return _session_request(self, method, url, **kwargs)  # jev:
 _session_request = requests.Session.request  # jev:
 requests.Session.request = _request_with_timeout  # jev: get and post both go through the session
+install_chrome_setup()  # jev: closing Chrome's first tab deadlocks the debugging connection
 print("Waiting for the server to start...")
 
 #  Logger Configs {{{ #
@@ -200,6 +202,8 @@ def test(
 
             with open(config_file, "r", encoding="utf-8") as f:
                 example = json.load(f)
+            if isinstance(example.get("config"), list):  # jev: a CDP task restarts Chrome on a private profile
+                example["config"] = chrome_cdp_config(example["config"])  # jev:
 
             logger.info(f"[Domain]: {domain}")
             logger.info(f"[Example ID]: {example_id}")

@@ -42,6 +42,8 @@ dependencies = [
     "huggingface-hub==2.4.0",
     "numpy==2.5.3",
     "fastmcp==4.2.0",
+    "pydantic-settings==2.16.3",
+    "openai-agents==0.20.0",
 ]
 
 [tool.uv.sources]
@@ -89,6 +91,8 @@ exclude = ["waa_overlay/run.py", "waa_overlay/upstream/run.py"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 ignore = ["E501"]
+# 中文注释用的全角标点。
+allowed-confusables = ["，", "：", "；", "（", "）"]
 
 [tool.ruff.lint.per-file-ignores]
 # Only what WindowsAgentArena's own code in that copy trips at the pinned commit; every other rule
