@@ -82,7 +82,7 @@ if [ "$clean_results" = true ]; then
 fi
 
 echo "Running agent $agent..."
-# jev: the mounted checkout imports pydantic-settings. The image predates that pin, so install it
-# jev: here until the client image is rebuilt from requirements.in.
-uv pip install --python /opt/waa 'pydantic-settings==2.16.3'  # jev:
+# jev: the mounted checkout imports pydantic-settings and openai-agents. The image predates
+# jev: those pins, so install them here until the client image is rebuilt from requirements.in.
+uv pip install --python /opt/waa 'pydantic-settings==2.16.3' 'openai-agents==0.20.0'  # jev:
 /opt/waa/bin/python run.py --agent "$agent" --model "$model" --som_origin "$som_origin" --a11y_backend "$a11y_backend" --worker_id "$worker_id" --num_workers "$num_workers" --result_dir "$result_dir" --test_all_meta_path "$json_name" --diff_lvl "$diff_lvl" --max_steps "$max_steps"  # jev: the client runs on Python 3.12
