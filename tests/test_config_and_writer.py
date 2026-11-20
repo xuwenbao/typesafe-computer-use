@@ -9,14 +9,13 @@ import pytest
 
 from typesafe_computer_use.calls import Calls, MeteredWriter
 from typesafe_computer_use.config import load_dotenv, reset_settings, settings
+from typesafe_computer_use.driver_agent import INSTRUCTIONS, screen_packet
 from typesafe_computer_use.models import AxNode, Field
 from typesafe_computer_use.writer import (
     ANSWER_SYSTEM,
-    DRIVE_SYSTEM,
     WriterError,
     _structured,
     compose_answer,
-    compose_drive_step,
     compose_url,
     make_writer,
     parse_json,
@@ -272,68 +271,66 @@ def test_a_timed_out_request_is_a_writer_error(clean_env):
 def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env):
     clean_env.setenv("CLICKER_WRITER_VISION", "false")
     sent: list[int] = []
-    drive = {"reason": "The screen is idle.", "action": "wait"}
     answer = {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
 
     def create(**kwargs):
         sent.append(kwargs["max_tokens"])
-        payload = drive if len(sent) == 1 else answer
-        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(answer))])
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
-    compose_drive_step(writer, "save the number", screen, [], [], "stuck", [], [], None, 3, None)
     compose_answer(writer, "save the number", screen, [], [], "stuck")
-    assert sent == [2048, 2048]
+    assert sent == [2048]
 
 
 def test_the_takeover_prompt_closes_menus_and_opens_apps_with_start():
-    assert "press escape to close it, then press the shortcut" in DRIVE_SYSTEM
-    assert "When the app you need is not on the screen, open it from the Run dialog: press run" in DRIVE_SYSTEM
-    assert "press escape, then use run" in DRIVE_SYSTEM
-    assert "On a Mac, press start and type its name into Spotlight" in DRIVE_SYSTEM
-    assert "Do not give_up because one way failed" in DRIVE_SYSTEM
-    assert "A spinner, a number box" in DRIVE_SYSTEM
-    assert "do not press escape until the selection has been used" in DRIVE_SYSTEM
-    assert "cut them and paste them" in DRIVE_SYSTEM
-    assert "%USERPROFILE%" in DRIVE_SYSTEM
-    assert "drag: drag from item number" in DRIVE_SYSTEM
-    assert "Keep the reason to three sentences." in DRIVE_SYSTEM
-    assert "Do not click Previous or Next once per month." in DRIVE_SYSTEM
-    assert "type into it directly" in DRIVE_SYSTEM
-    assert "whether or not it came into view" in DRIVE_SYSTEM
+    assert "press escape to close it, then press the shortcut" in INSTRUCTIONS
+    assert "When the app you need is not on the screen, open it from the Run dialog: press run" in INSTRUCTIONS
+    assert "press escape, then use run" in INSTRUCTIONS
+    assert "On a Mac, press start and type its name into Spotlight" in INSTRUCTIONS
+    assert "Do not give_up because one way failed" in INSTRUCTIONS
+    assert "A spinner, a number box" in INSTRUCTIONS
+    assert "do not press escape until the selection has been used" in INSTRUCTIONS
+    assert "cut them and paste them" in INSTRUCTIONS
+    assert "%USERPROFILE%" in INSTRUCTIONS
+    assert "drag: drag from item number" in INSTRUCTIONS
+    assert "Keep the reason to three sentences." in INSTRUCTIONS
+    assert "Do not click Previous or Next once per month." in INSTRUCTIONS
+    assert "type into it directly" in INSTRUCTIONS
+    assert "whether or not it came into view" in INSTRUCTIONS
     assert "do not tell it to repeat a click" in ANSWER_SYSTEM
     assert "click the heading that shows the month and year" in ANSWER_SYSTEM
     assert "offscreen_controls lists controls on this page" in ANSWER_SYSTEM
     assert "a blank area of the capture cannot" in ANSWER_SYSTEM
     assert "only when on_screen.file_rows lists it" in ANSWER_SYSTEM
     assert "not a row of this folder" in ANSWER_SYSTEM
-    assert "on_screen" in DRIVE_SYSTEM
-    assert "a blank area of the capture cannot" in DRIVE_SYSTEM
-    assert "only when on_screen.file_rows lists it" in DRIVE_SYSTEM
-    assert "not a row of this folder" in DRIVE_SYSTEM
-    assert "set target to that item's text" in DRIVE_SYSTEM
-    assert "highlighted_menu_item" in DRIVE_SYSTEM
-    assert "Do not press up or down first." in DRIVE_SYSTEM
+    assert "on_screen" in INSTRUCTIONS
+    assert "a blank area of the capture cannot" in INSTRUCTIONS
+    assert "only when on_screen.file_rows lists it" in INSTRUCTIONS
+    assert "not a row of this folder" in INSTRUCTIONS
+    assert "set target to that item's text" in INSTRUCTIONS
+    assert "highlighted_menu_item" in INSTRUCTIONS
+    assert "Do not press up or down first." in INSTRUCTIONS
     assert "highlighted_menu_item" in ANSWER_SYSTEM
     assert "set focus to press Return" in ANSWER_SYSTEM
     assert "actions_since" in ANSWER_SYSTEM
     assert "missing" in ANSWER_SYSTEM
     assert "driver_said_done" in ANSWER_SYSTEM
-    assert "actions_since" in DRIVE_SYSTEM
+    assert "actions_since" in INSTRUCTIONS
     assert "Return on a file row opens" in ANSWER_SYSTEM
     assert "Set route to classifier" in ANSWER_SYSTEM
     assert "Set route to driver" in ANSWER_SYSTEM
     assert "Set route to end" in ANSWER_SYSTEM
     assert "do not set route to end" in ANSWER_SYSTEM
     assert "cannot right-click, double-click" not in ANSWER_SYSTEM
-    assert "give_up and say in the reason what is missing" in DRIVE_SYSTEM
-    assert "give the one next action" in DRIVE_SYSTEM
-    assert "batch" not in DRIVE_SYSTEM
-    assert "'(note: ...)' was taken" in DRIVE_SYSTEM
-    assert "When change_course is present" in DRIVE_SYSTEM
-    assert "do_not_repeat" in DRIVE_SYSTEM
-    assert "your_notes is what you wrote last time" in DRIVE_SYSTEM
-    assert "Leave notes empty to keep" in DRIVE_SYSTEM
+    assert "give_up and say in the reason what is missing" in INSTRUCTIONS
+    assert "give the one next action" in INSTRUCTIONS
+    assert "batch" not in INSTRUCTIONS
+    assert "'(note: ...)' was taken" in INSTRUCTIONS
+    assert "When change_course is present" in INSTRUCTIONS
+    assert "do_not_repeat" in INSTRUCTIONS
+    assert "your_notes" not in INSTRUCTIONS
+    assert "Leave notes empty" not in INSTRUCTIONS
+    assert "read_text and count it" in INSTRUCTIONS
 
 
 def test_a_highlighted_menu_item_is_named_and_a_plain_focus_is_not(screen, clean_env):
@@ -342,22 +339,19 @@ def test_a_highlighted_menu_item_is_named_and_a_plain_focus_is_not(screen, clean
 
     def create(**kwargs):
         seen.append(json.loads(kwargs["messages"][0]["content"][-1]["text"]))
-        asked = set(kwargs["output_config"]["format"]["schema"]["properties"])
-        if "modifier" in asked:
-            payload = {"reason": "next", "action": "wait"}
-        else:
-            payload = {"achieved": False, "answer": "not yet", "focus": "", "question": "", "route": "driver"}
+        payload = {"achieved": False, "answer": "not yet", "focus": "", "question": "", "route": "driver"}
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
     menu = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
-    compose_drive_step(writer, "make a folder", menu, [], [], "stuck", [], [], None, 3, None)
+    drive = screen_packet("make a folder", menu, [], [], "stuck", [], [], None, 3)
     compose_answer(writer, "make a folder", menu, [], [], "stuck")
-    assert [packet["highlighted_menu_item"] for packet in seen] == ["文件夹", "文件夹"]
+    assert [drive["highlighted_menu_item"], seen[0]["highlighted_menu_item"]] == ["文件夹", "文件夹"]
 
     seen.clear()
-    compose_drive_step(writer, "make a folder", screen, [], [], "stuck", [], [], None, 3, None)
+    drive = screen_packet("make a folder", screen, [], [], "stuck", [], [], None, 3)
     compose_answer(writer, "make a folder", screen, [], [], "stuck")
+    assert "highlighted_menu_item" not in drive
     assert all("highlighted_menu_item" not in packet for packet in seen)
 
 
@@ -369,18 +363,14 @@ def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_en
 
     def create(**kwargs):
         seen.append(json.loads(kwargs["messages"][0]["content"][0]["text"]))
-        payload = (
-            {"reason": "next", "action": "wait"}
-            if len(seen) == 1
-            else {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
-        )
+        payload = {"achieved": False, "answer": "not yet", "focus": "", "question": ""}
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
-    compose_drive_step(writer, "set the folder", showing, [], [], "stuck", [], [], None, 3, None)
+    drive = screen_packet("set the folder", showing, [], [], "stuck", [], [], None, 3)
     compose_answer(writer, "set the folder", showing, [], [], "stuck")
+    assert drive["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
     assert seen[0]["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
-    assert seen[1]["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
 
 
 def test_valid_url():

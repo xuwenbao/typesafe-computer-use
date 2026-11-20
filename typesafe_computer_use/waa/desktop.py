@@ -331,6 +331,14 @@ class WAADesktop:
         """Accessibility work is queued for the VM, so this step cannot read the box after a scroll."""
         return None
 
+    def element_text(self, ref) -> str | None:
+        """The value the tree already read. The script `read_text_code` builds is what a direct read sends."""
+        if not isinstance(ref, dict):
+            return None
+        self._last_read = read_text_code((ref.get("name") or "").strip(), ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""))
+        value = ref.get("value")
+        return value if isinstance(value, str) and value else None
+
     def element_state(self, ref) -> ElementState | None:
         """Hand over whatever input is waiting, then answer from the tree of the screen that follows."""
         self._step()
@@ -405,6 +413,47 @@ def _operate_element(name: str, control_type: int | None, operation: str, value:
         f"        {call}\n"
         "except Exception as _err:\n"
         "    print('operate failed:', _err)"
+    )
+
+
+def read_text_code(name: str, control_type: int | None) -> str:
+    """VM code that prints an element's document text, or its value when it has no text range.
+
+    `name` is one Python literal. The print is the read; nothing here runs until a step is handed over.
+    """
+    named = f"_auto.CreatePropertyCondition(30005, {name!r})"
+    if control_type is None:
+        condition = named
+    else:
+        kind = f"_auto.CreatePropertyCondition(30003, {int(control_type)})"
+        condition = f"_auto.CreateAndCondition({named}, {kind})"
+    text_id = PATTERN_IDS.get("text", 10014)
+    value_id = PATTERN_IDS[VALUE]
+    return (
+        "import comtypes, comtypes.client, ctypes\n"
+        "try:\n"
+        "    comtypes.client.GetModule('UIAutomationCore.dll')\n"
+        "    from comtypes.gen import UIAutomationClient as api\n"
+        "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
+        "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
+        f"    _item = _root.FindFirst(4, {condition})\n"
+        "    _text = ''\n"
+        "    if _item is not None:\n"
+        "        try:\n"
+        f"            _raw = _item.GetCurrentPattern({text_id})\n"
+        "            _range = _raw.QueryInterface(api.IUIAutomationTextPattern).DocumentRange\n"
+        "            _text, _ = _range.GetText(-1)\n"
+        "        except Exception:\n"
+        "            _text = ''\n"
+        "        if not _text:\n"
+        "            try:\n"
+        f"                _raw = _item.GetCurrentPattern({value_id})\n"
+        "                _text = _raw.QueryInterface(api.IUIAutomationValuePattern).CurrentValue\n"
+        "            except Exception:\n"
+        "                _text = ''\n"
+        "    print(_text or '')\n"
+        "except Exception as _err:\n"
+        "    print('read failed:', _err)"
     )
 
 

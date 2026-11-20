@@ -817,6 +817,42 @@ def ax_value(ref) -> str | None:
     return _ui_value(ref)
 
 
+def _pattern_id(name: str):
+    """A UI Automation pattern id. Tests replace this; the real ids live on the stubbed module."""
+    return getattr(auto.PatternId, name)
+
+
+def _document_text(element) -> str | None:
+    """The whole document a text control holds, or None when it has no TextPattern."""
+    pattern = _pattern(element, _pattern_id("TextPattern"))
+    if pattern is None:
+        return None
+    try:
+        text = pattern.DocumentRange.GetText(-1)
+    except Exception:
+        return None
+    if isinstance(text, tuple):
+        text = text[0]
+    text = text or ""
+    return text if str(text).strip() else None
+
+
+def element_text(ref) -> str | None:
+    """The control's own text: the document range first, then its value. None when it has neither."""
+    check_abort()
+    if ref is None:
+        return None
+    document = _document_text(ref)
+    if document:
+        return document
+    pattern = _pattern(ref, _pattern_id("ValuePattern"))
+    try:
+        value = pattern.Value if pattern is not None else None
+    except Exception:
+        value = None
+    return value or None
+
+
 def ax_operate(ref, operation: str, value: str | None = None) -> bool:
     """Run one UIA operation. False when the element does not support it or refuses it."""
     check_abort()
@@ -909,8 +945,15 @@ def _ui_frame(element) -> Frame | None:
 
 
 def _ui_attrs(element) -> AxAttrs:
+    """Role, label, and frame. A writable document is a text area, the same rule as the focused field.
+
+    `role_for` has no Document control: a web page is read-only and is not a control, while Notepad's
+    editor is, and it is the element whose text a later read has to ask for.
+    """
     label = (getattr(element, "Name", "") or "").strip()
-    return AxAttrs(role_for(getattr(element, "ControlTypeName", "")), label, _ui_frame(element))
+    name = getattr(element, "ControlTypeName", "") or ""
+    role = focused_role(name, _legacy_state(element)) if name == "DocumentControl" else role_for(name)
+    return AxAttrs(role, label, _ui_frame(element))
 
 
 def _toggle_state(element) -> bool | None:

@@ -14,7 +14,6 @@ from typesafe_computer_use.driver import (
     KEYS,
     MAX_REVISITS,
     MAX_SAME_ACTION,
-    NOTES_LIMIT,
     SHORTCUTS,
     _advance_same_action,
     _signature,
@@ -632,42 +631,6 @@ def test_direction_keys_may_repeat_while_the_screen_changes(monkeypatch, tmp_pat
 
     assert state.outcome == "driver step limit"
     assert world.log == ["down"] * 6
-
-
-def test_notes_are_carried_to_the_next_question_and_an_empty_reply_keeps_them(monkeypatch, tmp_path):
-    from world import FakeWriter, Page, World, drive
-
-    pages = [
-        Page(name="a", items=["A"], app="Notes", on={"tab": "b"}),
-        Page(name="b", items=["B"], app="Notes", on={"escape": "a"}),
-    ]
-    counted = "example appears 19 times"
-    writer = FakeWriter(
-        reviews=[{"achieved": False}, {"achieved": False}],
-        drives=[
-            {"action": "key", "key": "tab", "notes": counted + "x" * NOTES_LIMIT},
-            {"action": "key", "key": "escape", "notes": "   "},
-            {"action": "key", "key": "tab", "notes": "Archive exists"},
-            {"action": "give_up"},
-        ],
-    )
-
-    state = drive(
-        World(pages),
-        lambda state, questions: ("none", None),
-        goal="count example",
-        monkeypatch=monkeypatch,
-        tmp_path=tmp_path,
-        writer=writer,
-        driver_steps=6,
-    )
-
-    assert state.outcome == "driver gave up"
-    assert writer.drive_packets[0]["your_notes"] == ""
-    assert writer.drive_packets[1]["your_notes"] == (counted + "x" * NOTES_LIMIT)[:NOTES_LIMIT]
-    assert writer.drive_packets[2]["your_notes"] == writer.drive_packets[1]["your_notes"]
-    assert writer.drive_packets[3]["your_notes"] == "Archive exists"
-    assert state.driver_notes == "Archive exists"
 
 
 def test_the_same_action_on_the_same_screen_changes_course_at_the_third_visit(monkeypatch, tmp_path):

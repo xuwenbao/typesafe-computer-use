@@ -6,6 +6,15 @@ import subprocess
 import pytest
 
 
+def test_element_text_is_refused_until_a_test_patches_it():
+    from typesafe_computer_use import macos, windows
+
+    with pytest.raises(RuntimeError, match="element_text"):
+        macos.element_text(object())
+    with pytest.raises(RuntimeError, match="element_text"):
+        windows.element_text(object())
+
+
 def test_docker_and_the_waa_vm_are_refused():
     with pytest.raises(RuntimeError, match="real machine"):
         subprocess.Popen(["docker", "ps"])

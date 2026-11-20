@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import string
+import time
 from dataclasses import asdict
 
+from . import driver_agent
 from .actions import (
     WAIT_SECONDS,
     _paste_note,
@@ -21,12 +23,13 @@ from .actions import (
     focus_landed,
     noted,
 )
-from .calls import MeteredWriter
+from .calls import DRIVER
+from .config import settings
 from .models import AxNode, Item, Missed, Screen, signature
 from .parse.marks import marks
 from .perception import ocr_region
 from .platform_adapter import desktop
-from .writer import DriveStep, WriterError, compose_drive_step, denied_listed_names, looks_credential
+from .writer import DriveStep, denied_listed_names, looks_credential
 
 # 模型可以按的单个键。名单以外的按键直接拒绝。start 在 Windows 上打开开始菜单，在 Mac 上打开 Spotlight。
 # run 在 Windows 上打开运行对话框（Win+R），在 Mac 上同样打开 Spotlight。
@@ -54,7 +57,6 @@ KEYS = (
 NAVIGATION_KEYS = ("up", "down", "left", "right", "pageup", "pagedown", "home", "end")
 MAX_SAME_ACTION = 4  # 同一个动作连续这么多次就停下，不论这几张屏幕像不像
 MAX_REVISITS = 3  # 这次接管里，同一屏幕上同一个动作累计这么多次就换路，中间夹了别的动作也算
-NOTES_LIMIT = 400  # 记给下一步的事实最长这么多字；更长的截掉
 DENIED_SHORTCUTS = ("q", "w", "h", "m")  # 这四个快捷键会退出、关闭、隐藏或最小化窗口，所以不让模型按
 QUIET_SHORTCUTS = ("c", "x")  # 复制和剪切只改剪贴板。屏幕可以不变，不能据此说这一步没效果
 # 允许的 Cmd/Ctrl 组合：小写字母和数字，去掉上面四个。
@@ -107,8 +109,11 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
 
     # 目标：记下分类器为什么停下，并准备接管自己的计数。
     # 完成：日志写出最多几步；空转、重复和换路从 0 计；结局先写成“步数用完”，中途完成或卡住再改。
-    writer = ctx.writer.as_driver() if isinstance(ctx.writer, MeteredWriter) else ctx.writer
     stopped = runner.STOPPED[state.outcome]
+    model = driver_agent.model_for()
+    if model is None:
+        log("the driver needs CLICKER_WRITER_API=openai; stopping at the classifier")
+        return False
     log(f"\nthe driver takes over, {budget} actions at most: {stopped}")
     state.idle = state.repeats = state.reroutes = 0
     state.banned = set()
@@ -117,6 +122,8 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
     unusable = 0
     cursor = first
     calls = 0
+    reasoning = [settings().answer_reasoning]
+    state.driver_talk = []
     same_streak = 0
     same_sig: str | None = None
     last_sig = ""
@@ -146,62 +153,102 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
             change = state.change_course
             state.change_course = None
 
-            try:
-                # 目标：让模型选出下一个动作。完成：得到一个 DriveStep；读不成则进入下面的失败处理。
-                move = _ask(
-                    writer,
-                    cfg,
-                    state,
-                    screen,
-                    items,
-                    stopped,
-                    earlier,
-                    earlier_stops,
-                    first + budget - cursor,
-                    picture.image(),
-                    change=change,
+            if not state.driver_talk:
+                state.driver_talk.append(
+                    driver_agent.opening_message(cfg.goal, state.history, stopped, earlier, earlier_stops, state.guidance)
                 )
-                calls += 1
-                # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准，第一个回复不执行。
-                reasked = None
-                reached = move.action == "done" and move.achieved
-                denied = [] if reached else denied_listed_names(move.reason, False, items)
-                if denied:
-                    move = _ask(
-                        writer,
-                        cfg,
-                        state,
-                        screen,
-                        items,
-                        stopped,
-                        earlier,
-                        earlier_stops,
-                        first + budget - cursor,
-                        None,
-                        denied,
-                        change=change,
-                    )
-                    calls += 1
-                    reasked = denied
-            except WriterError as e:
+            told = _tell(
+                model,
+                state,
+                screen,
+                items,
+                cfg,
+                stopped,
+                earlier,
+                earlier_stops,
+                first + budget - cursor,
+                picture.image(),
+                reasoning,
+                log,
+                change=change,
+            )
+            calls += told.calls or 1
+            _tally(state, told)
+            desktop.check_abort()
+            if told.failed:
+                log(f"  the driver failed: {told.error}")
+                state.outcome = "driver failed"
+                _write_call(
+                    prefix, cursor, calls, {"step": cursor, "did": "driver failed", "error": told.error}, tools=told.tools
+                )
+                return True
+            if told.unusable or told.move is None:
                 # 目标：处理读不成动作的回复。完成：记进历史；连续两次把结局写成失败并停下，一次则再问。
-                calls += 1
                 unusable += 1
-                log(f"  the model's reply was unusable: {e}")
+                log(f"  the model's reply was unusable: {told.error or UNUSABLE}")
                 _record(state, PREFIX + UNUSABLE)
                 state.markable = False
-                _write_call(prefix, cursor, calls, {"step": cursor, "did": UNUSABLE, "error": str(e)})
-                cursor += 1
+                state.driver_talk.append({"role": "user", "content": [{"type": "input_text", "text": UNUSABLE}]})
+                _write_call(
+                    prefix,
+                    cursor,
+                    calls,
+                    {"step": cursor, "did": UNUSABLE, "error": told.error or UNUSABLE},
+                    tools=told.tools,
+                )
                 if unusable >= MAX_UNUSABLE:
                     state.outcome = "driver failed"
                     return True
                 continue
 
+            # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准，第一个回复不执行。
+            move = told.move
+            tools = told.tools
+            reasked = None
+            reached = move.action == "done" and move.achieved
+            denied = [] if reached else denied_listed_names(move.reason, False, items)
+            if denied:
+                told = _tell(
+                    model,
+                    state,
+                    screen,
+                    items,
+                    cfg,
+                    stopped,
+                    earlier,
+                    earlier_stops,
+                    first + budget - cursor,
+                    None,
+                    reasoning,
+                    log,
+                    denied=denied,
+                    change=change,
+                    fresh=True,
+                )
+                calls += told.calls or 1
+                _tally(state, told)
+                desktop.check_abort()
+                if told.failed:
+                    log(f"  the driver failed: {told.error}")
+                    state.outcome = "driver failed"
+                    _write_call(prefix, cursor, calls, {"step": cursor, "did": "driver failed", "error": told.error})
+                    return True
+                if told.unusable or told.move is None:
+                    unusable += 1
+                    log(f"  the model's reply was unusable: {told.error or UNUSABLE}")
+                    _record(state, PREFIX + UNUSABLE)
+                    state.markable = False
+                    if unusable >= MAX_UNUSABLE:
+                        state.outcome = "driver failed"
+                        return True
+                    continue
+                move = told.move
+                tools = told.tools
+                reasked = denied
+
             # 目标：执行模型选的动作，或在它宣布结束时停下来。
             # 完成：done / give_up 只改结局；其它动作占一行历史和一个预算，打转时先换路、再卡住。
             unusable = 0
-            if move.notes.strip():
-                state.driver_notes = move.notes.strip()[:NOTES_LIMIT]
             log(
                 f"\ndriver step {cursor}: app={screen.app!r} items={len(items)} action={move.action} {_target(move)}\n  {move.reason}"
             )
@@ -212,13 +259,13 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                 if reached:
                     state.driver_done = move.reason
                 entry["did"] = state.outcome
-                _write_call(prefix, cursor, calls, entry, reasked)
+                _write_call(prefix, cursor, calls, entry, reasked, tools)
                 return True
 
             state.quiet = False
             what = _take(move, screen, items, state)
             entry["did"] = what
-            _write_call(prefix, cursor, calls, entry, reasked)
+            _write_call(prefix, cursor, calls, entry, reasked, tools)
             # 复制、剪切只改剪贴板，屏幕不变不能记成空转。
             clipboard = "to the clipboard" in what
             state.view = None
@@ -300,10 +347,25 @@ def _record(state, line: str) -> None:
     report_action(line)
 
 
-def _ask(writer, cfg, state, screen, items, stopped, earlier, earlier_stops, steps_left, image, denied=None, change=None):
-    """问驱动下一步。`image` 为空就是不带截图再判一次。"""
-    return compose_drive_step(
-        writer,
+def _tell(
+    model,
+    state,
+    screen,
+    items,
+    cfg,
+    stopped,
+    earlier,
+    earlier_stops,
+    steps_left,
+    image,
+    reasoning,
+    log,
+    denied=None,
+    change=None,
+    fresh: bool = False,
+):
+    """问这一张屏幕。`fresh` 时只发这一条、不带之前的对话，给丢掉截图再判一次用。"""
+    packet = driver_agent.screen_packet(
         cfg.goal,
         screen,
         items,
@@ -313,17 +375,45 @@ def _ask(writer, cfg, state, screen, items, stopped, earlier, earlier_stops, ste
         earlier_stops,
         state.guidance,
         steps_left,
-        image,
         _tried_report(state),
         denied=denied,
         change_course=change,
-        notes=state.driver_notes,
     )
+    message = driver_agent.screen_message(packet, image)
+    messages = [message] if fresh else [*state.driver_talk, message]
+    if not fresh:
+        state.driver_talk.append(message)
+    started = time.perf_counter()
+    segment = driver_agent.run_segment(model, messages, driver_agent.Turn(screen, items), reasoning[0])
+    if segment.drop_reasoning and reasoning[0]:
+        log("  the endpoint rejected reasoning; asking again without it")
+        reasoning[0] = None
+        segment = driver_agent.run_segment(model, messages, driver_agent.Turn(screen, items), None)
+    segment.elapsed = time.perf_counter() - started
+    if segment.history is not None:
+        state.driver_talk = segment.history
+    return segment
 
 
-def _write_call(prefix, step: int, call: int, action: dict, reasked: list[str] | None = None) -> None:
-    """一次模型调用一份记录，里面只有一个动作。再判一次时记下被否定的名字。"""
+def _tally(state, segment) -> None:
+    """把这一段的请求、token 和工具调用记到运行状态上。"""
+    model = settings().resolved_driver_model
+    for usage in segment.usages:
+        cached = int(getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", 0) or 0)
+        incoming = int(getattr(usage, "input_tokens", 0) or 0)
+        state.calls.used(model, max(incoming - cached, 0), cached, int(getattr(usage, "output_tokens", 0) or 0))
+    state.calls.count[DRIVER] += segment.calls
+    state.calls.seconds[DRIVER] += segment.elapsed
+    for tool in segment.tools:
+        name = tool["name"]
+        state.driver_tool_calls[name] = state.driver_tool_calls.get(name, 0) + 1
+
+
+def _write_call(prefix, step: int, call: int, action: dict, reasked: list[str] | None = None, tools: list | None = None) -> None:
+    """一次模型调用一份记录，里面只有一个动作。再判一次时记下被否定的名字，工具按调用顺序列出。"""
     body = {"step": step, "call": call, "actions": [action]}
+    if tools:
+        body["tools"] = tools
     if reasked:
         body["reasked"] = reasked
     prefix.with_name(prefix.name + "-driver.json").write_text(json.dumps(body, indent=2), encoding="utf-8")

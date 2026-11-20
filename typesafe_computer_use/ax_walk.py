@@ -169,7 +169,8 @@ def walk_actionable(
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[list[AxNode], list[AxNode], bool]:
     """Breadth-first hunt for labelled controls: the on-screen ones, the reachable off-screen ones,
-    and whether a cap cut the walk short.
+    and whether a cap cut the walk short. A text area with no name is kept too: Notepad's document
+    often has none, and a read of the picture is not the document.
 
     The four callables are the only way into the tree, so the pruning rules are platform-free
     and testable against a plain dict. The caps are the point: an unbounded walk of a note list
@@ -222,7 +223,10 @@ def walk_actionable(
         # A click lands on the centre, so a node centred off the display is no item, though it
         # crosses the display. It stays reachable by AXPress, and its children are judged as their own.
         visible = not hidden and clickable(frame) and center_on_display(frame, display_w_pt, display_h_pt)
-        if label and not duplicate and not nameless_group and not wrapper:
+        # A text area is the document even when the app gave it no name. Every other nameless control
+        # still names nothing and is left out.
+        document = role == "AXTextArea" and not label and visible and not wrapper
+        if (label and not duplicate and not nameless_group and not wrapper) or document:
             facts = read_facts(actions(node))
             pressable = AX_PRESS in facts.names
             patterns = tuple(name for name in facts.names if name != AX_PRESS)

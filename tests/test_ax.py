@@ -54,6 +54,14 @@ def test_drops_unlabelled_controls():
     assert labels(app(node("AXButton", "")))[0] == []
 
 
+def test_keeps_a_nameless_text_area_and_still_drops_a_nameless_button():
+    editor = node("AXTextArea", "", frame=(20.0, 40.0, 400.0, 300.0))
+    root = node("AXWindow", "", frame=(0.0, 0.0, 800.0, 600.0), children=[editor, node("AXButton", "")])
+    found, _offscreen, capped = walk(root)
+    assert [(n.role, n.label) for n in found] == [("AXTextArea", "")]
+    assert capped is False
+
+
 def test_skips_nameless_group_even_when_pressable():
     tree = app(node("AXGroup", "", press=True), node("AXGroup", "Toolbar", press=True))
     assert labels(tree)[0] == ["Toolbar"]
@@ -274,6 +282,28 @@ def test_offscreen_controls_are_empty_in_replay(screen, monkeypatch):
     monkeypatch.setattr(perception, "ocr", lambda screen, budget, goal, *_: [])
     perception.perceive(screen, 255, "goal")
     assert screen.offscreen == []
+
+
+def test_a_text_area_is_the_ref_behind_the_document_text(screen, monkeypatch):
+    """The words OCR read sit on the document. A read of that item has to reach the control."""
+    ref = object()
+    nodes = [AxNode(role="AXTextArea", label="", x=10.0, y=10.0, w=200.0, h=150.0, pressable=False, ref=ref)]
+    monkeypatch.setattr(desktop, "actionable_elements", lambda pid, w, h: (nodes, [], False))
+    monkeypatch.setattr(
+        perception,
+        "ocr",
+        lambda screen, budget, goal, *_: [
+            Item(0, "In many fields, providing a clear example", 0.9, 40.0, 40.0, 400.0, 280.0),
+            Item(1, "7 characters", 0.9, 40.0, 300.0, 160.0, 320.0),
+        ],
+    )
+    live = replace(screen, pid=123, image=busy_page(screen.image.size))
+    items = perception.perceive(live, 255, "count the word")
+    body = next(it for it in items if it.text.startswith("In many fields"))
+    status = next(it for it in items if it.text == "7 characters")
+    assert live.ax_refs[body.index] is ref
+    assert status.index not in live.ax_refs
+    assert body.source == "ocr"
 
 
 def test_ax_refs_are_empty_without_an_accessibility_tree(screen, monkeypatch):

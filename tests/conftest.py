@@ -113,7 +113,7 @@ def no_real_machine(monkeypatch):
 
         return call
 
-    for name in ("_post", "osascript", "screenshot", "open_path", "list_windows", "launch_app", "element_state"):
+    for name in ("_post", "osascript", "screenshot", "open_path", "list_windows", "launch_app", "element_state", "element_text"):
         monkeypatch.setattr(macos, name, refuse(f"macos.{name}"))
     monkeypatch.setattr(macos, "mouse_location", lambda: (500.0, 500.0))
     if REAL_ACCESSIBILITY:
@@ -135,6 +135,7 @@ def no_real_machine(monkeypatch):
         "ax_selected",
         "element_state",
         "element_frame",
+        "element_text",
         "owned_popup_bounds",
     ):
         monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))

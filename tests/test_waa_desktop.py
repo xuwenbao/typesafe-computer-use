@@ -302,6 +302,19 @@ def test_nothing_can_be_pressed_through_the_tree(tmp_path, monkeypatch):
     assert desktop.actions == []
 
 
+def test_element_text_uses_the_tree_value_and_the_script_reads_text_then_value():
+    from typesafe_computer_use.waa.desktop import read_text_code
+
+    desktop = over()
+    assert desktop.element_text({"name": "Editor", "role": "AXTextArea", "value": "hello"}) == "hello"
+    assert desktop.element_text({"name": "Editor"}) is None
+    assert desktop.element_text(object()) is None
+    assert desktop.actions == []
+    code = read_text_code("Editor", 50020)
+    assert "IUIAutomationTextPattern" in code
+    assert "CurrentValue" in code
+
+
 def test_an_observation_without_a_screenshot_says_so():
     desktop = WAADesktop({"screenshot": None}, lambda actions: {})
     with pytest.raises(RuntimeError, match="no screenshot"):

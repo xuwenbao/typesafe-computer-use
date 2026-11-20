@@ -280,12 +280,14 @@ Some stops have no way back: a third stall, a focus the classifier takes no acti
 the hand-offs spent, a composite control (a time picker, a calendar, a canvas) the classifier
 cannot score with confidence, and so does using up `--steps`. `CLICKER_DRIVER` defaults to on, so
 such a run is not over while the writer says the goal is not reached. A stronger model, `CLICKER_DRIVER_MODEL`
-(the answer model by default), takes over and names one action per reply; the next action is
-chosen from a new capture. It sees the whole story: the goal, every action taken with its "did
-not change" marks, every earlier stop and the focus given at it, why the classifier stopped,
-the text of the earlier screens, and the marked capture with its numbered items. It also sees
-`your_notes`, the facts it wrote on the previous step, and writes `notes` back: a count, a name,
-or the part of the goal already done. An empty `notes` keeps the previous ones.
+(the answer model by default), takes over through the OpenAI Agents SDK. It only runs when
+`CLICKER_WRITER_API` is `openai` (including an OpenAI-compatible `CLICKER_WRITER_BASE_URL`); an
+Anthropic writer stops at the classifier. The model holds a conversation: it may call `read_text`,
+`count`, and `calculate` any number of times on the current screen, then one screen tool. The
+screen tool is not performed inside that call. jev checks it and performs it, then takes a new
+capture. Only the last two screen pictures and item lists stay in the conversation; older screens
+become one line each. The tools' results are the memory, so the model does not keep a separate
+notes field.
 
 It picks from a whitelist, and code checks every move before anything reaches the machine:
 
@@ -333,8 +335,10 @@ not. A reply with no usable action is recorded and the takeover continues; the s
 reply in a row ends it. A missing `achieved` counts as false. The takeover ends on `done` or
 `give_up`, on a second loop, or after `CLICKER_DRIVER_STEPS` (20) actions, which do not come out
 of `--steps`; then the writer answers once more on the final screen. History lines start with
-`driver: `. One model call writes one `step-NNN-driver.json` with the call index and the action's
-result. `run.json` records the action count and the call count separately. An older file with
+`driver: `. One screen writes one `step-NNN-driver.json` with the call index, the action's
+result, and the `tools` called on that screen in order (name, arguments, and a truncated result).
+`read_text`, `count`, and `calculate` do not spend `CLICKER_DRIVER_STEPS`. `run.json` records
+the action count, the call count, and `driver_tool_calls`. An older file with
 no call index is read as one call and one action.
 
 ## Who did the work

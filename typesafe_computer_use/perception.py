@@ -169,7 +169,9 @@ def perceive(
     """Everything worth clicking on this screen: text blocks and icons, plus the app's own controls.
 
     Fills `screen.ax_refs` on the way, so an item that came from the accessibility tree can be
-    pressed through it later. The merge renumbers everything, hence the side table over the
+    pressed through it later. A text block inside a text area gets that control's ref too, so a
+    read can ask the document for its text; a click on the block still goes to the pixel.
+    The merge renumbers everything, hence the side table over the
     final indices rather than a handle on the item itself, which has to stay printable.
     `screen.covered` is a side table the same way: the items under a popup, and which popup.
 
@@ -190,6 +192,7 @@ def perceive(
     merged = merge_with_origins(found, controls, budget)
     screen.ax_refs.clear()
     screen.ax_refs.update({it.index: nodes[origin].ref for it, origin in merged if origin is not None and nodes[origin].ref})
+    _attach_document_text(screen, nodes, merged)
     screen.covered.clear()
     screen.covered.update(
         {it.index: nodes[origin].covered_by for it, origin in merged if origin is not None and nodes[origin].covered_by}
@@ -831,6 +834,35 @@ def to_ax_items(nodes: list[AxNode], scale: float) -> list[Item]:
         )
         for i, node in enumerate(nodes)
     ]
+
+
+def _attach_document_text(screen: Screen, nodes: list[AxNode], merged: list[tuple[Item, int | None]]) -> None:
+    """Point the text block inside a text area at that control, so a read asks the document.
+
+    The block stays an OCR item. A click on the words still goes to the pixel under them. A block
+    that is only a slice of the control, such as a status line, is left on the picture.
+    """
+    scale = screen.scale
+    for node in nodes:
+        if node.role != "AXTextArea" or not node.ref:
+            continue
+        box = Item(0, "", 1.0, node.x * scale, node.y * scale, (node.x + node.w) * scale, (node.y + node.h) * scale)
+        control_area = max(box.x2 - box.x1, 0.0) * max(box.y2 - box.y1, 0.0)
+        if control_area <= 0:
+            continue
+        body, body_area = None, 0.0
+        for item, origin in merged:
+            if origin is not None or item.source != "ocr" or box_overlap(box, item) < MIN_BOX_OVERLAP:
+                continue
+            area = (item.x2 - item.x1) * (item.y2 - item.y1)
+            if area > body_area:
+                body, body_area = item, area
+        if body is None:
+            continue
+        tall = (body.y2 - body.y1) >= 0.4 * (box.y2 - box.y1)
+        if body_area < 0.2 * control_area and not tall:
+            continue
+        screen.ax_refs.setdefault(body.index, node.ref)
 
 
 def ax_items(screen: Screen, budget: int) -> list[Item]:

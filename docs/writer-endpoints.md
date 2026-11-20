@@ -12,9 +12,9 @@ model or send it to another endpoint. `config.settings()` is the only way the pr
 | `CLICKER_WRITER_API` | no | what that endpoint speaks: `openai` (the default) or `anthropic` |
 | `CLICKER_WRITER_MODEL` | no | types text and proposes URLs; defaults to `gpt-6.1-terra` |
 | `CLICKER_ANSWER_MODEL` | no | reads the screen whenever the classifier stops; defaults to `gpt-6.1-sol` |
-| `CLICKER_DRIVER` | no | a stronger model takes over once the classifier stops short of the goal for good (see [the takeover](how-a-step-works.md#the-takeover)); defaults to `true`, and `false` leaves the stop where it is |
-| `CLICKER_DRIVER_STEPS` | no | the most actions one takeover executes, including refusals; defaults to `20`, and does not come out of `--steps` |
-| `CLICKER_DRIVER_MODEL` | no | the model that takes over; defaults to the answer model, and uses its reasoning effort |
+| `CLICKER_DRIVER` | no | a stronger model takes over once the classifier stops short of the goal for good (see [the takeover](how-a-step-works.md#the-takeover)); defaults to `true`, and `false` leaves the stop where it is. The takeover runs only when `CLICKER_WRITER_API` is `openai` |
+| `CLICKER_DRIVER_STEPS` | no | the most screen actions one takeover executes, including refusals; defaults to `20`, and does not come out of `--steps`. Reads and calculations on the same screen do not count |
+| `CLICKER_DRIVER_MODEL` | no | the model that takes over; defaults to the answer model, and uses its reasoning effort. It must accept OpenAI Chat Completions tool calls |
 | `CLICKER_WRITER_VISION` | no | `false` for an answer model that reads text only; defaults to `true` |
 | `CLICKER_WRITER_REASONING` | no | the reasoning effort the writer's calls ask an OpenAI-API model for, such as `none`; unset leaves it to the model |
 | `CLICKER_WRITER_TIMEOUT` | no | seconds one writer request may take before it is given up; defaults to `120`, and a request is retried once |

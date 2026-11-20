@@ -18,6 +18,7 @@ from typesafe_computer_use.actions import Context, add_item, click_item, press_o
 from typesafe_computer_use.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
 from typesafe_computer_use.decide import Decision, kind_criteria
 from typesafe_computer_use.driver import act, load_driver_record, take_over
+from typesafe_computer_use.driver_agent import TOOLS, screen_packet
 from typesafe_computer_use.models import Abort, AxNode, ElementState, Item, signature
 from typesafe_computer_use.perception import to_ax_items
 from typesafe_computer_use.platform_adapter import desktop
@@ -28,11 +29,9 @@ from typesafe_computer_use.waa.desktop import WAADesktop, _operate_element
 from typesafe_computer_use.waa.walk_vm import LiveElement, walk
 from typesafe_computer_use.writer import (
     DRIVE_ACTIONS,
-    DRIVE_PROPERTIES,
     DriveStep,
     WriterError,
     _drive_step,
-    compose_drive_step,
 )
 
 PACKAGE = Path(__file__).resolve().parent.parent / "typesafe_computer_use"
@@ -282,42 +281,22 @@ def test_a_reply_is_one_action_and_one_without_an_action_name_quotes_the_reply()
         _drive_step({"reason": "next", "action": "hover"})
 
 
-def test_the_takeover_schema_is_one_named_action(screen, monkeypatch):
-    monkeypatch.setenv("CLICKER_WRITER_VISION", "false")
-    seen = []
-
-    def create(**kwargs):
-        seen.append(kwargs["output_config"]["format"]["schema"])
-        payload = {"reason": "next", "action": "wait"}
-        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
-
-    move = compose_drive_step(
-        SimpleNamespace(messages=SimpleNamespace(create=create)), "set it", screen, [], [], "stuck", [], [], None, 3, None
-    )
-    assert move.action == "wait"
-    schema = seen[0]
-    assert "actions" not in schema["properties"]
-    assert schema["properties"]["action"]["enum"] == list(DRIVE_ACTIONS)
-    assert set(schema["required"]) == set(DRIVE_PROPERTIES) and "target" in schema["required"]
-    assert schema["additionalProperties"] is False
+def test_the_takeover_tools_name_one_action_each():
+    names = {tool.name for tool in TOOLS}
+    assert set(DRIVE_ACTIONS) - {"type", "key"} <= names
+    assert {"type_text", "press_key", "read_text", "count", "calculate", "done", "give_up"} <= names
+    click = next(tool for tool in TOOLS if tool.name == "click")
+    assert "reason" in click.params_json_schema["properties"]
+    assert "target" in click.params_json_schema["properties"]
+    assert "actions" not in click.params_json_schema["properties"]
 
 
-def test_the_model_sees_controls_and_the_classifier_does_not_gain_set_value(screen, monkeypatch):
-    monkeypatch.setenv("CLICKER_WRITER_VISION", "false")
-    seen = []
-
-    def create(**kwargs):
-        seen.append(json.loads(kwargs["messages"][0]["content"][0]["text"]))
-        payload = {"reason": "next", "action": "wait"}
-        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
-
+def test_the_model_sees_controls_and_the_classifier_does_not_gain_set_value(screen):
     item = Item(0, "Volume", 1.0, 0, 0, 20, 20, source="ax", controls=("range_value",), current="10")
-    compose_drive_step(
-        SimpleNamespace(messages=SimpleNamespace(create=create)), "set it", screen, [item], [], "stuck", [], [], None, 3, None
-    )
-    assert seen[0]["screen_items"][0]["controls"] == ["range_value"]
-    assert seen[0]["screen_items"][0]["value"] == "10"
-    assert "batch_size" not in seen[0] and "change_course" not in seen[0]
+    seen = screen_packet("set it", screen, [item], [], "stuck", [], [], None, 3)
+    assert seen["screen_items"][0]["controls"] == ["range_value"]
+    assert seen["screen_items"][0]["value"] == "10"
+    assert "batch_size" not in seen and "change_course" not in seen
     assert "set_value" not in kind_criteria("Google Chrome", None)
 
 
@@ -345,13 +324,13 @@ def _run_steps(monkeypatch, tmp_path, screen, items, moves, steps: int = 5):
     monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: False)
     clicks = []
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: clicks.append(args))
-    planned = [*moves, step("give_up")]
+    planned = [_script_of(move) for move in (*moves, step("give_up"))]
     looks = []
+    from scripted_driver import ScriptedModel
 
-    def compose(*args, **kwargs):
-        return planned.pop(0)
+    from typesafe_computer_use import driver_agent
 
-    monkeypatch.setattr("typesafe_computer_use.driver.compose_drive_step", compose)
+    monkeypatch.setattr(driver_agent, "model_for", lambda: ScriptedModel(planned))
     from typesafe_computer_use import runner
 
     def look(cfg, ctx, state, log):
@@ -396,52 +375,39 @@ def test_done_does_not_spend_the_budget(monkeypatch, tmp_path, screen):
     assert len(clicks) == 1
 
 
-def test_the_drive_packet_names_the_selected_files(screen, monkeypatch):
-    monkeypatch.setenv("CLICKER_WRITER_VISION", "false")
-    seen = []
-
-    def create(**kwargs):
-        seen.append(json.loads(kwargs["messages"][0]["content"][0]["text"]))
-        payload = {"reason": "next", "action": "wait"}
-        return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
-
+def test_the_drive_packet_names_the_selected_files(screen):
     rows = [
         _file_row(0, "Doc01.docx", selected=True),
         _file_row(1, "draft.txt"),
         Item(2, "文档", 1.0, 0, 40, 20, 60, role="tab", source="ax", controls=("selection_item",), selected=True),
     ]
-    compose_drive_step(
-        SimpleNamespace(messages=SimpleNamespace(create=create)),
-        "move the files",
-        screen,
-        rows,
-        [],
-        "stuck",
-        [],
-        [],
-        None,
-        3,
-        None,
-    )
-    assert seen[0]["selected_files"] == ["Doc01.docx"]
-    assert seen[0]["on_screen"]["file_rows"] == ["Doc01.docx", "draft.txt"]
-    assert "文档" in seen[0]["on_screen"]["names"]
-    assert "文档" not in seen[0]["on_screen"]["file_rows"]
+    seen = screen_packet("move the files", screen, rows, [], "stuck", [], [], None, 3)
+    assert seen["selected_files"] == ["Doc01.docx"]
+    assert seen["on_screen"]["file_rows"] == ["Doc01.docx", "draft.txt"]
+    assert "文档" in seen["on_screen"]["names"]
+    assert "文档" not in seen["on_screen"]["file_rows"]
+
+
+def _script_of(move: DriveStep) -> dict:
+    return {
+        "action": move.action,
+        "reason": move.reason,
+        "item": move.item,
+        "target": move.target,
+        "text": move.text,
+        "key": move.key,
+        "modifier": move.modifier,
+        "to": move.to,
+        "dx": move.dx,
+        "dy": move.dy,
+        "achieved": move.achieved,
+    }
 
 
 def _drive_script(replies: list[dict]):
-    pending = list(replies)
+    from scripted_driver import ScriptedModel
 
-    class Script:
-        def __init__(self):
-            self.requests: list[dict] = []
-            self.messages = SimpleNamespace(create=self._create)
-
-        def _create(self, **request):
-            self.requests.append(request)
-            return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(pending.pop(0)))])
-
-    return Script()
+    return ScriptedModel(list(replies))
 
 
 def _drive_action(action: str, **fields) -> dict:
@@ -473,10 +439,13 @@ def _ask_the_driver(monkeypatch, tmp_path, screen, items, script, steps: int):
         return (screen, items) if screen_moved(state, screen, items, log) else None
 
     monkeypatch.setattr(runner, "look", look)
+    from typesafe_computer_use import driver_agent
+
+    monkeypatch.setattr(driver_agent, "model_for", lambda: script)
     state = RunState(outcome="nothing helps")
     take_over(
         RunConfig(goal="move the docx files into Archive", out=tmp_path, driver_steps=steps),
-        SimpleNamespace(writer=script),
+        SimpleNamespace(writer=object()),
         state,
         lambda *args: None,
         0,
@@ -498,10 +467,12 @@ def test_a_driver_that_calls_a_listed_folder_empty_is_asked_again_without_the_ca
     assert state.outcome == "driver done" and state.driver_calls == 2
     assert pressed == []
     assert not any("command+x" in line for line in state.history)
-    assert len(script.requests) == 2
-    assert script.requests[0]["messages"][0]["content"][0]["type"] == "image"
-    assert [block["type"] for block in script.requests[1]["messages"][0]["content"]] == ["text"]
-    second = json.loads(script.requests[1]["messages"][0]["content"][0]["text"])
+    assert len(script.inputs) == 2
+    first = script.inputs[0][-1]["content"]
+    assert any(part["type"] == "input_image" for part in first)
+    second_parts = script.inputs[1][-1]["content"]
+    assert [part["type"] for part in second_parts] == ["input_text"]
+    second = json.loads(second_parts[0]["text"])
     assert second["on_screen"]["file_rows"] == ["Doc01.docx", "Doc02.docx"]
     assert second["listed_names_the_previous_reply_denied"] == ["Doc01.docx", "Doc02.docx"]
     record = load_driver_record(tmp_path / "step-000-driver.json")
@@ -514,7 +485,7 @@ def test_a_missing_name_that_is_not_listed_is_not_asked_of_the_driver_again(monk
 
     state, pressed = _ask_the_driver(monkeypatch, tmp_path, screen, [_file_row(0, "Doc01.docx")], script, 1)
 
-    assert len(script.requests) == 1
+    assert len(script.inputs) == 1
     assert pressed == [("escape", False)]
     assert state.driver_calls == 1
 

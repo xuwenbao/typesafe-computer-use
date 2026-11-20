@@ -22,6 +22,9 @@ from typesafe_computer_use.windows import (
     wheel_delta,
 )
 
+# Captured before the machine guard replaces it.
+_ELEMENT_TEXT = windows.element_text
+
 # ------------------------------------------------------------------ roles
 
 
@@ -34,6 +37,20 @@ def test_control_types_map_onto_the_roles_the_shared_code_knows():
     assert windows.focused_role("DocumentControl") == "AXTextArea"  # Notepad's editor, when its state is unreadable
     assert windows.focused_role("DocumentControl", 0) == "AXTextArea"
     assert windows.focused_role("DocumentControl", 0x40) == ""  # a read-only document, such as a web page
+
+
+def test_a_writable_document_is_a_text_area_for_the_walk(monkeypatch):
+    monkeypatch.setattr(windows, "_legacy_state", lambda element: 0)
+    monkeypatch.setattr(windows, "_ui_frame", lambda element: (1.0, 2.0, 300.0, 200.0))
+    attrs = windows._ui_attrs(type("El", (), {"Name": "文本编辑器", "ControlTypeName": "DocumentControl"})())
+    assert attrs.role == "AXTextArea" and attrs.label == "文本编辑器"
+
+
+def test_a_read_only_document_stays_out_of_the_walk(monkeypatch):
+    monkeypatch.setattr(windows, "_legacy_state", lambda element: 0x40)
+    monkeypatch.setattr(windows, "_ui_frame", lambda element: (0.0, 0.0, 10.0, 10.0))
+    attrs = windows._ui_attrs(type("El", (), {"Name": "Example", "ControlTypeName": "DocumentControl"})())
+    assert attrs.role == ""
 
 
 def test_an_unknown_control_type_has_no_role():
@@ -308,3 +325,34 @@ def test_a_click_that_landed_presses_and_releases(monkeypatch):
     monkeypatch.setattr(windows, "_send", sent.append)
     windows.click_at((640.4, 479.6))
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_LEFTDOWN, windows.MOUSEEVENTF_LEFTUP]
+
+
+def test_element_text_reads_the_document_then_the_value_then_nothing(monkeypatch):
+    monkeypatch.setattr(windows, "element_text", _ELEMENT_TEXT)
+
+    class Document:
+        class DocumentRange:
+            @staticmethod
+            def GetText(limit):
+                return ("the whole note",)
+
+    class Value:
+        Value = "just the value"
+
+    class Element:
+        def __init__(self, document=None, value=None):
+            self.document = document
+            self.value = value
+
+        def GetPattern(self, pattern_id):
+            if pattern_id == 1:
+                return self.document
+            if pattern_id == 2:
+                return self.value
+            return None
+
+    monkeypatch.setattr(windows, "_pattern_id", lambda name: 1 if name == "TextPattern" else 2)
+    assert windows.element_text(Element(Document(), Value())) == "the whole note"
+    assert windows.element_text(Element(value=Value())) == "just the value"
+    assert windows.element_text(Element()) is None
+    assert windows.element_text(None) is None

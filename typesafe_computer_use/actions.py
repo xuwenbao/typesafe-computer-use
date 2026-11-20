@@ -94,6 +94,18 @@ def _disabled(item: Item) -> str | None:
 _PATTERN_CLICKS = (("toggle", "toggled"), ("select", "selected"), ("expand_toggle", "expanded or collapsed"))
 
 
+def _action_ref(item: Item, screen: Screen):
+    """The element a click may act on.
+
+    An OCR block can carry a document only so a read can ask it for its text. That block has no
+    control operations of its own; pressing the document would miss the word. A file row is also
+    read off the screen and does list an operation, and that click still goes to the element.
+    """
+    if item.source == "ocr" and not item.controls:
+        return None
+    return screen.ax_refs.get(item.index)
+
+
 def _file_rows(items: list[Item] | None) -> list[Item]:
     """File-list rows. A tab or a radio can also report a selection, and neither is one of these."""
     if not items:
@@ -135,7 +147,7 @@ def click_item(item: Item, screen: Screen, items: list[Item] | None = None) -> s
 
 
 def _click(item: Item, screen: Screen) -> str:
-    ref = screen.ax_refs.get(item.index)
+    ref = _action_ref(item, screen)
     # A file row lists both. Invoke is the double-click, so a click must not take it.
     selectable = "selection_item" in item.controls
     if ref is not None and not selectable and desktop.ax_press(ref):
@@ -167,7 +179,7 @@ def add_item(item: Item, screen: Screen) -> str:
 
 
 def _add(item: Item, screen: Screen) -> str:
-    ref = screen.ax_refs.get(item.index)
+    ref = _action_ref(item, screen)
     if ref is not None and desktop.ax_operate(ref, "add_select"):
         desktop.ax_focus(ref)
         return f"clicked {item.text!r} with add"

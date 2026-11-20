@@ -130,11 +130,12 @@ class RunState:
     driver_actions: int = 0  # 接管实际执行的动作数，含被拒绝的
     driver_calls: int = 0  # 接管问模型的次数
     driver_done: str = ""  # 接管判定完成时给出的理由；空表示它没有这么判定
+    driver_talk: list = field(default_factory=list)  # 接管和模型的对话；屏幕消息和工具结果都在这里
+    driver_tool_calls: dict = field(default_factory=dict)  # 这次接管里每个工具被调用的次数
     reroutes: int = 0  # 这次接管里止损已经逼它换过几次路；再触发一次就停
     banned: set[str] = field(default_factory=set)  # 换路时打转的动作签名；在打转的那一屏上不许再做
     banned_on: Signature | None = None  # 打转的那一屏；只在这一屏上拒绝 banned 里的动作
     change_course: dict | None = None  # 下一次问接管模型时带上的换路说明；问过一次就清掉
-    driver_notes: str = ""  # 接管上次写下的事实；空的回复表示沿用，下一步原样带回
 
 
 def run(cfg: RunConfig, ctx_factory) -> RunState:
@@ -167,7 +168,7 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
                 log(f"\nstopped after {cfg.steps} steps")
                 state.outcome = "step limit"
                 hand_off(cfg, ctx, state, cfg.steps, log)
-            if wants_driver(cfg, ctx, state) and driver.take_over(cfg, ctx, state, log, step + 1):
+            if wants_driver(cfg, ctx, state, log) and driver.take_over(cfg, ctx, state, log, step + 1):
                 answer_last(cfg, ctx, state, log)
     except (KeyboardInterrupt, Abort) as e:
         state.outcome = f"aborted ({e or 'Ctrl-C'})"
@@ -190,6 +191,7 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "image_refusals": state.image_refusals,
             "driver_actions": state.driver_actions,
             "driver_calls": state.driver_calls,
+            "driver_tool_calls": state.driver_tool_calls,
             "history": state.history,
             "config": {k: str(v) for k, v in asdict(cfg).items()},
         }
@@ -200,24 +202,34 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
 
 
 def driver_ready(cfg: RunConfig, ctx: Context) -> bool:
-    """接管开着、是真操作、而且有写手可问。演练和重放不接管。"""
-    return cfg.driver_steps > 0 and cfg.act and not cfg.replay and ctx.writer is not None
+    """接管开着、是真操作、写手可用，而且写手走的是 OpenAI 接口。演练和重放不接管。"""
+    return cfg.driver_steps > 0 and cfg.act and not cfg.replay and ctx.writer is not None and settings().writer_api == "openai"
 
 
-def wants_driver(cfg: RunConfig, ctx: Context, state: RunState) -> bool:
+def wants_driver(cfg: RunConfig, ctx: Context, state: RunState, log=None) -> bool:
     """要不要交给接管模型。以下条件全部满足才接管：
 
     - 接管功能开着（driver_steps > 0），而且是真操作（不是演练或重放）；
-    - 写手可用，并且判断目标还没完成，去向也不是结束；
+    - 写手可用，走 OpenAI 接口，并且判断目标还没完成，去向也不是结束；
     - 分类器停在 STOPPED 里的任一结局，包括把 --steps 走满。接管用自己的步数，不占用 --steps。
+
+    其它条件都满足、只差接口是 Anthropic 时，记一行日志，说明驱动需要 OpenAI 接口。
     """
-    return (
-        driver_ready(cfg, ctx)
+    would = (
+        cfg.driver_steps > 0
+        and cfg.act
+        and not cfg.replay
+        and ctx.writer is not None
         and state.answer is not None
         and not state.answer.achieved
         and state.route != "end"
         and state.outcome in STOPPED
     )
+    if would and settings().writer_api != "openai":
+        if log is not None:
+            log("the driver needs CLICKER_WRITER_API=openai; stopping at the classifier")
+        return False
+    return would and driver_ready(cfg, ctx)
 
 
 def answer_last(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> None:

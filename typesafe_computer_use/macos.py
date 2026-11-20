@@ -442,6 +442,12 @@ def ax_value(ref) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def element_text(ref) -> str | None:
+    """The text an element holds, which on macOS is its AXValue."""
+    check_abort()
+    return ax_value(ref)
+
+
 def ax_operate(ref, operation: str, value: str | None = None) -> bool:
     """macOS has no UI Automation patterns. A click falls back to the pointer."""
     return False

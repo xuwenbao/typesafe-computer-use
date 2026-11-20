@@ -2249,19 +2249,7 @@ def test_l66_a_driver_that_loops_between_two_screens_stalls(monkeypatch, tmp_pat
 
 
 def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
-    inner = FakeWriter(reviews=[{"achieved": False}, {"achieved": False}])
-
-    class Broken:
-        def __init__(self):
-            self.left = 2
-            self.messages = type("M", (), {"create": self._create})()
-
-        def _create(self, **request):
-            asked = set(request["output_config"]["format"]["schema"]["properties"])
-            if "modifier" in asked and self.left:
-                self.left -= 1
-                return type("R", (), {"content": [type("B", (), {"type": "text", "text": "not json"})()]})()
-            return inner._create(**request)
+    writer = FakeWriter(reviews=[{"achieved": False}, {"achieved": False}], drives=[{"action": "text"}, {"action": "text"}])
 
     state = drive(
         world := archive_world(),
@@ -2269,7 +2257,7 @@ def test_l67_two_unusable_replies_end_the_takeover(monkeypatch, tmp_path):
         goal=ARCHIVE_GOAL,
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        writer=Broken(),
+        writer=writer,
         driver_steps=5,
     )
 

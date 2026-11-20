@@ -27,7 +27,7 @@ from typesafe_computer_use.actions import Context
 from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from typesafe_computer_use.platform_adapter import desktop
 from typesafe_computer_use.runner import RunConfig, RunState, run
-from typesafe_computer_use.writer import DRIVE_PROPERTIES, WriterError
+from typesafe_computer_use.writer import WriterError
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -546,41 +546,6 @@ class FakeWriter:
                 "missing": [],
                 **scripted,
             }
-        elif asked == set(DRIVE_PROPERTIES):
-            self.drive_packets.append(packet)
-            scripted = self.drives.pop(0) if self.drives else {"action": "give_up"}
-            scripted = scripted(packet) if callable(scripted) else dict(scripted)
-            numbers = {it["text"]: str(it["i"]) for it in packet["screen_items"]}
-            by_number = {str(it["i"]): it["text"] for it in packet["screen_items"]}
-            raw_item = str(scripted.get("item") or "")
-            if raw_item and not str(scripted.get("target") or "").strip():
-                if raw_item in numbers:
-                    scripted["target"] = raw_item
-                elif raw_item in by_number:
-                    scripted["target"] = by_number[raw_item]
-            if raw_item and scripted.get("action") in (
-                "click",
-                "double_click",
-                "right_click",
-                "scroll_down",
-                "scroll_up",
-            ):
-                scripted["item"] = numbers.get(raw_item, raw_item)
-            reply = {
-                "reason": "scripted",
-                "action": "give_up",
-                "item": "",
-                "target": "",
-                "text": "",
-                "key": "",
-                "modifier": "",
-                "to": "",
-                "dx": "",
-                "dy": "",
-                "achieved": False,
-                "notes": "",
-                **scripted,
-            }
         elif asked == {"action", "executable", "id", "reason"}:
             if self.host_fails:
                 raise WriterError("the host could not be asked")
@@ -617,6 +582,15 @@ def drive(
     if handoffs is not None:
         cfg.handoffs = handoffs
     client = writer or FakeWriter()
+    from scripted_driver import ScriptedModel
+
+    from typesafe_computer_use import driver_agent
+
+    scripts = getattr(client, "drives", None)
+    packets = getattr(client, "drive_packets", None)
+    model = ScriptedModel(scripts if scripts is not None else [], packets if packets is not None else [])
+    model.on_request = getattr(client, "on_drive_request", None)
+    monkeypatch.setattr(driver_agent, "model_for", lambda: model)
     left = list(replies or [])
 
     def ask(question: str) -> str:

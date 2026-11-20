@@ -54,6 +54,14 @@ def test_an_ocr_only_item_is_clicked_without_asking_accessibility(screen, calls,
     assert calls == [("click", (100.0, 60.0))]
 
 
+def test_an_ocr_block_with_a_document_behind_it_is_still_clicked_on_the_pixel(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: pytest.fail("the document is not the click"))
+    item = Item(3, "In many fields", 0.9, 100.0, 100.0, 300.0, 140.0)
+    live = replace(screen, ax_refs={3: object()})
+    assert click_item(item, live) == "clicked 'In many fields'"
+    assert calls == [("click", (100.0, 60.0))]
+
+
 def test_a_click_that_could_not_be_aimed_is_refused_and_the_run_goes_on(screen, monkeypatch):
     def miss(point):
         raise Missed("the cursor went to (0, 0), not (100, 60)")
