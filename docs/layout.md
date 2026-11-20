@@ -35,7 +35,8 @@ typesafe_computer_use/
   timing.py       phase stopwatches, the timing line, run summary
   cli.py          `clicker` and `clicker-inspect`
   helper/         jev as MCP tools for other agents, Windows only (see [helper](helper.md))
-    cli.py        `jev`: mcp and status; each subcommand imports only what it runs
+    cli.py        `jev`: mcp, status, and setup; each subcommand imports only what it runs
+    setup.py      `jev setup`: print or write one host's MCP config, and copy the jev skill
     front.py      `jev mcp`: the MCP server; the first tool call loads the desktop, in this process
     service.py    the tools: run_goal, looks with a state_id, and the primitives
     desk_lock.py  this user's desktop mutex, so two `jev mcp` processes take turns  (platform)

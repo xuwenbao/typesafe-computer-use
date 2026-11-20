@@ -12,6 +12,9 @@
 #ifndef ModelsDir
   #define ModelsDir "..\..\build\helper\models"
 #endif
+#ifndef SkillsDir
+  #define SkillsDir "..\..\skills\jev"
+#endif
 
 #define AppExe "jev.exe"
 
@@ -42,6 +45,7 @@ UninstallDisplayName=jev
 [Files]
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ModelsDir}\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SkillsDir}\*"; DestDir: "{app}\skills\jev"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Code]
 function McpConfig(): String;

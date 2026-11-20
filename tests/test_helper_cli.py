@@ -2,7 +2,16 @@
 
 import pytest
 
-from typesafe_computer_use.helper import cli, front
+from typesafe_computer_use.helper import cli, front, setup
+
+
+def test_setup_is_a_command(monkeypatch):
+    called = []
+    monkeypatch.setattr(setup, "main", lambda argv: called.append(argv) or 0)
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["setup", "--host", "cursor"])
+    assert caught.value.code == 0
+    assert called == [["--host", "cursor"]]
 
 
 def test_mcp_is_the_front(monkeypatch):
@@ -13,7 +22,7 @@ def test_mcp_is_the_front(monkeypatch):
 
 
 @pytest.mark.parametrize("argv", [["helper"], ["stop"], ["install", "build.zip", "--sha256", "ab"], []])
-def test_only_mcp_and_status_are_commands(argv):
+def test_removed_commands_are_refused(argv):
     with pytest.raises(SystemExit) as caught:
         cli.main(argv)
     assert caught.value.code != 0

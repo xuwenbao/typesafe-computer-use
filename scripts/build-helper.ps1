@@ -72,10 +72,11 @@ try {
     # longest file then exceeds the 260-character limit before Windows collapses the "..".
     $distArg = WinPath $folder
     $modelsArg = WinPath $models
-    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/O$outDir"
+    $skillsArg = WinPath "$root\skills\jev"
+    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/O$outDir"
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
-    $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "jev-setup-$version*")
+    $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "jev-setup-$version*" | Where-Object { $_.Extension -ne ".sha256" })
     if ($pieces.Count -eq 0) { throw "ISCC produced no jev-setup-$version file" }
     if ($Thumbprint) {
         foreach ($piece in ($pieces | Where-Object { $_.Extension -eq ".exe" })) {
@@ -83,9 +84,13 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "signtool failed on $($piece.Name)" }
         }
     }
+    $sums = @()
     foreach ($piece in $pieces) {
         $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $piece.FullName).Hash.ToLower()
+        $sums += "$sha  $($piece.Name)"
         Write-Output "$($piece.FullName)"
         Write-Output "sha256: $sha"
     }
+    # One line per volume, so an agent can check the files beside the installer.
+    Set-Content -LiteralPath (Join-Path $outDir "jev-setup-$version.sha256") -Value ($sums -join "`n") -Encoding ascii -NoNewline
 } finally { Pop-Location }

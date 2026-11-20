@@ -35,6 +35,10 @@ from . import home
 from .approvals import Denied, Gate
 from .guard import GuardedDesktop
 
+_STEPS = config.Settings.model_fields["steps"].default
+_HANDOFFS = config.Settings.model_fields["handoffs"].default
+_MIN_CONFIDENCE = config.Settings.model_fields["min_confidence"].default
+
 RUN_FIELDS = ("outcome", "answer", "goal_achieved", "steps_taken", "history", "handoffs", "questions", "calls", "seconds")
 
 
@@ -148,9 +152,9 @@ class Service:
         self,
         caller: Caller,
         goal: str,
-        steps: int = config.DEFAULT_STEPS,
-        handoffs: int = config.DEFAULT_HANDOFFS,
-        min_confidence: float = config.DEFAULT_MIN_CONFIDENCE,
+        steps: int = _STEPS,
+        handoffs: int = _HANDOFFS,
+        min_confidence: float = _MIN_CONFIDENCE,
     ) -> dict:
         reason = unsupported()
         if reason:
@@ -158,9 +162,9 @@ class Service:
         if not os.environ.get("TYPESAFE_API_KEY"):
             raise ToolFailure("not_configured", f"TYPESAFE_API_KEY is not set; put it in {home.env_file()}")
         try:
+            cfg_settings = config.settings()
             writer = make_writer()
-            config.writer_vision()
-            driver_steps = config.driver_steps()
+            driver_steps = cfg_settings.driver_steps
         except ValueError as e:
             raise ToolFailure("not_configured", str(e)) from None
         out = _fresh_folder(home.runs_dir())
@@ -177,8 +181,8 @@ class Service:
         def ctx_factory(typesafe, history):
             return Context(
                 goal=goal,
-                browser=config.browser(),
-                email=config.email(),
+                browser=cfg_settings.browser,
+                email=cfg_settings.email,
                 typesafe=typesafe,
                 writer=writer,
                 history=history,
@@ -199,8 +203,9 @@ class Service:
     # ------------------------------------------------------------ looking
 
     def _see(self, goal: str) -> dict:
-        screen = capture(browser=config.browser())
-        items = perceive(screen, config.MAX_OPTIONS, goal)
+        tuned = config.settings()
+        screen = capture(browser=tuned.browser)
+        items = perceive(screen, tuned.max_options, goal)
         look = Look(secrets.token_hex(4), screen, items)
         self._look = look
         shot = home.state_dir() / "look.png"

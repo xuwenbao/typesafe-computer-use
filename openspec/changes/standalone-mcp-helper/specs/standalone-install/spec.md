@@ -14,7 +14,7 @@ jev 如何在 Windows 上与调用它的宿主智能体分开安装：一个 `je
 - **THEN** 这次调用读到这个密钥，本次运行的 run 文件夹建在用户目录的 `runs\` 下
 
 ### Requirement: 一个进程里执行
-屏幕读取与输入 SHALL 由 `jev mcp` 在自己的进程里执行。MCP 握手 MUST NOT 导入平台适配器、感知或模型；第一次工具调用 SHALL 才加载它们，并创建这次进程的服务。`jev` SHALL 只有 `mcp` 与 `status` 两个子命令，MUST NOT 提供 `helper`、`stop` 或 `install`，也 MUST NOT 注册为 Windows 服务。
+屏幕读取与输入 SHALL 由 `jev mcp` 在自己的进程里执行。MCP 握手 MUST NOT 导入平台适配器、感知或模型；第一次工具调用 SHALL 才加载它们，并创建这次进程的服务。`jev` SHALL 有 `mcp`、`status` 与 `setup` 三个子命令。`setup` 只编排宿主配置，MUST NOT 导入平台适配器或模型。`jev` MUST NOT 提供 `helper`、`stop` 或 `install`，也 MUST NOT 注册为 Windows 服务。
 
 #### Scenario: 握手不加载模型
 - **WHEN** 智能体启动 `jev mcp` 并完成列举工具，尚未调用任何一个工具

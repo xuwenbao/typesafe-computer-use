@@ -26,9 +26,11 @@ Windows only for now. Like the rest of the Windows adapter, it is untested on a 
 ## Install
 
 `scripts\build-helper.ps1` builds `jev-setup-<version>.exe` (Inno Setup, per user, no admin) and
-prints its SHA-256. The installer includes `jev.exe` and the perception's model files. Run it
-once. It installs to `%LOCALAPPDATA%\Programs\jev\`: `jev.exe`, `_internal\`, `models\`, and
-`version.txt`. The last page shows the MCP config and writes the same text to `mcp-config.json`
+writes `jev-setup-<version>.sha256` beside it. The installer includes `jev.exe` and the perception's
+model files. An agent can install it from those local files: [paste this prompt](agent-install.md).
+Run the installer once. It installs to `%LOCALAPPDATA%\Programs\jev\`: `jev.exe`, `_internal\`,
+`models\`, `skills\jev\`, and `version.txt`. The last page shows the MCP config and writes the same
+text to `mcp-config.json`
 in that folder. Paste it into the agent. On Windows, write the absolute path: an agent packaged
 as MSIX does not inherit `PATH`.
 

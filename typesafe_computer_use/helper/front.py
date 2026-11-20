@@ -27,6 +27,10 @@ from .. import config
 from . import home
 from .approvals import Gate, host_apps
 
+_STEPS = config.Settings.model_fields["steps"].default
+_HANDOFFS = config.Settings.model_fields["handoffs"].default
+_MIN_CONFIDENCE = config.Settings.model_fields["min_confidence"].default
+
 INSTRUCTIONS = """\
 jev drives this Windows computer's real screen, mouse, and keyboard. It is a tool: it does what
 you call and returns the result. It never asks you or the user a question, and it never asks to
@@ -123,9 +127,9 @@ def build_server(local: Local | None = None) -> FastMCP:
     @server.tool(output_schema=None)
     async def run_goal(
         goal: str,
-        steps: int = config.DEFAULT_STEPS,
-        handoffs: int = config.DEFAULT_HANDOFFS,
-        min_confidence: float = config.DEFAULT_MIN_CONFIDENCE,
+        steps: int = _STEPS,
+        handoffs: int = _HANDOFFS,
+        min_confidence: float = _MIN_CONFIDENCE,
     ) -> list[TextContent | ImageContent]:
         """Hand jev a goal in plain English; it drives this computer to the end with its own step loop.
 
