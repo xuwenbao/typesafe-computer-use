@@ -8,7 +8,10 @@ controls. The models are in `parse/`; this module decides what to read and what 
 
 from __future__ import annotations
 
+import contextlib
 import math
+import os
+import sys
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -59,6 +62,18 @@ REOCR_FRACTION = 0.6  # above this share of changed tiles, reading the whole reg
 MAX_REOCR_RECTS = 4  # past this, the per-call overhead outweighs the pixels another rectangle saves
 BLANK_INSET_PX = 4  # how far in from a control's edge its inside is read, past a neighbour's border
 BLANK_RANGE = 12  # 8-bit gray spread at or below which a patch is one flat color
+SETTLE_POLL = 0.2  # seconds between two looks while the screen settles after an action
+SETTLE_QUIET = 0.5  # seconds a changed screen must hold still before the next step reads it
+
+_warming: list[threading.Thread] = []
+_warm_lock = threading.Lock()
+_warm_done = [0]
+# perf_counter reading at which this process is taken to have started. The session launcher
+# moves it back to its own first line; otherwise it is when this module was imported.
+_origin = time.perf_counter()
+_marks: dict[str, float] = {}  # seconds from _origin, in the order they were taken
+_stages: dict[str, float] = {}  # seconds a warm-up stage took
+_session_cpu: dict[str, dict] = {}
 
 
 def capture(
@@ -143,6 +158,44 @@ def _bounded(timing: dict[str, float] | None, name: str, seconds: float, fn, *ar
     if name == "screenshot":
         raise CaptureTimeout(name)
     return absent
+
+
+def settle(before: Image.Image | None, seconds: float) -> None:
+    """Wait after an action until the screen has changed from `before` and held still, `seconds` at most.
+
+    A screen that never changes waits the whole `seconds`: an action whose effect comes late, such
+    as a dialog that takes a second to open, still gets all of it. A changed screen counts as settled
+    once looks `SETTLE_POLL` apart have agreed for `SETTLE_QUIET`. A desktop whose screenshot waits
+    out the action itself, as the benchmark VM's does, only sleeps, and so does one whose screenshot
+    fails or comes back another size.
+    """
+    if before is None or seconds <= SETTLE_QUIET or getattr(desktop, "screenshot_waits", False):
+        desktop.sleep_watching(seconds)
+        return
+    end = time.monotonic() + seconds
+    tiles = tiles_in((0.0, 0.0, float(before.width), float(before.height)))
+    first = thumbnail(before)
+    previous: Image.Image | None = None
+    still_since = time.monotonic()
+    while True:
+        try:
+            shot = desktop.screenshot()
+        except Exception:
+            shot = None
+        if shot is None or shot.size != before.size:
+            desktop.sleep_watching(seconds if previous is None else max(0.0, end - time.monotonic()))
+            return
+        now = time.monotonic()
+        thumb = thumbnail(shot)
+        if previous is None or changed_tiles(thumb, previous, tiles):
+            still_since = now
+        elif now - still_since >= SETTLE_QUIET and changed_tiles(thumb, first, tiles):
+            return
+        previous = thumb
+        left = end - now
+        if left <= 0:
+            return
+        desktop.sleep_watching(min(SETTLE_POLL, left))
 
 
 def goal_echoes(goal: str) -> set[str]:
@@ -395,6 +448,143 @@ def pipeline_record() -> dict:
     return {"pipeline": PIPELINE_VERSION, "weights": parse_weights.record()}
 
 
+def adopt_start(origin: float, earlier: dict[str, float]) -> None:
+    """Take `origin` as this process's start, and keep marks already taken against it.
+
+    The session launcher calls this. Its clock is this process's clock: the launcher is the process.
+    """
+    global _origin
+    _origin = origin
+    _marks.update(earlier)
+
+
+def mark(name: str) -> None:
+    """Seconds since the process start, under `name`. A later call with the same name replaces it."""
+    _marks[name] = round(time.perf_counter() - _origin, 3)
+
+
+def startup_report() -> dict:
+    """What the run records: the startup marks, the warm-up stages, and the session CPU snapshots."""
+    return {"marks": dict(_marks), "stages": dict(_stages), "session_cpu": {k: dict(v) for k, v in _session_cpu.items()}}
+
+
+def _stage(name: str, fn) -> None:
+    """Run `fn` and record how long it took. An error is swallowed: the step reports it when it retries."""
+    started = time.perf_counter()
+    with contextlib.suppress(Exception):
+        fn()
+    _stages[name] = round(time.perf_counter() - started, 3)
+
+
+def snapshot_session_cpu(name: str) -> None:
+    """CPU time already used by this process and by the other processes in its session.
+
+    Only Windows has sessions. A process that cannot be read is skipped. The two snapshots, one
+    when the child starts and one when the run starts, show whether other programs in the new
+    session were busy while jev loaded.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        import psutil
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.ProcessIdToSessionId.argtypes = (wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
+        own = wintypes.DWORD()
+        kernel.ProcessIdToSessionId(kernel.GetCurrentProcessId(), ctypes.byref(own))
+        me, others, count = 0.0, 0.0, 0
+        for proc in psutil.process_iter(["pid"]):
+            try:
+                sid = wintypes.DWORD()
+                if not kernel.ProcessIdToSessionId(proc.info["pid"], ctypes.byref(sid)) or sid.value != own.value:
+                    continue
+                cpu = proc.cpu_times()
+                used = cpu.user + cpu.system
+            except (psutil.Error, OSError):
+                continue
+            if proc.pid == os.getpid():
+                me += used
+            else:
+                others += used
+                count += 1
+        _session_cpu[name] = {"self_cpu_s": round(me, 3), "others_cpu_s": round(others, 3), "others": count}
+    except Exception:
+        return
+
+
+def start_warm_up() -> None:
+    """Load the three models and run each once, while the run starts.
+
+    OCR and the torch models load on different threads: onnxruntime and PyTorch both spend their
+    load in native code, so the two do not queue on the GIL. The torch models stay on one thread
+    and run one after another, under the one inference lock. Calling this again does nothing.
+    """
+    if not _warming:
+        _warm_done[0] = 0
+        mark("warm_started")
+        _warming.extend(
+            (
+                threading.Thread(target=_warm_ocr, name="jev-warm-ocr", daemon=True),
+                threading.Thread(target=_warm_torch, name="jev-warm-torch", daemon=True),
+            )
+        )
+        for thread in _warming:
+            thread.start()
+
+
+def _warm_ocr() -> None:
+    """OCR on its own. When it is done, and the torch thread is too, the warm-up is finished."""
+    page = Image.new("RGB", (parse_detect.IMAGE_SIZE, parse_detect.IMAGE_SIZE), "white")
+    _stage("ocr", lambda: parse_ocr.recognize_text(page))
+    _finish_warm()
+
+
+def _warm_torch() -> None:
+    """PyTorch, then the detector, then the captioner. One thread, so the two models never load at once."""
+    page = Image.new("RGB", (parse_detect.IMAGE_SIZE, parse_detect.IMAGE_SIZE), "white")
+    icon = page.resize((parse_caption.CROP_PX, parse_caption.CROP_PX))
+    _stage("import_torch", _import_torch)
+    _stage("import_transformers", _import_transformers)
+    _stage("detect", lambda: parse_detect.detect(page))
+    _stage("caption", lambda: parse_caption.generate_captions([icon]))
+    _finish_warm()
+
+
+def _finish_warm() -> None:
+    """Mark the warm-up finished once both threads have returned."""
+    with _warm_lock:
+        _warm_done[0] += 1
+        if _warm_done[0] == 2:
+            mark("warm_finished")
+
+
+def _warm_up() -> None:
+    """Both halves, on this thread. A model that fails here fails again in the step, which reports it."""
+    _warm_done[0] = 0
+    _warm_ocr()
+    _warm_torch()
+
+
+def _import_torch() -> None:
+    import torch  # noqa: F401
+
+
+def _import_transformers() -> None:
+    import transformers  # noqa: F401
+
+
+def _await_warm_up(timing: dict[str, float] | None) -> None:
+    """Let a warm-up still loading finish first: two threads loading one model would load it twice."""
+    pending = [thread for thread in _warming if thread.is_alive()]
+    if pending:
+        with phase(timing, "warm_up"):
+            for thread in pending:
+                thread.join()
+
+
 def read_screen(screen: Screen, cache: ParseCache | None = None, timing: dict[str, float] | None = None) -> Reading:
     """The capture's OCR lines and icon boxes over its region.
 
@@ -402,6 +592,7 @@ def read_screen(screen: Screen, cache: ParseCache | None = None, timing: dict[st
     again whenever any tile changed, and reused only when none did: the detector finds other boxes
     on a crop than on the whole, so stitching crops together would trade accuracy for little time.
     """
+    _await_warm_up(timing)
     with phase(timing, "ocr"):
         lines, read_pct, rects = ocr_lines(screen, cache)
     if cache is not None and cache.unchanged and cache.icons is not None:

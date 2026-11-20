@@ -11,7 +11,7 @@ from pathlib import Path
 from . import config
 from .actions import Context
 from .parse.runtime import unsupported
-from .perception import capture, perceive
+from .perception import capture, mark, perceive, start_warm_up
 from .platform_adapter import desktop
 from .report import annotate, ax_count, icon_count, render_payload
 from .runner import RunConfig, run
@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> None:
         goal, session_ask, session_done = child_startup()
         extra = list(sys.argv[1:] if argv is None else argv)
         argv = child_argv(goal, extra)
+    mark("main")
     config.load_dotenv(DOTENV)
     try:
         options = config.settings()
@@ -97,6 +98,7 @@ def main(argv: list[str] | None = None) -> None:
 
     _require_perception()
     _prepare()
+    start_warm_up()
     if args.act and not desktop.accessibility_trusted():
         sys.exit("this terminal lacks Accessibility permission; grant it in System Settings > Privacy & Security")
     try:
