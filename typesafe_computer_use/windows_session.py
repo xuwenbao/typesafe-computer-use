@@ -1414,10 +1414,47 @@ def _record_desktop_attachment(user32, used_input_desktop: bool) -> None:
             handle.write(line)
 
 
+NORMAL_PRIORITY_CLASS = 0x20
+PROCESS_POWER_THROTTLING = 4  # the PROCESS_INFORMATION_CLASS value of PROCESS_POWER_THROTTLING_STATE
+POWER_THROTTLING_EXECUTION_SPEED = 0x1
+TASK_PRIORITY_NORMAL = 4  # task scheduler priority: 4 to 6 are normal, and 4 keeps normal I/O priority
+
+
+def run_at_full_speed() -> None:
+    """Run at normal priority, and opt out of the power throttling (EcoQoS) Windows gives background work.
+
+    Throttled, the models run two to three times slower: measured on one capture, detection 0.57 s
+    against 1.12 s, and OCR 1.36 s against 4.74 s. jev in a child session starts from a scheduled
+    task and has no window. A failed call leaves the process as it was.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class Throttling(ctypes.Structure):
+        _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG), ("StateMask", wintypes.ULONG)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.SetProcessInformation.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    process = kernel.GetCurrentProcess()
+    kernel.SetPriorityClass(process, NORMAL_PRIORITY_CLASS)
+    # The bit in ControlMask takes execution speed out of Windows' hands; clear in StateMask, it stays unthrottled.
+    state = Throttling(1, POWER_THROTTLING_EXECUTION_SPEED, 0)
+    kernel.SetProcessInformation(process, PROCESS_POWER_THROTTLING, ctypes.byref(state), ctypes.sizeof(state))
+
+
 _LAUNCHER = """\
 import os
 import sys
+import time
 import traceback
+
+born = time.perf_counter()
+stamps = {"launcher": 0.0}
+
+def stamp(name):
+    stamps[name] = round(time.perf_counter() - born, 3)
 
 pid_path = sys.argv[3]
 try:
@@ -1425,14 +1462,25 @@ try:
     os.environ["JEV_SESSION_PIPE"] = sys.argv[1]
     os.chdir(sys.argv[2])
     sys.path.insert(0, sys.argv[2])
-    from typesafe_computer_use.windows_session import attach_input_desktop
+    from typesafe_computer_use.windows_session import attach_input_desktop, run_at_full_speed
 
     attach_input_desktop()
+    stamp("desktop")
+    run_at_full_speed()
+    stamp("full_speed")
+    # Importing perception before the bind fails SetThreadDesktop: the import opens the desktop
+    # the thread is already on, and a thread that has opened one cannot switch.
+    from typesafe_computer_use.perception import adopt_start, mark, snapshot_session_cpu, start_warm_up
+
+    adopt_start(born, stamps)
+    snapshot_session_cpu("at_start")
+    start_warm_up()
     with open(pid_path, "w", encoding="utf-8") as handle:
         handle.write(str(os.getpid()))
     sys.argv = [sys.argv[0], "--act"]
     from typesafe_computer_use.cli import main
 
+    mark("cli_imported")
     main()
 except BaseException:
     with open(pid_path + ".log", "w", encoding="utf-8") as handle:
@@ -1475,6 +1523,7 @@ def launch_in_session(pipe_name: str) -> int:
     definition.Principal.UserId = os.environ.get("USERNAME", "")
     definition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN, so no password is stored
     definition.Principal.RunLevel = 1
+    definition.Settings.Priority = TASK_PRIORITY_NORMAL  # a new task runs at 7, below normal
     action = definition.Actions.Create(0)
     # python.exe opens a console on the child desktop and that window takes the focus. pythonw does not.
     windowless = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
