@@ -16,7 +16,6 @@ from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
-from . import driver
 from .actions import Context, forget_clipboard, perform
 from .bound import CaptureTimeout
 from .calls import Calls, MeteredClassifier, MeteredWriter
@@ -25,7 +24,7 @@ from .decide import Decision, decide, offscreen_records
 from .host import prepare
 from .models import Abort, Guidance, Item, Screen, Signature, same_screen, signature
 from .parse.marks import marks
-from .perception import ParseCache, capture, ocr_region, perceive, pipeline_record
+from .perception import ParseCache, capture, ocr_region, perceive, pipeline_record, settle, snapshot_session_cpu, startup_report
 from .platform_adapter import desktop
 from .report import Log, annotate, ax_count, render_payload, top
 from .timing import format_timing, phase, summarize
@@ -154,6 +153,7 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
 
     state = RunState()
     started = time.time()
+    snapshot_session_cpu("at_run")
     try:
         with TypeSafeClient() as typesafe:
             ctx = metered(ctx_factory(typesafe, state.history), state.calls)
@@ -168,12 +168,13 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
                 log(f"\nstopped after {cfg.steps} steps")
                 state.outcome = "step limit"
                 hand_off(cfg, ctx, state, cfg.steps, log)
-            if wants_driver(cfg, ctx, state, log) and driver.take_over(cfg, ctx, state, log, step + 1):
+            if wants_driver(cfg, ctx, state, log) and _driver().take_over(cfg, ctx, state, log, step + 1):
                 answer_last(cfg, ctx, state, log)
     except (KeyboardInterrupt, Abort) as e:
         state.outcome = f"aborted ({e or 'Ctrl-C'})"
         log(f"\n{state.outcome} after {len(state.history)} actions")
     finally:
+        started_up = startup_report()
         summary = {
             "goal": cfg.goal,
             "act": cfg.act,
@@ -187,6 +188,9 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "handoffs": [asdict(h) for h in state.handoffs],
             "questions": [asdict(e) for e in state.guidance.exchanges],
             "timing": summarize(state.timings),
+            "startup": started_up["marks"],
+            "warm_up": started_up["stages"],
+            "session_cpu": started_up["session_cpu"],
             "perception": pipeline_record(),
             "image_refusals": state.image_refusals,
             "driver_actions": state.driver_actions,
@@ -197,8 +201,24 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
         }
         (cfg.out / "run.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         log(f"{state.calls.line()}  handoffs {len(state.handoffs)}  questions {len(state.guidance.exchanges)}")
+        log(f"startup: {_startup_line(started_up)}")
         log(f"run folder: {cfg.out}")
     return state
+
+
+def _driver():
+    """The takeover. Imported here, not at startup: it pulls in the agents SDK, which the run
+    pays for only when the classifier has stopped and a takeover is actually going to happen."""
+    from . import driver
+
+    return driver
+
+
+def _startup_line(report: dict) -> str:
+    """One log line: the startup marks, then how long each warm-up stage took."""
+    marks = "  ".join(f"{name} {seconds:.2f}s" for name, seconds in report["marks"].items())
+    stages = "  ".join(f"{name} {seconds:.2f}s" for name, seconds in report["stages"].items())
+    return f"{marks}  warm-up: {stages}".strip()
 
 
 def driver_ready(cfg: RunConfig, ctx: Context) -> bool:
@@ -238,7 +258,7 @@ def answer_last(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> None
     接管已经判定完成、写手却说没完成时，把接管的理由和当前画面再给写手看一次，以这次为准。
     """
     try:
-        answer = review(cfg, ctx, state, driver.STOPPED[state.outcome], can_ask=False)
+        answer = review(cfg, ctx, state, _driver().STOPPED[state.outcome], can_ask=False)
     except WriterError as e:
         log(f"\nno answer: the writer failed ({e})")
         return
@@ -252,7 +272,7 @@ def answer_last(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> None
                 screen,
                 items,
                 state.history,
-                driver.STOPPED[state.outcome],
+                _driver().STOPPED[state.outcome],
                 earlier_screens(state, signature(screen, items)),
                 state.guidance,
                 stops_so_far(state),
@@ -269,9 +289,10 @@ def look(cfg: RunConfig, ctx: Context, state: RunState, log: Log) -> tuple[Scree
     """接管模型每一步用的截屏和识别。
 
     和分类器的每一步一样，也会检查“连续几次动作屏幕都没变”。卡住了就返回 None（见 screen_moved）。
+    识别沿用这次运行的缓存，只重读变过的区域，图标说明也不重算。
     """
     screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser)
-    items = perceive(screen, settings().max_options, cfg.goal)
+    items = perceive(screen, settings().max_options, cfg.goal, cache=None if cfg.replay else state.parse_cache)
     state.view = (screen, items)
     return (screen, items) if screen_moved(state, screen, items, log) else None
 
@@ -403,7 +424,7 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
         desktop.check_abort()
         screen = capture(cfg.image, cfg.app, cfg.url, ctx.browser)
         screen.image.save(cfg.out / "answer-raw.png")
-        state.view = (screen, perceive(screen, settings().max_options, cfg.goal))
+        state.view = (screen, perceive(screen, settings().max_options, cfg.goal, cache=None if cfg.replay else state.parse_cache))
     screen, items = state.view
     earlier = earlier_screens(state, signature(screen, items))
     earlier_stops = stops_so_far(state)
@@ -533,8 +554,8 @@ def run_step(cfg: RunConfig, ctx: Context, state: RunState, step: int, log: Log)
     )
     log(format_timing(timing))
 
-    if state.view is None:  # 这一步执行了动作，等 delay 秒让页面稳定后再截下一张
-        desktop.sleep_watching(cfg.delay)
+    if state.view is None:  # 这一步执行了动作，等屏幕变化后静止下来再截下一张，最多等 delay 秒
+        settle(screen.image, cfg.delay)
     return keep_going
 
 

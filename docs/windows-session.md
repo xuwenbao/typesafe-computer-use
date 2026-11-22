@@ -42,6 +42,9 @@ The command exits, and does not run jev on the console desktop, when any of thes
 jev started for the session (`JEV_SESSION=1`) exits before any screenshot or input if it finds
 itself still in the console session. On startup it binds to that session's interactive desktop
 (`WinSta0\Default`). Without that binding, reading the cursor and sending input are refused.
+It then sets itself to normal priority and opts out of Windows' power throttling, and starts
+loading the perception models on a thread of its own. The scheduled task that starts it would
+otherwise run below normal, and a throttled process reads the screen two to three times slower.
 
 ## What the two sides say
 
