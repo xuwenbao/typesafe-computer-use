@@ -17,7 +17,7 @@ jev 会操作这台电脑的屏幕。密钥只在用户自己的终端里输入�
 2. 确认同一个目录里有 jev-setup-<版本>-1.bin。对照 jev-setup-<版本>.sha256（每一行是「哈希值  文件名」）。没有这个文件时，向我要哈希值。对不上就停。
 3. 告诉我安装会关掉正在运行的 jev.exe。我同意后运行："<exe>" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 4. 运行 %LOCALAPPDATA%\Programs\jev\jev.exe status，确认有版本号，并且 models: yes。
-5. 问我要用哪个宿主（cursor、claude-code、claude-desktop、codex）、用户级还是项目级、要不要安装 jev 技能。先运行不带 --write 的 jev setup，把将要改的内容给我看。我同意后才加 --write。
+5. 问我要用哪个宿主（cursor、claude-code、claude-desktop、codex、workbuddy）、用户级还是项目级、要不要安装 jev 技能。先运行不带 --write 的 jev setup，把将要改的内容给我看。我同意后才加 --write。模型密钥请我在自己的终端里配置，不要在对话里向我要。
 6. 请我在自己的终端运行 jev setup --key。不要在对话里向我要密钥。
 7. 请我重启或重新加载宿主。我同意后，调用一次 frontmost_app。
 8. 报告装了什么、写到了哪里、还有哪些要我自己做。

@@ -20,7 +20,7 @@ jev 会操作这台电脑的屏幕、鼠标和键盘。每一步先说明要做�
 ```
 
 4. 运行 `%LOCALAPPDATA%\Programs\jev\jev.exe status`。要看到版本号，以及 `models: yes`。
-5. 问用户选哪个宿主（cursor、claude-code、claude-desktop、codex），配置写在用户级还是项目级，要不要安装 `jev` 技能。不确定时先运行不带 `--write` 的命令，把将要改的内容给用户看：
+5. 问用户选哪个宿主（cursor、claude-code、claude-desktop、codex、workbuddy），配置写在用户级还是项目级，要不要安装 `jev` 技能。不确定时先运行不带 `--write` 的命令，把将要改的内容给用户看：
 
 ```
 jev setup --host <宿主> --scope user|project --project <目录> --skill

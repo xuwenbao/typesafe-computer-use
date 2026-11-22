@@ -7,18 +7,30 @@ only from a terminal, into the user's `.env`, and is never printed back.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import unicodedata
 from getpass import getpass
 from pathlib import Path
 
 from . import home
 
-HOSTS = ("cursor", "claude-code", "claude-desktop", "codex")
+HOSTS = ("cursor", "claude-code", "claude-desktop", "codex", "workbuddy")
+LABELS = {
+    "cursor": "Cursor",
+    "claude-code": "Claude Code",
+    "claude-desktop": "Claude Desktop",
+    "codex": "Codex",
+    "workbuddy": "WorkBuddy",
+}
 ENTRY_KEY = "TYPESAFE_API_KEY"
+MODEL_KEY = "OPENAI_API_KEY"
+STEPS = ("选择助手", "选择生效范围", "安装使用说明", "确认写入", "保存密钥")
 
 
 class SetupError(Exception):
@@ -26,12 +38,23 @@ class SetupError(Exception):
 
 
 def program_exe() -> Path:
-    """This program. A frozen build is `jev.exe`; a checkout is the interpreter running it."""
-    return Path(sys.executable).resolve()
+    """What an agent starts. A frozen build is `jev.exe`; a checkout is the `jev` script in its environment,
+    since the interpreter alone would run `python mcp`."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve()
+    windows = sys.platform == "win32"
+    script = Path(sys.prefix) / ("Scripts" if windows else "bin") / ("jev.exe" if windows else "jev")
+    if not script.is_file():
+        raise SetupError(f"找不到 jev 命令：{script}。请从安装好的 jev.exe 运行 jev setup。")
+    return script
 
 
 def skill_source(exe: Path) -> Path:
-    return exe.parent / "skills" / "jev"
+    beside = exe.parent / "skills" / "jev"
+    if beside.is_dir() or getattr(sys, "frozen", False):
+        return beside
+    checkout = Path(__file__).resolve().parents[2] / "skills" / "jev"
+    return checkout if checkout.is_dir() else beside
 
 
 def _roots() -> tuple[Path, Path]:
@@ -51,9 +74,10 @@ def mcp_entry(exe: Path) -> dict:
 
 def _config_path(host: str, scope: str, project: Path, home: Path, appdata: Path) -> Path | None:
     """Where this host keeps MCP config. None means this command will not write that file."""
-    if host == "cursor":
+    if host in ("cursor", "workbuddy"):
         base = home if scope == "user" else project
-        return base / ".cursor" / "mcp.json"
+        folder = ".cursor" if host == "cursor" else ".workbuddy"
+        return base / folder / "mcp.json"
     if host == "claude-desktop":
         # Claude Desktop has one user config. A project scope is not a file this command knows.
         if scope != "user":
@@ -68,8 +92,9 @@ def _skill_dir(host: str, scope: str, project: Path, home: Path) -> Path | None:
     """Where this host reads a skill directory. None means the copy is described and not done."""
     if host == "claude-desktop":
         return None
-    if host == "cursor":
-        base = home / ".cursor" if scope == "user" else project / ".cursor"
+    if host in ("cursor", "workbuddy"):
+        folder = ".cursor" if host == "cursor" else ".workbuddy"
+        base = home / folder if scope == "user" else project / folder
     elif host == "claude-code":
         base = home / ".claude" if scope == "user" else project / ".claude"
     elif host == "codex" and scope == "user":
@@ -206,59 +231,328 @@ def _run(command: list[str], cwd: str | None) -> int:
     return completed.returncode
 
 
-def _write_key(value: str) -> None:
+def _env_value(name: str) -> str | None:
+    path = home.env_file()
+    if not path.is_file():
+        return None
+    prefixes = (f"{name}=", f"export {name}=")
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        for prefix in prefixes:
+            if stripped.startswith(prefix):
+                return stripped[len(prefix) :]
+    return None
+
+
+def _write_env(name: str, value: str) -> None:
     path = home.env_file()
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    kept = [line for line in lines if not line.startswith(f"{ENTRY_KEY}=") and not line.startswith(f"export {ENTRY_KEY}=")]
-    kept.append(f"{ENTRY_KEY}={value}")
+    prefixes = (f"{name}=", f"export {name}=")
+    kept = [line for line in lines if not line.strip().startswith(prefixes)]
+    kept.append(f"{name}={value}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(kept) + "\n", encoding="utf-8")
-    print(f"wrote {path}")
+
+
+def _ask_secret(name: str, label: str, prompt) -> str:
+    """Ask for one key without echoing it. Returns saved, kept, or skipped; the value is never printed."""
+    if _env_value(name):
+        print(f"已保存过 {name}。直接回车保留，粘贴新值替换。")
+        had = True
+    else:
+        print(f"粘贴你的 {label}（保存到 .env，输入时不显示），直接回车跳过。")
+        had = False
+    value = prompt(f"{name}: ").strip()
+    if value:
+        _write_env(name, value)
+        print("已保存。")
+        return "saved"
+    print("已保留之前的值。" if had else "已跳过。")
+    return "kept" if had else "skipped"
+
+
+TYPESAFE_NOTE = "TYPESAFE_API_KEY：jev 每一步决定点哪里，用的是 TypeSafe 的分类器。没有它，run_goal 不能运行。"
 
 
 def read_key(is_tty, prompt=getpass) -> int:
     if not is_tty():
-        raise SetupError("run jev setup --key in your own terminal")
-    value = prompt(f"{ENTRY_KEY}: ").strip()
-    if not value:
-        raise SetupError("empty key")
-    _write_key(value)
+        raise SetupError("请在你自己的终端里运行 jev setup --key，密钥不要经过智能体的对话。")
+    print(TYPESAFE_NOTE)
+    print(f"它会保存到 {home.env_file()}，文件里的其他设置保持不变。")
+    _ask_secret(ENTRY_KEY, "TypeSafe API key", prompt)
     return 0
 
 
-def _detected(home: Path, appdata: Path, project: Path) -> str:
-    lines = ["detected:"]
-    for host in HOSTS:
-        if host == "claude-code":
-            lines.append("  claude-code: claude mcp add")
-            continue
-        path = _config_path(host, "user", project, home, appdata)
-        if path is None:
-            lines.append(f"  {host}: not written")
-            continue
-        lines.append(f"  {host}: {path} ({'found' if path.exists() else 'absent'})")
-    return "\n".join(lines)
+def _finder(which):
+    return which if which is not None else shutil.which
 
 
-def _ask_setup(ask, exe: Path, home: Path, appdata: Path, runner, which) -> int:
-    print(_detected(home, appdata, Path.cwd()))
-    print("Hosts: " + ", ".join(HOSTS))
-    host = ask("host [cursor]: ").strip() or "cursor"
-    if host not in HOSTS:
-        raise SetupError(f"unknown host {host!r}")
-    scope = ask("scope [user]: ").strip() or "user"
-    if scope not in ("user", "project"):
-        raise SetupError(f"unknown scope {scope!r}")
-    project = Path.cwd()
-    if scope == "project":
-        answered = ask(f"project directory [{project}]: ").strip()
-        if answered:
-            project = Path(answered)
-    skill = ask("install the jev skill? [y/N]: ").strip().lower().startswith("y")
-    apply(host, scope, project, exe, False, True, skill, home, appdata, runner, which)
-    if ask("write these changes? [y/N]: ").strip().lower() != "y":
-        return 0
-    apply(host, scope, project, exe, True, True, skill, home, appdata, runner, which)
+def _heading(number: int) -> None:
+    print(f"\n第 {number}/{len(STEPS)} 步  {STEPS[number - 1]}")
+
+
+def _codex_has_jev(path: Path) -> bool:
+    return path.is_file() and "[mcp_servers.jev]" in path.read_text(encoding="utf-8")
+
+
+def _detected(host: str, home_dir: Path, appdata: Path, project: Path, which) -> bool:
+    if host == "claude-code":
+        return bool(_finder(which)("claude"))
+    path = _config_path(host, "user", project, home_dir, appdata)
+    return path is not None and path.is_file()
+
+
+def _host_hint(host: str, home_dir: Path, appdata: Path, project: Path, which) -> str:
+    if host == "claude-code":
+        if _finder(which)("claude"):
+            return "找到了 claude 命令：会替你运行一条命令，把 jev 加进去"
+        return "没有找到 claude 命令：只会显示一条命令，让你自己运行"
+    path = _config_path(host, "user", project, home_dir, appdata)
+    if host == "codex" and path is not None and _codex_has_jev(path):
+        return "已经接好了：不会再改"
+    if path is not None and path.is_file():
+        return "已经在用：会在原配置里加上 jev，其他内容不动"
+    return "还没有它的配置：会新建一份"
+
+
+def _width(text: str) -> int:
+    """Columns a terminal gives the text: Chinese characters take two."""
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
+
+
+def _choose(ask, question: str, options: list[tuple[str, str]], default: int = 1) -> int:
+    """Number the options, and ask until one is picked. Returns its index, from 0."""
+    print(question)
+    width = max(_width(label) for label, _ in options)
+    for number, (label, hint) in enumerate(options, 1):
+        print(f"  {number}. {label}{' ' * (width - _width(label))}  {hint}")
+    while True:
+        answer = ask(f"请输入编号 [{default}]: ").strip()
+        if not answer:
+            return default - 1
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return int(answer) - 1
+        folded = answer.lower()
+        for index, (label, _) in enumerate(options):
+            if folded == label.lower():
+                return index
+        print(f"请输入 1 到 {len(options)} 之间的编号。")
+
+
+def _yes(ask, question: str, default: bool) -> bool:
+    answer = ask(f"{question} {'[Y/n]' if default else '[y/N]'}: ").strip().lower()
+    if not answer:
+        return default
+    return answer.startswith("y")
+
+
+def _choose_host(ask, home_dir: Path, appdata: Path, project: Path, which) -> str:
+    _heading(1)
+    hosts = sorted(HOSTS, key=lambda host: not _detected(host, home_dir, appdata, project, which))
+    options = [(LABELS[host], _host_hint(host, home_dir, appdata, project, which)) for host in hosts]
+    return hosts[_choose(ask, "你想在哪个编程助手里使用 jev?", options)]
+
+
+def _choose_scope(ask, host: str, project: Path) -> tuple[str, Path]:
+    _heading(2)
+    if host == "claude-desktop":
+        print("Claude Desktop 只支持所有项目，已为你选好。")
+        return "user", project
+    options = [
+        ("所有项目（推荐）", "以后在这个助手里打开任何项目都能用"),
+        ("只有一个项目", "只在你指定的文件夹里能用"),
+    ]
+    while True:
+        if _choose(ask, "jev 要对哪些项目可用?", options) == 0:
+            return "user", project
+        if host == "codex":
+            print("这个向导不写 Codex 的项目配置。请选「所有项目」。")
+            continue
+        while True:
+            answered = ask(f"项目文件夹 [{project}]: ").strip()
+            folder = Path(answered) if answered else project
+            if folder.is_dir():
+                return "project", folder
+            print(f"找不到这个文件夹：{folder}。请重新输入。")
+
+
+def _choose_skill(ask, host: str, scope: str, project: Path, exe: Path, home_dir: Path) -> bool:
+    _heading(3)
+    print("使用说明（技能）是一份给助手看的说明书，告诉它什么时候该用 jev、遇到 busy 或 forbidden 怎么办。")
+    dest = _skill_dir(host, scope, project, home_dir)
+    if dest is None:
+        print(f"{LABELS[host]} 不支持安装使用说明，已跳过。")
+        return False
+    source = skill_source(exe)
+    if not source.is_dir():
+        print("这个安装里没有找到使用说明，已跳过。")
+        return False
+    if not _yes(ask, f"要把这份说明装进 {LABELS[host]} 吗?", True):
+        return False
+    if dest.exists() and not _same_tree(source, dest):
+        return _yes(ask, f"{LABELS[host]} 里已经有一份不同的 jev 使用说明。用新版替换?", False)
+    return True
+
+
+def _start_command(exe: Path) -> str:
+    return f'"{exe}" mcp'
+
+
+def _plan_lines(host: str, scope: str, project: Path, exe: Path, home_dir: Path, appdata: Path, skill: bool, which):
+    lines = []
+    if host == "claude-code":
+        command = f'claude mcp add --scope {scope} jev -- "{exe}" mcp'
+        if _finder(which)("claude"):
+            lines.append(f"运行这条命令，把 jev 加进 Claude Code：{command}")
+        else:
+            lines.append(f"本机没有 claude 命令，所以只显示这条命令，请你自己运行：{command}")
+    else:
+        path = _config_path(host, scope, project, home_dir, appdata)
+        if _already_set(host, path, exe):
+            lines.append(f"{path} 里已经接好 jev，不会改动")
+        else:
+            if path.is_file():
+                lines.append(f"修改 {path}（原文件会先备份为 {path.name}.bak）")
+            else:
+                lines.append(f"新建 {path}")
+            if host == "codex":
+                lines.append("在文件末尾加上一段 [mcp_servers.jev]，其他内容保持原样")
+            else:
+                lines.append("只加一项名为 jev 的条目，其他内容保持原样")
+                existing = _json_jev(path)
+                if existing is not None and existing != mcp_entry(exe):
+                    lines.append("原来那项 jev 指向别的程序，会被替换")
+    lines.append(f"助手启动 jev 的命令：{_start_command(exe)}")
+    if skill:
+        lines.append(f"使用说明复制到 {_skill_dir(host, scope, project, home_dir)}")
+    return lines
+
+
+def _already_set(host: str, path: Path, exe: Path) -> bool:
+    if host == "codex":
+        return _codex_has_jev(path)
+    return _json_jev(path) == mcp_entry(exe)
+
+
+def _json_jev(path: Path):
+    if not path.is_file():
+        return None
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    servers = current.get("mcpServers") if isinstance(current, dict) else None
+    return servers.get("jev") if isinstance(servers, dict) else None
+
+
+def _reload_note(host: str) -> str:
+    if host == "cursor":
+        return "重启 Cursor，或在它的 MCP 设置里刷新"
+    if host == "claude-code":
+        return "新开一个 Claude Code 会话"
+    if host == "claude-desktop":
+        return "退出并重新打开 Claude Desktop"
+    if host == "codex":
+        return "新开一个 Codex 会话"
+    return "重启 WorkBuddy，或新开一个会话。首次接入时它可能要求你信任这个服务"
+
+
+def _write_host(host, scope, project, exe, home_dir, appdata, skill, runner, which, done, todo) -> bool:
+    """Write the chosen host, then say in Chinese what happened. Returns whether the host can now start jev."""
+    path = None if host == "claude-code" else _config_path(host, scope, project, home_dir, appdata)
+    existed = path is not None and path.is_file()
+    untouched = path is not None and _already_set(host, path, exe)
+    with contextlib.redirect_stdout(io.StringIO()):
+        apply(host, scope, project, exe, True, True, skill, home_dir, appdata, runner, which)
+    if host == "claude-code":
+        command = f'claude mcp add --scope {scope} jev -- "{exe}" mcp'
+        if _finder(which)("claude"):
+            done.append(("已运行", command))
+        else:
+            todo.append(f"在终端运行这条命令，把 jev 加进 Claude Code：{command}")
+            return False
+    elif untouched:
+        done.append(("未改动", f"{path}（已经接好 jev）"))
+    elif existed:
+        done.append(("已写入", f"{path}（原文件备份为 {path.name}.bak）"))
+    else:
+        done.append(("已新建", str(path)))
+    if skill:
+        done.append(("已安装", f"使用说明 → {_skill_dir(host, scope, project, home_dir)}"))
+    return True
+
+
+def _save_keys(prompt, done, todo) -> None:
+    _heading(5)
+    print("jev 要用两把密钥：")
+    print(
+        "  OPENAI_API_KEY：jev 遇到需要「想一想」的步骤时调用 OpenAI 的模型，"
+        "例如输入文字、决定打开哪个网址、最后回答你的问题、接手卡住的任务。没有它，这些都会被跳过。"
+    )
+    print(f"  {TYPESAFE_NOTE}")
+    print(f"两把都保存到 {home.env_file()}，文件里的其他设置保持不变。")
+    print("要用 Anthropic 或其他模型服务，需要另外设置 CLICKER_WRITER_API 和对应密钥，这个向导不收集它们。")
+    saved = []
+    for name, label, later in (
+        (MODEL_KEY, "OpenAI API key", "之后重新运行 jev setup 补上"),
+        (ENTRY_KEY, "TypeSafe API key", "之后在终端运行 jev setup --key"),
+    ):
+        print()
+        outcome = _ask_secret(name, label, prompt)
+        if outcome == "saved":
+            saved.append(name)
+        elif outcome == "kept":
+            done.append(("已保留", f"{name}（之前保存过）"))
+        else:
+            todo.append(f"还没有保存 {name}：{later}")
+    if saved:
+        done.append(("已保存", f"{'、'.join(saved)} → {home.env_file()}"))
+
+
+def _ask_setup(ask, exe: Path, home_dir: Path, appdata: Path, runner, which, prompt) -> int:
+    lines = [
+        "欢迎使用 jev 安装向导",
+        "",
+        "jev 能让你的编程助手（例如 Cursor）操作这台 Windows 电脑：点击、输入、切换窗口。",
+        "这个向导只做准备工作：告诉助手怎么启动 jev，并保存 jev 要用的密钥。",
+        "它不会操作屏幕，也不会启动 jev。",
+        "",
+        " → ".join(STEPS),
+        "直接回车 = 选方括号里的默认项。按 Ctrl+C 随时退出，确认写入之前不会写任何文件。",
+    ]
+    if sys.platform != "win32":
+        lines += ["", "提示：你现在不在 Windows 上。可以照常写配置，但 jev 只能在 Windows 上操作屏幕。"]
+    print("\n".join(lines))
+    done: list[tuple[str, str]] = []
+    todo: list[str] = []
+    try:
+        host = _choose_host(ask, home_dir, appdata, Path.cwd(), which)
+        scope, project = _choose_scope(ask, host, Path.cwd())
+        skill = _choose_skill(ask, host, scope, project, exe, home_dir)
+        _heading(4)
+        print("下面这些改动还没有写到磁盘：")
+        for line in _plan_lines(host, scope, project, exe, home_dir, appdata, skill, which):
+            print(f"  - {line}")
+        if _yes(ask, "确认写入?", False):
+            if _write_host(host, scope, project, exe, home_dir, appdata, skill, runner, which, done, todo):
+                todo.insert(0, _reload_note(host))
+            print("已写入。")
+        else:
+            print("没有写入任何文件。")
+            todo.append("想接上助手时，重新运行 jev setup")
+        _save_keys(prompt, done, todo)
+    except (KeyboardInterrupt, EOFError):
+        print("\n已退出。之后的步骤没有执行。")
+        return 130
+    print("\n完成")
+    for tag, text in done:
+        print(f"  {tag}  {text}")
+    if not done:
+        print("  这次没有改动任何文件")
+    print("\n接下来")
+    todo.append("对助手说一句：用 jev 在记事本里写一行字")
+    for number, line in enumerate(todo, 1):
+        print(f"  {number}. {line}")
     return 0
 
 
@@ -293,8 +587,8 @@ def main(
         if args.host is None:
             tty = sys.stdin.isatty if is_tty is None else is_tty
             if not tty():
-                raise SetupError("pass --host, or run jev setup in your own terminal")
-            return _ask_setup(ask, chosen, home or folder, appdata or roaming, runner, which)
+                raise SetupError("请在你自己的终端里运行 jev setup，或加上 --host。")
+            return _ask_setup(ask, chosen, home or folder, appdata or roaming, runner, which, prompt)
         project = args.project or Path.cwd()
         apply(
             args.host,

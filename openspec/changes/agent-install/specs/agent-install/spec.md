@@ -7,7 +7,7 @@
 ## ADDED Requirements
 
 ### Requirement: 默认只展示改动
-`jev setup --host <宿主>` SHALL 打印将要写入的 MCP 改动并以退出码 0 结束，且 MUST NOT 创建或修改任何文件。`--write` SHALL 才写入。宿主 SHALL 是 `cursor`、`claude-code`、`claude-desktop` 或 `codex`。命令 SHALL 是所给 `jev.exe` 的绝对路径，参数 SHALL 是 `mcp`。不带 `--host` 且标准输入不是终端时 SHALL 拒绝，不进入问答。
+`jev setup --host <宿主>` SHALL 打印将要写入的 MCP 改动并以退出码 0 结束，且 MUST NOT 创建或修改任何文件。`--write` SHALL 才写入。宿主 SHALL 是 `cursor`、`claude-code`、`claude-desktop`、`codex` 或 `workbuddy`。命令 SHALL 是所给 `jev.exe` 的绝对路径，参数 SHALL 是 `mcp`。不带 `--host` 且标准输入不是终端时 SHALL 拒绝，不进入问答。
 
 #### Scenario: 预览不落盘
 - **WHEN** 运行 `jev setup --host cursor` 且不带 `--write`
