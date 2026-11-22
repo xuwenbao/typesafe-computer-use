@@ -176,12 +176,35 @@ def load_model():
 
     config = Florence2Config.from_pretrained(florence)
     config.tie_word_embeddings = config.text_config.tie_word_embeddings = False
-    model = Florence2ForConditionalGeneration(config)
-    model.load_state_dict(native_state(checkpoint, config.text_config.vocab_size), strict=True)
+    # Building on the meta device skips allocating and filling the random weights that the
+    # checkpoint replaces immediately. Assigning the state dict swaps those meta tensors for
+    # the checkpoint's. A buffer the checkpoint does not carry is still materialized as zeros:
+    # the class's own init leaves the same buffers zero or unused, which the caption check covers.
+    with torch.device("meta"):
+        model = Florence2ForConditionalGeneration(config)
+    model.load_state_dict(native_state(checkpoint, config.text_config.vocab_size), strict=False, assign=True)
+    _fill_meta(model)
     processor = AutoProcessor.from_pretrained(florence)
     processor.num_image_tokens = IMAGE_TOKENS
     padding = list(range(trained, config.text_config.vocab_size))
     return model.to(device, dtype).eval(), processor, device, dtype, padding
+
+
+def _fill_meta(model) -> None:
+    """Replace a tensor the checkpoint did not carry, still on the meta device, with zeros.
+
+    `model.to` cannot move a meta tensor. The checkpoint carries every trained weight; what remains
+    is a buffer the class created empty.
+    """
+    import torch
+
+    for module in model.modules():
+        for name, param in list(module.named_parameters(recurse=False)):
+            if param.is_meta:
+                module.register_parameter(name, torch.nn.Parameter(torch.zeros(param.shape), requires_grad=False))
+        for name, buf in list(module.named_buffers(recurse=False)):
+            if buf.is_meta:
+                module.register_buffer(name, torch.zeros(buf.shape))
 
 
 def generate_captions(icons: list[Image.Image]) -> list[str]:

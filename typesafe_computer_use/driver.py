@@ -27,7 +27,7 @@ from .calls import DRIVER
 from .config import settings
 from .models import AxNode, Item, Missed, Screen, signature
 from .parse.marks import marks
-from .perception import ocr_region
+from .perception import ocr_region, settle
 from .platform_adapter import desktop
 from .writer import DriveStep, denied_listed_names, looks_credential
 
@@ -291,7 +291,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                     if _loop(state, f"the same action was taken {MAX_SAME_ACTION} times in a row", sig, log):
                         return True
                     same_streak, same_sig = 0, None
-            desktop.sleep_watching(cfg.delay)
+            settle(screen.image, cfg.delay)
 
         # 目标：步数用完时收尾。完成：保留一开始写下的 driver step limit，并返回 True。
         log(f"  the driver used all {budget} of its actions")
