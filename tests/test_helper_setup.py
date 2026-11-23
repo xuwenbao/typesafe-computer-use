@@ -37,13 +37,13 @@ def _wizard(tmp_path, monkeypatch, answers, secrets=(), **kwargs):
 
 
 def test_a_terminal_writes_only_after_yes(tmp_path, capsys, monkeypatch):
-    assert _wizard(tmp_path, monkeypatch, ["Cursor", "", "n", "n"]) == 0
+    assert _wizard(tmp_path, monkeypatch, ["Cursor", "", "n", "n", ""]) == 0
     out = capsys.readouterr().out
     assert "第 1/5 步" in out
     assert "没有写入任何文件" in out
     assert "python" not in out
     assert not (tmp_path / "home" / ".cursor" / "mcp.json").exists()
-    assert _wizard(tmp_path, monkeypatch, ["Cursor", "", "", "y"]) == 0
+    assert _wizard(tmp_path, monkeypatch, ["Cursor", "", "", "y", ""]) == 0
     saved = json.loads((tmp_path / "home" / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
     assert saved["mcpServers"]["jev"]["args"] == ["mcp"]
     assert (tmp_path / "home" / ".cursor" / "skills" / "jev" / "SKILL.md").is_file()
@@ -56,14 +56,14 @@ def test_a_host_already_configured_is_listed_first_and_is_the_default(tmp_path, 
     path = tmp_path / "home" / ".workbuddy" / "mcp.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}), encoding="utf-8")
-    assert _wizard(tmp_path, monkeypatch, ["", "", "n", "y"]) == 0
+    assert _wizard(tmp_path, monkeypatch, ["", "", "n", "y", ""]) == 0
     assert "  1. WorkBuddy" in capsys.readouterr().out
     assert json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["other"] == {"command": "x"}
     assert "jev" in json.loads(path.read_text(encoding="utf-8"))["mcpServers"]
 
 
 def test_claude_desktop_skips_the_scope_and_the_skill(tmp_path, capsys, monkeypatch):
-    assert _wizard(tmp_path, monkeypatch, ["Claude Desktop", "y"]) == 0
+    assert _wizard(tmp_path, monkeypatch, ["Claude Desktop", "y", ""]) == 0
     out = capsys.readouterr().out
     assert "只支持所有项目" in out
     assert "不支持安装使用说明" in out
@@ -75,11 +75,62 @@ def test_the_wizard_saves_a_model_key_and_skips_a_blank_one(tmp_path, monkeypatc
     env = tmp_path / "jev" / ".env"
     env.parent.mkdir()
     env.write_text("OTHER=1\nOPENAI_API_KEY=old\n", encoding="utf-8")
-    assert _wizard(tmp_path, monkeypatch, ["WorkBuddy", "", "n", "n"], ["", "ts-new"]) == 0
+    assert _wizard(tmp_path, monkeypatch, ["WorkBuddy", "", "n", "n", ""], ["", "ts-new"]) == 0
     text = env.read_text(encoding="utf-8")
     assert "OTHER=1" in text
     assert "OPENAI_API_KEY=old" in text
     assert "TYPESAFE_API_KEY=ts-new" in text
+
+
+def test_a_compatible_service_writes_its_address_models_and_key(tmp_path, capsys, monkeypatch):
+    answers = ["WorkBuddy", "", "n", "n", "2", "https://api.deepseek.com", "deepseek-chat", ""]
+    assert _wizard(tmp_path, monkeypatch, answers, ["sk-writer", "ts-key"]) == 0
+    text = (tmp_path / "jev" / ".env").read_text(encoding="utf-8")
+    for line in (
+        "CLICKER_WRITER_API=openai",
+        "CLICKER_WRITER_BASE_URL=https://api.deepseek.com",
+        "CLICKER_WRITER_MODEL=deepseek-chat",
+        "CLICKER_ANSWER_MODEL=deepseek-chat",
+        "CLICKER_WRITER_API_KEY=sk-writer",
+        "TYPESAFE_API_KEY=ts-key",
+    ):
+        assert line in text
+    out = capsys.readouterr().out
+    assert "sk-writer" not in out
+    assert "ts-key" not in out
+
+
+def test_a_compatible_service_keeps_what_was_saved_on_enter(tmp_path, monkeypatch):
+    env = tmp_path / "jev" / ".env"
+    env.parent.mkdir()
+    env.write_text(
+        "CLICKER_WRITER_BASE_URL=https://old.example\nCLICKER_WRITER_MODEL=m1\n"
+        "CLICKER_ANSWER_MODEL=m2\nCLICKER_WRITER_API_KEY=old-key\n",
+        encoding="utf-8",
+    )
+    assert _wizard(tmp_path, monkeypatch, ["WorkBuddy", "", "n", "n", "", "", "", ""]) == 0
+    text = env.read_text(encoding="utf-8")
+    assert "CLICKER_WRITER_BASE_URL=https://old.example" in text
+    assert "CLICKER_WRITER_MODEL=m1" in text
+    assert "CLICKER_ANSWER_MODEL=m2" in text
+    assert "CLICKER_WRITER_API_KEY=old-key" in text
+
+
+def test_official_openai_drops_a_compatible_service(tmp_path, monkeypatch):
+    env = tmp_path / "jev" / ".env"
+    env.parent.mkdir()
+    env.write_text("OTHER=1\nCLICKER_WRITER_BASE_URL=https://old.example\nCLICKER_WRITER_MODEL=m1\n", encoding="utf-8")
+    assert _wizard(tmp_path, monkeypatch, ["WorkBuddy", "", "n", "n", "1"], ["sk-openai"]) == 0
+    text = env.read_text(encoding="utf-8")
+    assert "OTHER=1" in text
+    assert "CLICKER_WRITER" not in text
+    assert "OPENAI_API_KEY=sk-openai" in text
+
+
+def test_skipping_the_writer_leaves_a_todo(tmp_path, capsys, monkeypatch):
+    assert _wizard(tmp_path, monkeypatch, ["WorkBuddy", "", "n", "n", "3"]) == 0
+    assert "还没有配置写作模型" in capsys.readouterr().out
+    assert not (tmp_path / "jev" / ".env").exists()
 
 
 def test_a_checkout_points_at_its_jev_script(tmp_path, monkeypatch):

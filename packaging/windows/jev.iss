@@ -1,5 +1,6 @@
-; Per-user installer for jev. One run leaves jev.exe and its models ready to use.
+﻿; Per-user installer for jev. One run leaves jev.exe and its models ready to use.
 ; Build it with scripts\build-helper.ps1, which passes /DVersion. No admin rights.
+; Keep this file UTF-8 with a BOM: without it ISCC reads the Chinese text in the ANSI code page.
 
 #ifndef Version
   #define Version "0.0.0"
@@ -14,6 +15,9 @@
 #endif
 #ifndef SkillsDir
   #define SkillsDir "..\..\skills\jev"
+#endif
+#ifndef PromptFile
+  #define PromptFile "agent-prompt.md"
 #endif
 
 #define AppExe "jev.exe"
@@ -46,6 +50,7 @@ UninstallDisplayName=jev
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ModelsDir}\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SkillsDir}\*"; DestDir: "{app}\skills\jev"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PromptFile}"; DestDir: "{app}"; DestName: "agent-prompt.md"; Flags: ignoreversion
 
 [Code]
 function McpConfig(): String;
@@ -79,6 +84,7 @@ begin
     WizardForm.FinishedLabel.WordWrap := True;
     WizardForm.FinishedLabel.Height := WizardForm.ClientHeight - WizardForm.FinishedLabel.Top - ScaleY(16);
     WizardForm.FinishedLabel.Caption :=
+      '初始化提示词在 ' + ExpandConstant('{app}\agent-prompt.md') + '，复制给 WorkBuddy 等智能体，它会接好 jev 并验证一次。' + #13#10 + #13#10 +
       'Paste this into the agent''s MCP config. The same text is in mcp-config.json next to jev.exe:' + #13#10 + #13#10 +
       McpConfig();
   end;

@@ -30,6 +30,11 @@ LABELS = {
 }
 ENTRY_KEY = "TYPESAFE_API_KEY"
 MODEL_KEY = "OPENAI_API_KEY"
+WRITER_URL = "CLICKER_WRITER_BASE_URL"
+WRITER_KEY = "CLICKER_WRITER_API_KEY"
+WRITER_MODEL = "CLICKER_WRITER_MODEL"
+ANSWER_MODEL = "CLICKER_ANSWER_MODEL"
+COMPATIBLE = (WRITER_URL, WRITER_KEY, WRITER_MODEL, ANSWER_MODEL)
 STEPS = ("选择助手", "选择生效范围", "安装使用说明", "确认写入", "保存密钥")
 
 
@@ -482,22 +487,68 @@ def _write_host(host, scope, project, exe, home_dir, appdata, skill, runner, whi
     return True
 
 
-def _save_keys(prompt, done, todo) -> None:
+def _drop_env(names: tuple[str, ...]) -> list[str]:
+    """Remove these settings from the user's `.env`. Returns the names that were there."""
+    found = [name for name in names if _env_value(name)]
+    if not found:
+        return []
+    path = home.env_file()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    prefixes = tuple(p for name in names for p in (f"{name}=", f"export {name}="))
+    kept = [line for line in lines if not line.strip().startswith(prefixes)]
+    path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    return found
+
+
+def _ask_plain(ask, name: str, label: str, default: str | None = None) -> str | None:
+    """A setting that is not secret, so the answer is shown. Enter keeps the value in brackets."""
+    current = _env_value(name) or default
+    answer = ask(f"{label} [{current}]: " if current else f"{label}: ").strip()
+    return answer or current
+
+
+def _choose_writer(ask, done, todo) -> list[tuple[str, str, str]]:
+    """Pick the model service the writer calls. Returns the secrets still to ask for."""
+    print("写作模型：jev 遇到需要「想一想」的步骤时调用它，例如输入文字、决定打开哪个网址、")
+    print("最后回答你的问题、接手卡住的任务。没有它，这些都会被跳过。")
+    options = [
+        ("OpenAI 官方", "填 OPENAI_API_KEY"),
+        ("OpenAI 兼容服务", "DeepSeek、通义千问、自建服务等：填地址、模型和密钥"),
+        ("先跳过", "之后重新运行 jev setup 补上"),
+    ]
+    choice = _choose(ask, "写作模型用哪家服务?", options, 2 if _env_value(WRITER_URL) else 1)
+    later = "之后重新运行 jev setup 补上"
+    if choice == 2:
+        todo.append(f"还没有配置写作模型：{later}")
+        return []
+    if choice == 0:
+        dropped = _drop_env(COMPATIBLE)
+        if dropped:
+            done.append(("已移除", f"兼容服务的设置：{'、'.join(dropped)}"))
+        return [(MODEL_KEY, "OpenAI API key", later)]
+    print()
+    base = _ask_plain(ask, WRITER_URL, "服务地址（例如 https://api.deepseek.com）")
+    model = _ask_plain(ask, WRITER_MODEL, "写作模型名（例如 deepseek-chat）")
+    if not base or not model:
+        todo.append(f"兼容服务缺地址或模型，没有保存：{later}")
+        return []
+    answer = _ask_plain(ask, ANSWER_MODEL, "回答问题用的模型", model) or model
+    for name, value in (("CLICKER_WRITER_API", "openai"), (WRITER_URL, base), (WRITER_MODEL, model), (ANSWER_MODEL, answer)):
+        _write_env(name, value)
+    done.append(("已保存", f"写作模型 {model}，回答模型 {answer}，地址 {base}"))
+    return [(WRITER_KEY, f"API key（{base}）", later)]
+
+
+def _save_keys(ask, prompt, done, todo) -> None:
     _heading(5)
-    print("jev 要用两把密钥：")
-    print(
-        "  OPENAI_API_KEY：jev 遇到需要「想一想」的步骤时调用 OpenAI 的模型，"
-        "例如输入文字、决定打开哪个网址、最后回答你的问题、接手卡住的任务。没有它，这些都会被跳过。"
-    )
-    print(f"  {TYPESAFE_NOTE}")
-    print(f"两把都保存到 {home.env_file()}，文件里的其他设置保持不变。")
-    print("要用 Anthropic 或其他模型服务，需要另外设置 CLICKER_WRITER_API 和对应密钥，这个向导不收集它们。")
+    print(f"jev 的密钥和模型设置都保存到 {home.env_file()}，文件里的其他设置保持不变。")
+    print()
+    secrets = _choose_writer(ask, done, todo)
     saved = []
-    for name, label, later in (
-        (MODEL_KEY, "OpenAI API key", "之后重新运行 jev setup 补上"),
-        (ENTRY_KEY, "TypeSafe API key", "之后在终端运行 jev setup --key"),
-    ):
+    for name, label, later in (*secrets, (ENTRY_KEY, "TypeSafe API key", "之后在终端运行 jev setup --key")):
         print()
+        if name == ENTRY_KEY:
+            print(TYPESAFE_NOTE)
         outcome = _ask_secret(name, label, prompt)
         if outcome == "saved":
             saved.append(name)
@@ -540,7 +591,7 @@ def _ask_setup(ask, exe: Path, home_dir: Path, appdata: Path, runner, which, pro
         else:
             print("没有写入任何文件。")
             todo.append("想接上助手时，重新运行 jev setup")
-        _save_keys(prompt, done, todo)
+        _save_keys(ask, prompt, done, todo)
     except (KeyboardInterrupt, EOFError):
         print("\n已退出。之后的步骤没有执行。")
         return 130

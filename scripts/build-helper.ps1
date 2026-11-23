@@ -73,7 +73,8 @@ try {
     $distArg = WinPath $folder
     $modelsArg = WinPath $models
     $skillsArg = WinPath "$root\skills\jev"
-    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/O$outDir"
+    $promptArg = WinPath "$root\packaging\windows\agent-prompt.md"
+    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/DPromptFile=$promptArg" "/O$outDir"
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
     $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "jev-setup-$version*" | Where-Object { $_.Extension -ne ".sha256" })
