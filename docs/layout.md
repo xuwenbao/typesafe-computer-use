@@ -34,6 +34,15 @@ typesafe_computer_use/
   report.py       logging, annotated screenshots, payload dump
   timing.py       phase stopwatches, the timing line, run summary
   cli.py          `clicker` and `clicker-inspect`
+  helper/         jev as MCP tools for other agents, Windows only (see [helper](helper.md))
+    cli.py        `jev`: mcp, status, and setup; each subcommand imports only what it runs
+    setup.py      `jev setup`: print or write one host's MCP config, and copy the jev skill
+    front.py      `jev mcp`: the MCP server; the first tool call loads the desktop, in this process
+    service.py    the tools: run_goal, looks with a state_id, and the primitives
+    desk_lock.py  this user's desktop mutex, so two `jev mcp` processes take turns  (platform)
+    approvals.py  which apps may be driven: never, or click only; everything else is driven
+    guard.py      the desktop every tool call runs on: the gate and the client's cancel on each input
+    home.py       %LOCALAPPDATA%\jev: .env, runs, the log
   waa/            jev as a WindowsAgentArena agent (see [WindowsAgentArena](waa.md))
     agent.py      `JevAgent`: WAA's reset() and predict(), jev's loop on a worker thread
     desktop.py    the adapter over WAA's observation: screenshots in, pyautogui code out
@@ -57,7 +66,8 @@ tests/            pure logic: dates, merging, reading order, echo filter, config
                   here says the architecture cannot do that task
 waa_overlay/      what `scripts/waa setup` copies into WindowsAgentArena: the agent module
                   and the runner that builds it
-scripts/          `sandbox` and `waa`
+packaging/windows/ the PyInstaller spec for jev.exe, its entry script, and the Inno Setup script
+scripts/          `sandbox`, `waa`, and `build-helper.ps1` (builds jev-setup.exe, models included)
 ```
 
 A Linux port adds a third adapter over xdotool and AT-SPI, and one line in

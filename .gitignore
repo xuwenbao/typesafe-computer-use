@@ -7,6 +7,7 @@ __pycache__/
 .env
 .env.*
 dist/
+build/
 bench/results-*.json
 .waa/
 infra/gcp/.terraform/

@@ -160,6 +160,9 @@ KVM, including on WSL2; see [WindowsAgentArena](docs/waa.md).
 - [Browser backend](docs/browser-backend.md): DOM perception over Chrome DevTools, no OCR, no screen permission
 - [Writer endpoints](docs/writer-endpoints.md): every writer variable, and other models over the Anthropic or OpenAI API
 - [Windows](docs/windows.md): the experimental adapter and how it differs from macOS
+- [MCP server](docs/helper.md): jev as tools for other agents on Windows; `jev mcp` drives the screen in that process, one `jev-setup.exe` with the models included, no questions back
+- [Install with an agent](docs/agent-install.md): a prompt and two skills, then `jev setup` writes the host the person chooses
+- [After install](docs/agent-start.md): the prompt the installer leaves beside `jev.exe`, to paste into WorkBuddy or another agent
 - [WindowsAgentArena](docs/waa.md): setup, the golden image, one run command, and results
 - [Layout](docs/layout.md): every module and what it owns
 - [Known limits](docs/known-limits.md)

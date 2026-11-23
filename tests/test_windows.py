@@ -84,6 +84,45 @@ def test_the_legacy_pattern_alone_is_not_pressable():
 # ------------------------------------------------------------------ which window is the app
 
 
+def test_a_checkout_starts_the_capture_module(monkeypatch):
+    monkeypatch.delattr(windows.sys, "frozen", raising=False)
+    monkeypatch.setattr(windows.sys, "executable", r"C:\Python\python.exe")
+    assert windows.capture_command("shot.png", "") == [
+        r"C:\Python\python.exe",
+        "-m",
+        "typesafe_computer_use.capture_proc",
+        "shot.png",
+        "",
+    ]
+
+
+def test_a_frozen_build_restarts_itself_for_the_screenshot(monkeypatch):
+    monkeypatch.setattr(windows.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(windows.sys, "executable", r"C:\Programs\jev\jev.exe")
+    assert windows.capture_command("shot.png", "chrome") == [
+        r"C:\Programs\jev\jev.exe",
+        "capture-proc",
+        "shot.png",
+        "chrome",
+    ]
+
+
+def test_the_frozen_entry_peels_the_capture_command_off_argv():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).parents[1] / "packaging" / "windows" / "jev_entry.py"
+    spec = importlib.util.spec_from_file_location("jev_entry_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.capture_arguments(["jev.exe", "capture-proc", "shot.png", "chrome"]) == [
+        "jev.exe",
+        "shot.png",
+        "chrome",
+    ]
+    assert module.capture_arguments(["jev.exe", "mcp"]) is None
+
+
 def test_a_window_process_id_keeps_its_high_bit():
     assert unsigned_pid(4) == 4
     assert unsigned_pid(-1504199776) == 2790767520
