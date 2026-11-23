@@ -8,7 +8,7 @@
 from pathlib import Path
 
 import torchvision
-from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules, copy_metadata
 
 datas, binaries, hiddenimports = [], [], []
 # torchvision 0.29 loads _C_stable.pyd by path, beside its package, not by a normal import.
@@ -28,6 +28,9 @@ for dist in ("typesafe-computer-use", "transformers", "torch", "torchvision", "f
     datas += copy_metadata(dist, recursive=True)
 hiddenimports += collect_submodules("typesafe_computer_use")
 hiddenimports += ["win32timezone"]
+# The agents SDK reads its prompt files while it is imported. PyInstaller does not see a data file
+# that no import names, so the takeover then dies looking for prompts that were never frozen.
+datas += collect_data_files("agents")
 
 a = Analysis(
     ["jev_entry.py"],

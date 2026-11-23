@@ -14,6 +14,10 @@ WorkBuddy 读到 `mcp.json` 里的 jev 之后，还要用户在「MCP 服务管�
 
 `jev status` 只看 `%LOCALAPPDATA%\jev\.env` 里有没有这些名字。请用户在自己的终端运行 `jev.exe setup` 补上，再运行一次 `jev status`。
 
+## `takeover unavailable`
+
+`run.log` 里出现 `takeover unavailable`，表示接管模块加载失败，通常是安装包缺了 Agents SDK 的提示词文件。分类器已经得出的结果会保留在返回值和 `run.json` 的 `driver_error` 里。重装同一套安装包修不好，需要用重新构建过的安装包再装一次。
+
 ## `busy`
 
 另一个 `jev mcp` 正拿着这台电脑的桌面。等它结束再试一次，不要连着发。

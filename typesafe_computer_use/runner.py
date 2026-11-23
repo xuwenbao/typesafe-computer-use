@@ -126,6 +126,7 @@ class RunState:
     route: str = ""  # 写手最后一次回答的去向：classifier、driver 或 end
     calls: Calls = field(default_factory=Calls)  # 整次运行里调用各模型的次数和用量
     image_refusals: list[dict] = field(default_factory=list)  # 截图被模型拒收、改成不带图重问的步骤及原因
+    driver_error: str = ""  # 接管模块加载失败的原因；空表示没去加载，或加载成功
     driver_actions: int = 0  # 接管实际执行的动作数，含被拒绝的
     driver_calls: int = 0  # 接管问模型的次数
     driver_done: str = ""  # 接管判定完成时给出的理由；空表示它没有这么判定
@@ -168,8 +169,17 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
                 log(f"\nstopped after {cfg.steps} steps")
                 state.outcome = "step limit"
                 hand_off(cfg, ctx, state, cfg.steps, log)
-            if wants_driver(cfg, ctx, state, log) and _driver().take_over(cfg, ctx, state, log, step + 1):
-                answer_last(cfg, ctx, state, log)
+            if wants_driver(cfg, ctx, state, log):
+                try:
+                    takeover = _driver()
+                except (ImportError, OSError) as exc:
+                    # A frozen build can be missing a data file the agents SDK reads as it imports.
+                    # The classifier already answered; losing that to the import is worse than no takeover.
+                    state.driver_error = str(exc)
+                    log(f"takeover unavailable: {exc}")
+                else:
+                    if takeover.take_over(cfg, ctx, state, log, step + 1):
+                        answer_last(cfg, ctx, state, log)
     except (KeyboardInterrupt, Abort) as e:
         state.outcome = f"aborted ({e or 'Ctrl-C'})"
         log(f"\n{state.outcome} after {len(state.history)} actions")
@@ -193,6 +203,7 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "session_cpu": started_up["session_cpu"],
             "perception": pipeline_record(),
             "image_refusals": state.image_refusals,
+            "driver_error": state.driver_error,
             "driver_actions": state.driver_actions,
             "driver_calls": state.driver_calls,
             "driver_tool_calls": state.driver_tool_calls,

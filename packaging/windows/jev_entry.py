@@ -32,6 +32,23 @@ if getattr(sys, "frozen", False):
     use_bundled_models(Path(sys.executable))
 
 
+IMPORT_CHECK = ("typesafe_computer_use.driver", "typesafe_computer_use.helper.service")
+
+
+def is_import_check(argv: list[str]) -> bool:
+    """Whether `argv` asks the frozen build to import what a tool call loads late.
+
+    Those imports read data files PyInstaller can miss. The build runs this and stops if one fails.
+    It does not read the screen or send input.
+    """
+    return len(argv) > 1 and argv[1] == "import-check"
+
+
+def run_import_check() -> None:
+    for name in IMPORT_CHECK:
+        __import__(name)
+
+
 def capture_arguments(argv: list[str]) -> list[str] | None:
     """Arguments for the screenshot child, or None when `argv` is an ordinary jev command.
 
@@ -44,6 +61,9 @@ def capture_arguments(argv: list[str]) -> list[str] | None:
 
 
 if __name__ == "__main__":
+    if is_import_check(sys.argv):
+        run_import_check()
+        raise SystemExit(0)
     child = capture_arguments(sys.argv)
     if child is not None:
         sys.argv = child

@@ -13,7 +13,7 @@ import json
 import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
-from typesafe_computer_use import driver
+from typesafe_computer_use import driver, runner
 from typesafe_computer_use.driver import BANNED, DONE_BEFORE
 from typesafe_computer_use.runner import MAX_REPEATS, MAX_STALLS, STOPPED, UNCHANGED
 
@@ -2075,6 +2075,31 @@ def test_a_second_stop_in_the_same_app_goes_to_the_driver(monkeypatch, tmp_path)
     assert state.handoffs[0].page == ("File Explorer", None)
     assert state.outcome == "driver done" and state.answer is not None and state.answer.achieved
     assert world.log == ["click:Doc01.docx", "click:新建"]
+
+
+def test_a_takeover_that_cannot_load_keeps_the_classifiers_answer(monkeypatch, tmp_path):
+    def missing():
+        raise FileNotFoundError("memory_consolidation_prompt.md")
+
+    monkeypatch.setattr(runner, "_driver", missing)
+    writer = FakeWriter(reviews=[{"achieved": False}])
+
+    state = drive(
+        archive_world(),
+        archive_classifier,
+        goal=ARCHIVE_GOAL,
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        writer=writer,
+        driver_steps=10,
+    )
+
+    assert state.outcome == "nothing helps"
+    assert state.answer is not None and state.answer.text and not state.answer.achieved
+    assert state.driver_error == "memory_consolidation_prompt.md"
+    record = json.loads((tmp_path / "run" / "run.json").read_text(encoding="utf-8"))
+    assert record["driver_error"] == state.driver_error
+    assert "takeover unavailable" in (tmp_path / "run" / "run.log").read_text(encoding="utf-8")
 
 
 def test_l59_with_the_driver_off_the_run_ends_where_the_classifier_stopped(monkeypatch, tmp_path):

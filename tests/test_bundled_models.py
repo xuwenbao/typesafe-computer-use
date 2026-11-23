@@ -10,6 +10,12 @@ entry = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(entry)
 
 
+def test_import_check_is_its_own_command():
+    assert entry.is_import_check(["jev.exe", "import-check"]) is True
+    assert entry.is_import_check(["jev.exe", "status"]) is False
+    assert entry.IMPORT_CHECK == ("typesafe_computer_use.driver", "typesafe_computer_use.helper.service")
+
+
 def test_capture_proc_arguments_drop_the_dispatch_word():
     assert entry.capture_arguments(["jev.exe", "capture-proc", "shot.png", "chrome"]) == [
         "jev.exe",

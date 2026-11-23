@@ -31,6 +31,10 @@ try {
     } finally { Pop-Location }
 
     $folder = "$root\build\helper\dist\jev"
+    # Import what a tool call loads late. A missing data file, such as an agents prompt, fails here
+    # instead of on the first run_goal that hands off.
+    & "$folder\jev.exe" import-check
+    if ($LASTEXITCODE -ne 0) { throw "frozen import check failed" }
     if ($Thumbprint) {
         signtool sign /sha1 $Thumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 "$folder\jev.exe"
         if ($LASTEXITCODE -ne 0) { throw "signtool failed" }

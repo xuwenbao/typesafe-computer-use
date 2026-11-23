@@ -39,7 +39,18 @@ _STEPS = config.Settings.model_fields["steps"].default
 _HANDOFFS = config.Settings.model_fields["handoffs"].default
 _MIN_CONFIDENCE = config.Settings.model_fields["min_confidence"].default
 
-RUN_FIELDS = ("outcome", "answer", "goal_achieved", "steps_taken", "history", "handoffs", "questions", "calls", "seconds")
+RUN_FIELDS = (
+    "outcome",
+    "answer",
+    "goal_achieved",
+    "steps_taken",
+    "history",
+    "handoffs",
+    "questions",
+    "calls",
+    "seconds",
+    "driver_error",
+)
 
 
 class ToolFailure(Exception):
