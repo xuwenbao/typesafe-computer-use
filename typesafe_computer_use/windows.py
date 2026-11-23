@@ -16,6 +16,7 @@ import functools
 import os
 import shutil
 import subprocess
+import sys
 import time
 import webbrowser
 from contextlib import suppress
@@ -653,13 +654,19 @@ def display_scale(image: Image.Image) -> float:
     return 1.0
 
 
+def capture_command(png: str, browser: str) -> list[str]:
+    """The screenshot child. A frozen `jev.exe` has no Python `-m`, so it restarts itself."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "capture-proc", png, browser]
+    return [sys.executable, "-m", "typesafe_computer_use.capture_proc", png, browser]
+
+
 def read_capture(browser: str, shot_wait: float, detail_wait: float, timing: dict | None = None):
     """Screenshot, focused control, and address bar from a process this one can kill.
 
     The screenshot is kept when the later read does not return. No screenshot raises CaptureTimeout.
     The call stays off this thread, so a stuck UI Automation call cannot be delivered back here.
     """
-    import sys
     import tempfile
     import threading
 
@@ -670,7 +677,7 @@ def read_capture(browser: str, shot_wait: float, detail_wait: float, timing: dic
     shot, done = SilentEvent(), SilentEvent()
     lines = CaptureLines(shot, done)
     proc = subprocess.Popen(
-        [sys.executable, "-m", "typesafe_computer_use.capture_proc", png, browser],
+        capture_command(png, browser),
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,

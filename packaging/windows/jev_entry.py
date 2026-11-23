@@ -32,5 +32,23 @@ if getattr(sys, "frozen", False):
     use_bundled_models(Path(sys.executable))
 
 
+def capture_arguments(argv: list[str]) -> list[str] | None:
+    """Arguments for the screenshot child, or None when `argv` is an ordinary jev command.
+
+    `capture_proc` reads the png path and the browser from `sys.argv`, so the `capture-proc`
+    word itself is not one of them.
+    """
+    if len(argv) > 1 and argv[1] == "capture-proc":
+        return [argv[0], *argv[2:]]
+    return None
+
+
 if __name__ == "__main__":
-    main()
+    child = capture_arguments(sys.argv)
+    if child is not None:
+        sys.argv = child
+        from typesafe_computer_use.capture_proc import main as capture_main
+
+        capture_main()
+    else:
+        main()

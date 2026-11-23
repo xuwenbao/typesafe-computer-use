@@ -10,6 +10,15 @@ entry = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(entry)
 
 
+def test_capture_proc_arguments_drop_the_dispatch_word():
+    assert entry.capture_arguments(["jev.exe", "capture-proc", "shot.png", "chrome"]) == [
+        "jev.exe",
+        "shot.png",
+        "chrome",
+    ]
+    assert entry.capture_arguments(["jev.exe", "status"]) is None
+
+
 def test_models_beside_the_exe_become_the_offline_cache(tmp_path):
     exe = tmp_path / "jev.exe"
     exe.write_bytes(b"MZ")
