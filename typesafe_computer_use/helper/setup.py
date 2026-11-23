@@ -229,6 +229,8 @@ def apply(
             _print_change([f"skill: {host} has no skill directory this command writes"])
         else:
             _copy_skill(skill_source(exe), dest, write, replace)
+    if write:
+        print(f"next: {_reload_note(host)}")
 
 
 def _run(command: list[str], cwd: str | None) -> int:
@@ -459,7 +461,9 @@ def _reload_note(host: str) -> str:
         return "退出并重新打开 Claude Desktop"
     if host == "codex":
         return "新开一个 Codex 会话"
-    return "重启 WorkBuddy，或新开一个会话。首次接入时它可能要求你信任这个服务"
+    return (
+        "在 WorkBuddy 的「MCP 服务管理」→「我的 MCP」里找到 jev，点「信任」，再新开一个会话。没点信任之前，WorkBuddy 不会启动 jev"
+    )
 
 
 def _write_host(host, scope, project, exe, home_dir, appdata, skill, runner, which, done, todo) -> bool:

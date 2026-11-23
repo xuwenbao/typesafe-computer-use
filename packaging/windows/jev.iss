@@ -16,6 +16,9 @@
 #ifndef SkillsDir
   #define SkillsDir "..\..\skills\jev"
 #endif
+#ifndef InstallSkillDir
+  #define InstallSkillDir "..\..\skills\jev-install"
+#endif
 #ifndef PromptFile
   #define PromptFile "agent-prompt.md"
 #endif
@@ -53,6 +56,7 @@ UninstallDisplayName=jev
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ModelsDir}\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SkillsDir}\*"; DestDir: "{app}\skills\jev"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#InstallSkillDir}\*"; DestDir: "{app}\skills\jev-install"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#PromptFile}"; DestDir: "{app}"; DestName: "agent-prompt.md"; Flags: ignoreversion
 Source: "{#GuideFile}"; DestDir: "{app}"; DestName: "如何接入智能体.txt"; Flags: ignoreversion
 
@@ -90,8 +94,7 @@ begin
     WizardForm.FinishedLabel.AutoSize := False;
     WizardForm.FinishedLabel.WordWrap := True;
     WizardForm.FinishedLabel.Caption :=
-      '勾选下面的「打开接入说明」，点完成后会打开一份说明，教你把初始化提示词复制给智能体。' + #13#10 + #13#10 +
-      McpConfig();
+      '勾选下面的「打开接入说明」，点完成后会打开一份说明，教你把初始化提示词复制给智能体。';
     { Keep the checkbox above the Finish button. ClientHeight includes that button and hid the list. }
     WizardForm.RunList.Height := ScaleY(44);
     WizardForm.RunList.Top := WizardForm.CancelButton.Top - WizardForm.RunList.Height - ScaleY(12);

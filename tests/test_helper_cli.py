@@ -54,3 +54,36 @@ def test_status_without_models_says_so(capsys, monkeypatch, tmp_path):
         cli.main(["status"])
     assert caught.value.code == 0
     assert "models: no" in capsys.readouterr().out
+
+
+def _status(capsys, monkeypatch, tmp_path, env: str) -> str:
+    exe = tmp_path / "jev.exe"
+    exe.write_bytes(b"MZ")
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / ".env").write_text(env, encoding="utf-8")
+    monkeypatch.setattr(front.sys, "executable", str(exe))
+    monkeypatch.setenv("JEV_HOME", str(tmp_path / "home"))
+    with pytest.raises(SystemExit):
+        cli.main(["status"])
+    return capsys.readouterr().out
+
+
+def test_status_names_saved_keys_without_their_values(capsys, monkeypatch, tmp_path):
+    env = (
+        "TYPESAFE_API_KEY=ts-secret\nCLICKER_WRITER_BASE_URL=https://api.deepseek.com\n"
+        "CLICKER_WRITER_API_KEY=sk-secret\nCLICKER_WRITER_MODEL=deepseek-chat\n"
+    )
+    out = _status(capsys, monkeypatch, tmp_path, env)
+    assert "TYPESAFE_API_KEY: yes" in out
+    assert "writer: compatible" in out
+    assert "secret" not in out
+
+
+def test_status_says_which_keys_are_missing(capsys, monkeypatch, tmp_path):
+    out = _status(capsys, monkeypatch, tmp_path, "TYPESAFE_API_KEY=\n# OPENAI_API_KEY=sk\n")
+    assert "TYPESAFE_API_KEY: no" in out
+    assert "writer: no" in out
+
+
+def test_status_sees_the_official_writer(capsys, monkeypatch, tmp_path):
+    assert "writer: openai" in _status(capsys, monkeypatch, tmp_path, "OPENAI_API_KEY=sk-x\n")

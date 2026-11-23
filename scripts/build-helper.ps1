@@ -73,6 +73,7 @@ try {
     $distArg = WinPath $folder
     $modelsArg = WinPath $models
     $skillsArg = WinPath "$root\skills\jev"
+    $installSkillArg = WinPath "$root\skills\jev-install"
     $promptArg = WinPath "$root\packaging\windows\agent-prompt.md"
     # Notepad on Windows reads a UTF-8 file with a BOM. Windows PowerShell's UTF8 encoding writes one.
     $guideDir = Join-Path $root "build\helper"
@@ -83,7 +84,7 @@ try {
     if (-not $head.EndsWith("`n")) { $head += "`r`n" }
     Set-Content -LiteralPath $guidePath -Value ($head + $prompt) -Encoding UTF8 -NoNewline
     $guideArg = WinPath $guidePath
-    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/DPromptFile=$promptArg" "/DGuideFile=$guideArg" "/O$outDir"
+    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/DInstallSkillDir=$installSkillArg" "/DPromptFile=$promptArg" "/DGuideFile=$guideArg" "/O$outDir"
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
     $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "jev-setup-$version*" | Where-Object { $_.Extension -ne ".sha256" })

@@ -27,8 +27,8 @@ jev setup --host <宿主> --scope user|project --project <目录> --skill
 ```
 
 用户确认后加上 `--write`。已有不同的 `jev` 条目时，再征得同意才加 `--replace`。
-6. 请用户在自己的终端里运行 `jev setup --key`。不要在对话里索要密钥。
-7. 请用户重启或重新加载宿主。用户同意后，调用一次 `frontmost_app` 做验证。
+6. 看第 4 步 `status` 里的 `TYPESAFE_API_KEY` 和 `writer`。有一项是 `no`，就请用户在自己的终端里运行 `jev setup` 补上。不要在对话里索要密钥。
+7. 把 `jev setup --write` 输出里 `next:` 那一行转告用户。WorkBuddy 要先在「我的 MCP」里信任 jev 才会启动它。其他宿主请用户重启或重新加载。用户同意后，调用一次 `frontmost_app` 做验证。
 8. 报告装了什么、配置写到了哪里、还有哪些步骤要用户自己做。把安装目录里的 `agent-prompt.md` 交给用户：在别的智能体里接 jev 时，粘贴这段就能接好并验证。
 
 ## 不能做的事

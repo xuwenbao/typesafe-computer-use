@@ -11,7 +11,7 @@
 | Claude Code | `claude mcp add --scope user\|project jev -- "<exe>" mcp` | 用户级 `%USERPROFILE%\.claude\skills\jev`，项目级 `<项目>\.claude\skills\jev` | 新开一个 Claude Code 会话 |
 | Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json`（只有用户级） | 不写入 | 退出并重新打开 Claude Desktop |
 | Codex 用户级 | `%USERPROFILE%\.codex\config.toml` 的 `[mcp_servers.jev]` | `%USERPROFILE%\.codex\skills\jev` | 新开一个 Codex 会话 |
-| WorkBuddy 用户级 | `%USERPROFILE%\.workbuddy\mcp.json` | `%USERPROFILE%\.workbuddy\skills\jev` | 重启 WorkBuddy，或新开一个会话。首次接入时它可能要求信任这台服务器 |
+| WorkBuddy 用户级 | `%USERPROFILE%\.workbuddy\mcp.json` | `%USERPROFILE%\.workbuddy\skills\jev` | 在「MCP 服务管理」→「我的 MCP」里找到 jev，点「信任」，再新开一个会话。没信任之前 WorkBuddy 不会启动它 |
 | WorkBuddy 项目级 | `<项目>\.workbuddy\mcp.json` | `<项目>\.workbuddy\skills\jev` | 同上 |
 
 JSON 宿主只改 `mcpServers.jev`，其他条目保留。写入前会把原文件复制为旁边的 `.bak`。Codex 里已经有 `[mcp_servers.jev]` 时不改动。

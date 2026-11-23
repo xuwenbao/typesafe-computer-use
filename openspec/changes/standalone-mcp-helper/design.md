@@ -103,7 +103,7 @@ flowchart LR
 
 `JEV_HOME` 可以整体移走日志、run 和 `.env`。它不移动程序目录。`clicker` 的默认行为不变。
 
-没有 `jev install`，也没有 `runtimes`、`current.json` 或目录联接。分发物是 Inno Setup 的 `jev-setup-<版本>.exe`：`PrivilegesRequired=lowest`，固定装到 `{localappdata}\Programs\jev`，不需要管理员。升级和卸载时，`CloseApplications` 会关掉仍在运行的 `jev.exe`；正在进行的调用也会被中断，智能体要重新启动 MCP。没有 `jev stop`。完成页显示 MCP 配置，并把同样内容写入 `mcp-config.json`。命令是安装目录里 `jev.exe` 的绝对路径，参数是 `mcp`。再次运行安装程序即升级，目录不变，已写好的 MCP 配置不用改。`jev status` 打印版本、`sys.executable`、用户目录，以及 exe 旁边有没有 `models\`。
+没有 `jev install`，也没有 `runtimes`、`current.json` 或目录联接。分发物是 Inno Setup 的 `jev-setup-<版本>.exe`：`PrivilegesRequired=lowest`，固定装到 `{localappdata}\Programs\jev`，不需要管理员。升级和卸载时，`CloseApplications` 会关掉仍在运行的 `jev.exe`；正在进行的调用也会被中断，智能体要重新启动 MCP。没有 `jev stop`。完成页不显示 MCP 配置，同样内容写入 `mcp-config.json`。命令是安装目录里 `jev.exe` 的绝对路径，参数是 `mcp`。再次运行安装程序即升级，目录不变，已写好的 MCP 配置不用改。`jev status` 打印版本、`sys.executable`、用户目录，以及 exe 旁边有没有 `models\`。
 
 打包：`packaging/windows/jev.spec`（PyInstaller，单目录，`console=True`，包含 MCP 服务与 FastMCP，`collect_all("fastmcp")`，并对 `fastmcp`、`fastmcp-slim`、`mcp` 做 `copy_metadata`）。`scripts/build-helper.ps1` 构建、可选 `signtool` 签名、写 `version.txt`，再用 `HF_HUB_CACHE` 跑 `clicker-models fetch` 把模型放到 `build\helper\models`（必须是实体文件，不能是符号链接），然后用 Inno Setup 的 `ISCC` 编译 `packaging/windows/jev.iss`（`lzma2/max`，`DiskSpanning=yes`）。模型不经过 PyInstaller。冻结进程在 `jev_entry.py` 里、导入 huggingface_hub 之前，若 exe 旁边有 `models\`，就 `setdefault` `HF_HUB_CACHE` 并设置 `HF_HUB_OFFLINE=1`。
 

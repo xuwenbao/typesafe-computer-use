@@ -36,11 +36,11 @@ jev 如何在 Windows 上与调用它的宿主智能体分开安装：一个 `je
 - **THEN** 下一个 `jev mcp` 可以拿到这把互斥量并执行调用
 
 ### Requirement: 一次安装就能用
-安装 SHALL 是一个按用户安装的 Windows 安装程序 `jev-setup-<版本>.exe`，不需要管理员权限，安装到 `%LOCALAPPDATA%\Programs\jev\`。安装目录 SHALL 包含 `jev.exe`、`version.txt` 和感知模型。程序 SHALL NOT 提供 `jev install` 子命令，SHALL NOT 使用 `runtimes`、`current.json` 或目录联接。升级或卸载 SHALL 关掉仍在运行的 `jev.exe`，因此正在进行的调用会被中断，智能体需要重新启动 MCP。安装完成 SHALL 显示 MCP 配置，并把同样内容写入安装目录的 `mcp-config.json`。其中的命令 SHALL 是安装目录里 `jev.exe` 的绝对路径，参数是 `mcp`。升级 SHALL 覆盖同一目录，使已有的 MCP 配置不用改。`jev status` SHALL 打印版本、可执行文件路径、用户目录，以及 exe 旁边有没有 `models\`。
+安装 SHALL 是一个按用户安装的 Windows 安装程序 `jev-setup-<版本>.exe`，不需要管理员权限，安装到 `%LOCALAPPDATA%\Programs\jev\`。安装目录 SHALL 包含 `jev.exe`、`version.txt` 和感知模型。程序 SHALL NOT 提供 `jev install` 子命令，SHALL NOT 使用 `runtimes`、`current.json` 或目录联接。升级或卸载 SHALL 关掉仍在运行的 `jev.exe`，因此正在进行的调用会被中断，智能体需要重新启动 MCP。安装完成 SHALL 把 MCP 配置写入安装目录的 `mcp-config.json`，完成页不显示这段配置。其中的命令 SHALL 是安装目录里 `jev.exe` 的绝对路径，参数是 `mcp`。升级 SHALL 覆盖同一目录，使已有的 MCP 配置不用改。`jev status` SHALL 打印版本、可执行文件路径、用户目录，以及 exe 旁边有没有 `models\`。
 
 #### Scenario: 首次安装
 - **WHEN** 用户运行安装程序
-- **THEN** 程序出现在 `%LOCALAPPDATA%\Programs\jev\jev.exe`，旁边有 `models\`，完成页给出指向这个 exe 的 MCP 配置
+- **THEN** 程序出现在 `%LOCALAPPDATA%\Programs\jev\jev.exe`，旁边有 `models\`，`mcp-config.json` 给出指向这个 exe 的 MCP 配置，完成页不显示它
 
 #### Scenario: 升级关掉正在运行的 jev
 - **WHEN** 一个 `jev mcp` 正在执行调用，用户运行新版本的安装程序

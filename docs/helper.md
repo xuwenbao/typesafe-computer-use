@@ -32,8 +32,8 @@ Run the installer once. It installs to `%LOCALAPPDATA%\Programs\jev\`: `jev.exe`
 `models\`, `skills\jev\`, `agent-prompt.md`, `如何接入智能体.txt`, and `version.txt`. A manual
 install leaves "打开接入说明" checked on the last page; finishing opens that text file in Notepad,
 with three steps and then the prompt to paste into the agent ([the same prompt](agent-start.md)).
-A silent install does not open Notepad. Below the checkbox the page shows the MCP config,
-and writes the same text to `mcp-config.json` in that folder. To wire the config by hand, paste it
+A silent install does not open Notepad. The finish page does not show the MCP config. The
+installer still writes it to `mcp-config.json` in that folder. To wire the config by hand, paste it
 into the agent. On Windows, write the absolute path: an agent packaged
 as MSIX does not inherit `PATH`.
 
@@ -49,8 +49,13 @@ as MSIX does not inherit `PATH`.
 ```
 
 The first call reads the bundled models and does not download them. `jev status` prints this
-program's version, the path of the executable, the home directory, and whether `models\` sits
-beside the executable.
+program's version, the path of the executable, the home directory, whether `models\` sits
+beside the executable, and whether `.env` holds `TYPESAFE_API_KEY` and a writer model. It prints
+names only, never a value.
+
+WorkBuddy does not start a server from its `mcp.json` until the user trusts it: in WorkBuddy's
+MCP manager, under 我的 MCP, find jev and click 信任. `jev setup --host workbuddy --write` says so
+on its `next:` line.
 
 Run the installer again to upgrade. It stays in the same folder, so the MCP config does not
 change. The installer closes any `jev.exe` that still has the files open, which interrupts a call

@@ -23,6 +23,18 @@ def test_the_installer_ships_the_prompt():
     build = (ROOT / "scripts" / "build-helper.ps1").read_text(encoding="utf-8")
     assert "PromptFile" in build
     assert "GuideFile" in build
+    assert "InstallSkillDir" in build
+
+
+def test_every_document_the_prompt_names_is_installed():
+    prompt = (ROOT / "packaging" / "windows" / "agent-prompt.md").read_text(encoding="utf-8")
+    script = (ROOT / "packaging" / "windows" / "jev.iss").read_text(encoding="utf-8-sig")
+    assert "http" not in prompt, "a link to a branch that does not have the file yet returns 404"
+    assert r'DestDir: "{app}\skills\jev-install"' in script
+    for part in ("skills\\jev\\references\\tools.md", "skills\\jev-install\\references\\hosts.md"):
+        assert part in prompt
+        assert (ROOT / Path(part.replace("\\", "/"))).is_file()
+    assert (ROOT / "skills" / "jev-install" / "references" / "troubleshooting.md").is_file()
 
 
 def test_the_guide_head_is_only_the_steps():

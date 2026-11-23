@@ -211,11 +211,36 @@ def serve() -> None:
     build_server().run(transport="stdio", show_banner=False)
 
 
+def _saved_names() -> set[str]:
+    """The names with a value in jev's .env. Never the values: an agent reads this output."""
+    path = home.env_file()
+    if not path.is_file():
+        return set()
+    names = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#") and "=" in line:
+            name, value = line.split("=", 1)
+            if value.strip().strip("'\""):
+                names.add(name.strip())
+    return names
+
+
 def status() -> int:
-    """This program's version and path, and whether the bundled models are beside it."""
+    """This program's version and path, whether the bundled models are beside it, and which keys are saved."""
     print(f"version: {helper_version()}")
     print(f"command: {sys.executable}")
     print(f"home: {home.root()}")
     models = Path(sys.executable).resolve().parent / "models"
     print(f"models: {'yes' if models.is_dir() else 'no'}")
+    names = _saved_names()
+    compatible = ("CLICKER_WRITER_BASE_URL", "CLICKER_WRITER_API_KEY", "CLICKER_WRITER_MODEL")
+    if all(name in names for name in compatible):
+        writer = "compatible"
+    elif "OPENAI_API_KEY" in names:
+        writer = "openai"
+    else:
+        writer = "no"
+    print(f"TYPESAFE_API_KEY: {'yes' if 'TYPESAFE_API_KEY' in names else 'no'}")
+    print(f"writer: {writer}")
     return 0

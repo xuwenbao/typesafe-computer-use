@@ -169,11 +169,19 @@ def test_workbuddy_merges_its_config_and_copies_the_skill(tmp_path):
     assert (tmp_path / "home" / ".workbuddy" / "skills" / "jev" / "SKILL.md").read_text(encoding="utf-8") == "skill"
 
 
+def test_workbuddy_write_says_the_server_needs_trust(tmp_path, capsys):
+    assert _main(tmp_path, ["--host", "workbuddy", "--write"]) == 0
+    assert "next: " in capsys.readouterr().out
+    assert "「信任」" in setup._reload_note("workbuddy")
+
+
 def test_preview_writes_nothing(tmp_path, capsys):
     code = _main(tmp_path, ["--host", "cursor"])
     assert code == 0
     assert list(tmp_path.rglob("*")) == []
-    assert "mcp.json" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "mcp.json" in out
+    assert "next: " not in out
 
 
 def test_json_merge_keeps_other_entries_and_writes_a_backup(tmp_path):

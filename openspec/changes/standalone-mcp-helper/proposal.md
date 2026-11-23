@@ -17,7 +17,7 @@ jev 的结构适合照 Codex 的方向拆：`runner.run(RunConfig, ctx_factory)`
 本次在 Windows 上把 jev 做成可单独安装的 MCP 服务，并且由 `jev mcp` 自己操作屏幕。
 
 - 新增一个冻结的 `jev.exe`，子命令只有 `mcp` 和 `status`。由 PyInstaller 冻结为带控制台的程序，Authenticode 签名，由 Inno Setup 安装程序 `jev-setup-<版本>.exe` 按用户装到 `%LOCALAPPDATA%\Programs\jev\`，不需要管理员，不注册 Windows 服务。安装包内含感知模型。没有 `jev helper`、`jev stop`、`jev install`，也没有命名管道、对端校验、版本替换或空闲退出。
-- `jev mcp` 是宿主智能体以 stdio 启动的 MCP 服务（FastMCP）。握手只导入前端和 FastMCP。第一次工具调用才加载感知与平台适配器，并在这个进程里执行。同一用户的多个 `jev mcp` 用命名互斥量 `Local\jev-desk-<SID>` 轮流操作桌面，拿不到就返回 `busy`。升级和卸载会关掉仍在运行的 `jev.exe`，正在进行的调用被中断，智能体要重新启动 MCP。`jev status` 报告本程序的版本、路径、用户目录，以及 exe 旁边有没有 `models\`。安装完成页给出 MCP 配置，并写入 `mcp-config.json`。
+- `jev mcp` 是宿主智能体以 stdio 启动的 MCP 服务（FastMCP）。握手只导入前端和 FastMCP。第一次工具调用才加载感知与平台适配器，并在这个进程里执行。同一用户的多个 `jev mcp` 用命名互斥量 `Local\jev-desk-<SID>` 轮流操作桌面，拿不到就返回 `busy`。升级和卸载会关掉仍在运行的 `jev.exe`，正在进行的调用被中断，智能体要重新启动 MCP。`jev status` 报告本程序的版本、路径、用户目录，以及 exe 旁边有没有 `models\`。安装完成时把 MCP 配置写入 `mcp-config.json`，完成页不显示它。
 - 两级工具：
   - 高层：`run_goal` 把一个目标交给与 `clicker --act` 相同的循环（含 `CLICKER_DRIVER` 打开时的接手），返回 `run.json` 中的结局、答案、步数、动作历史、交接与 run 文件夹；`inspect_screen` 只读屏。拉不到前台的应用返回 `not_found`，这台机器跑不了感知时 `run_goal` 返回 `not_supported`。
   - 底层：`get_app_state`、`click`、`type_text`、`set_value`、`press_key`、`scroll`、`activate`、`frontmost_app`。

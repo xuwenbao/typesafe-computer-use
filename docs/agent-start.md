@@ -15,22 +15,22 @@
 - 密钥和设置：%LOCALAPPDATA%\jev\.env
 - 每次运行的记录：%LOCALAPPDATA%\jev\runs\<时间>\（run.log、final.png）
 - 日志：%LOCALAPPDATA%\jev\state\jev.log
-文档：
-- MCP 工具和规则：https://github.com/awlevin/typesafe-computer-use/blob/main/docs/helper.md
-- 工具参数和错误种类：https://raw.githubusercontent.com/awlevin/typesafe-computer-use/main/skills/jev/references/tools.md
-- 各宿主的配置路径：https://raw.githubusercontent.com/awlevin/typesafe-computer-use/main/skills/jev-install/references/hosts.md
-- 装完还不对时：https://raw.githubusercontent.com/awlevin/typesafe-computer-use/main/skills/jev-install/references/troubleshooting.md
-技能：
-- 使用：npx skills add awlevin/typesafe-computer-use --skill jev
-- 安装和升级：npx skills add awlevin/typesafe-computer-use --skill jev-install
+本机文档（都在安装目录里，直接读文件，不要去网上找）：
+- 工具参数和错误种类：%LOCALAPPDATA%\Programs\jev\skills\jev\references\tools.md
+- 各宿主的配置路径：%LOCALAPPDATA%\Programs\jev\skills\jev-install\references\hosts.md
+- 装完还不对时：%LOCALAPPDATA%\Programs\jev\skills\jev-install\references\troubleshooting.md
 
 ## 先接好（只做一次）
-1. 运行 "%LOCALAPPDATA%\Programs\jev\jev.exe" status，要看到版本号，并且显示 models: yes。
-2. 判断你是哪个宿主（cursor、claude-code、claude-desktop、codex、workbuddy）。先运行 jev.exe setup --host <宿主> --skill，不带 --write，把将要改的内容给我看。我同意后再加 --write。已经有一条不同的 jev 配置时，先问我要不要加 --replace。
-3. 密钥只由我在自己的终端里输入：请我运行 "<jev.exe>" setup，按提示填写。不要在对话里向我要密钥，也不要读出 .env 里的值。你只能检查变量名在不在。需要两类配置：
-   - TYPESAFE_API_KEY：jev 每一步决定点哪里，用的是这个分类器。没有它，run_goal 不能运行。
-   - 写作模型：负责输入文字、回答问题、接手卡住的任务。用 OpenAI 时填 OPENAI_API_KEY；用 DeepSeek 这类 OpenAI 兼容服务时，填 CLICKER_WRITER_BASE_URL、CLICKER_WRITER_API_KEY、CLICKER_WRITER_MODEL 和 CLICKER_ANSWER_MODEL。
-4. 请我重启或重新加载你。WorkBuddy 第一次接入时，可能会要求我信任这台服务器。之后调用一次 frontmost_app，应该返回一个应用名。
+1. 运行 "%LOCALAPPDATA%\Programs\jev\jev.exe" status，要看到版本号，并且显示 models: yes。它还会显示 TYPESAFE_API_KEY: yes/no 和 writer: compatible/openai/no，只有名字，没有密钥的值。
+2. 判断你是哪个宿主（cursor、claude-code、claude-desktop、codex、workbuddy）。先运行 jev.exe setup --host <宿主> --skill，不带 --write，把将要改的内容给我看。我同意后再加 --write。已经有一条不同的 jev 配置时，先问我要不要加 --replace。写入后输出里以 next: 开头的那一行，原样转告我。
+3. 检查密钥：看第 1 步 status 的结果，把结论明确告诉我，不要跳过这一步。
+   - TYPESAFE_API_KEY: no：jev 每一步决定点哪里，用的是这个分类器，没有它 run_goal 不能运行。
+   - writer: no：写作模型负责输入文字、回答问题、接手卡住的任务。用 OpenAI 时要 OPENAI_API_KEY；用 DeepSeek 这类 OpenAI 兼容服务时，要 CLICKER_WRITER_BASE_URL、CLICKER_WRITER_API_KEY、CLICKER_WRITER_MODEL 和 CLICKER_ANSWER_MODEL。
+   有任何一项是 no，就请我在自己的终端（开始菜单里的 PowerShell 或命令提示符）运行 "%LOCALAPPDATA%\Programs\jev\jev.exe" setup，按提示填写，填完告诉你，你再运行一次 status 确认。两项都有，就告诉我「密钥已配置」。密钥只由我在终端里输入：不要在对话里向我要密钥，不要自己运行 jev.exe setup 的交互向导，也不要读出 .env 里的值。
+4. 让宿主加载 jev：
+   - WorkBuddy：只写 mcp.json 不够，WorkBuddy 不会启动没被信任的 MCP。请我打开 WorkBuddy 的「MCP 服务管理」，在「我的 MCP」里找到 jev，点「信任」（它会提示「首次连接此 MCP 服务需要您的信任确认」），确认 jev 显示为启用，然后新开一个会话。
+   - 其他宿主：请我重启或重新加载你。
+   之后调用一次 frontmost_app，应该返回一个应用名。工具列表里还没有 jev 时，不要猜原因，读上面的 troubleshooting.md，再告诉我下一步该点哪里。
 5. 再做一次只读验证：调用 run_goal，goal 写「不要点击、输入、滚动或按键。看一眼，只回答最前面窗口的标题，然后停止」，steps=1。返回 outcome: done 才算接好。返回 not_configured 说明还缺密钥；返回 capture timed out 时，先问我屏幕是不是锁着。
 
 ## jev 怎么工作
