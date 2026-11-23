@@ -29,9 +29,10 @@ Windows only for now. Like the rest of the Windows adapter, it is untested on a 
 writes `jev-setup-<version>.sha256` beside it. The installer includes `jev.exe` and the perception's
 model files. An agent can install it from those local files: [paste this prompt](agent-install.md).
 Run the installer once. It installs to `%LOCALAPPDATA%\Programs\jev\`: `jev.exe`, `_internal\`,
-`models\`, `skills\jev\`, `agent-prompt.md`, and `version.txt`. The last page points at
-`agent-prompt.md`, a prompt to paste into the agent so it wires jev up, checks one read-only run,
-and asks for a first goal ([the same text](agent-start.md)). Below that it shows the MCP config,
+`models\`, `skills\jev\`, `agent-prompt.md`, `如何接入智能体.txt`, and `version.txt`. A manual
+install leaves "打开接入说明" checked on the last page; finishing opens that text file in Notepad,
+with three steps and then the prompt to paste into the agent ([the same prompt](agent-start.md)).
+A silent install does not open Notepad. Below the checkbox the page shows the MCP config,
 and writes the same text to `mcp-config.json` in that folder. To wire the config by hand, paste it
 into the agent. On Windows, write the absolute path: an agent packaged
 as MSIX does not inherit `PATH`.

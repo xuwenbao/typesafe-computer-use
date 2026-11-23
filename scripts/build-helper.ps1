@@ -1,4 +1,4 @@
-<#
+﻿<#
 Build the per-user installer jev-setup-<version>.exe, on Windows.
 
     scripts\build-helper.ps1                         unsigned
@@ -74,7 +74,16 @@ try {
     $modelsArg = WinPath $models
     $skillsArg = WinPath "$root\skills\jev"
     $promptArg = WinPath "$root\packaging\windows\agent-prompt.md"
-    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/DPromptFile=$promptArg" "/O$outDir"
+    # Notepad on Windows reads a UTF-8 file with a BOM. Windows PowerShell's UTF8 encoding writes one.
+    $guideDir = Join-Path $root "build\helper"
+    New-Item -ItemType Directory -Force -Path $guideDir | Out-Null
+    $guidePath = Join-Path $guideDir "如何接入智能体.txt"
+    $head = Get-Content -LiteralPath "$root\packaging\windows\agent-guide-head.txt" -Raw -Encoding UTF8
+    $prompt = Get-Content -LiteralPath "$root\packaging\windows\agent-prompt.md" -Raw -Encoding UTF8
+    if (-not $head.EndsWith("`n")) { $head += "`r`n" }
+    Set-Content -LiteralPath $guidePath -Value ($head + $prompt) -Encoding UTF8 -NoNewline
+    $guideArg = WinPath $guidePath
+    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/DPromptFile=$promptArg" "/DGuideFile=$guideArg" "/O$outDir"
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
     $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "jev-setup-$version*" | Where-Object { $_.Extension -ne ".sha256" })

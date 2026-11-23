@@ -1,6 +1,6 @@
 # 装好之后：初始化提示词
 
-安装程序把下面这段写到 `%LOCALAPPDATA%\Programs\jev\agent-prompt.md`，完成页也会指向它。把它粘贴给 WorkBuddy、Cursor、Claude Code 或 Codex，智能体会接好 jev、验证一次，再问你第一个目标。
+安装程序把下面这段写到 `%LOCALAPPDATA%\Programs\jev\agent-prompt.md`。手动安装时，完成页默认勾选「打开接入说明」，点完成后用记事本打开 `%LOCALAPPDATA%\Programs\jev\如何接入智能体.txt`：上半部分是三步操作，分隔线下面是这段提示词。把它粘贴给 WorkBuddy、Cursor、Claude Code 或 Codex，智能体会接好 jev、验证一次，再问你第一个目标。静默安装不打开记事本。
 
 密钥只在你自己的终端里输入（`jev.exe setup`），不经过对话。
 

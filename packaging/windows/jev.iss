@@ -19,6 +19,9 @@
 #ifndef PromptFile
   #define PromptFile "agent-prompt.md"
 #endif
+#ifndef GuideFile
+  #define GuideFile "如何接入智能体.txt"
+#endif
 
 #define AppExe "jev.exe"
 
@@ -51,6 +54,10 @@ Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cr
 Source: "{#ModelsDir}\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SkillsDir}\*"; DestDir: "{app}\skills\jev"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#PromptFile}"; DestDir: "{app}"; DestName: "agent-prompt.md"; Flags: ignoreversion
+Source: "{#GuideFile}"; DestDir: "{app}"; DestName: "如何接入智能体.txt"; Flags: ignoreversion
+
+[Run]
+Filename: "{win}\notepad.exe"; Parameters: """{app}\如何接入智能体.txt"""; Description: "打开接入说明（教你把初始化提示词复制给智能体）"; Flags: postinstall nowait skipifsilent
 
 [Code]
 function McpConfig(): String;
@@ -82,10 +89,12 @@ begin
   begin
     WizardForm.FinishedLabel.AutoSize := False;
     WizardForm.FinishedLabel.WordWrap := True;
-    WizardForm.FinishedLabel.Height := WizardForm.ClientHeight - WizardForm.FinishedLabel.Top - ScaleY(16);
     WizardForm.FinishedLabel.Caption :=
-      '初始化提示词在 ' + ExpandConstant('{app}\agent-prompt.md') + '，复制给 WorkBuddy 等智能体，它会接好 jev 并验证一次。' + #13#10 + #13#10 +
-      'Paste this into the agent''s MCP config. The same text is in mcp-config.json next to jev.exe:' + #13#10 + #13#10 +
+      '勾选下面的「打开接入说明」，点完成后会打开一份说明，教你把初始化提示词复制给智能体。' + #13#10 + #13#10 +
       McpConfig();
+    { Keep the checkbox above the Finish button. ClientHeight includes that button and hid the list. }
+    WizardForm.RunList.Height := ScaleY(44);
+    WizardForm.RunList.Top := WizardForm.CancelButton.Top - WizardForm.RunList.Height - ScaleY(12);
+    WizardForm.FinishedLabel.Height := WizardForm.RunList.Top - WizardForm.FinishedLabel.Top - ScaleY(8);
   end;
 end;
