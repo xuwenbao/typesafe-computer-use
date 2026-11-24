@@ -5,8 +5,8 @@ branch or a closed pull request cannot change what jev loads. The two weight fil
 against their SHA-256 once per process. `HF_HUB_OFFLINE=1` keeps every call off the network; a
 file that is not in the cache then fails with the command that fetches it.
 
-A frozen `jev.exe` with a `models` folder beside it reads that folder offline (see
-`packaging/windows/jev_entry.py`, which sets the cache before this module is imported). A file
+A frozen `clicker.exe` with a `models` folder beside it reads that folder offline (see
+`packaging/windows/clicker_entry.py`, which sets the cache before this module is imported). A file
 missing from that install says to run the installer again. A checkout still says to run
 `clicker-models fetch`.
 

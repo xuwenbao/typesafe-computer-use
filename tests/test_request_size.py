@@ -13,8 +13,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from typesafe_computer_use.decide import base_state, item_criteria
-from typesafe_computer_use.models import Item, Screen
+from yuanji_computer_use.decide import base_state, item_criteria
+from yuanji_computer_use.models import Item, Screen
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chrome-settings-step.json"
 

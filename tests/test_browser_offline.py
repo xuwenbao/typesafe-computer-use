@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from typesafe_computer_use.browser import act
-from typesafe_computer_use.browser.cdp import CDPError, local_debugger_url
-from typesafe_computer_use.browser.decide import available_actions
-from typesafe_computer_use.browser.perceive import INTERACTIVE_JS, Element, perceive
+from yuanji_computer_use.browser import act
+from yuanji_computer_use.browser.cdp import CDPError, local_debugger_url
+from yuanji_computer_use.browser.decide import available_actions
+from yuanji_computer_use.browser.perceive import INTERACTIVE_JS, Element, perceive
 
 
 def page_dict(*, items=(), scroll_y=0, can_scroll=True, history_len=1, fields=0):

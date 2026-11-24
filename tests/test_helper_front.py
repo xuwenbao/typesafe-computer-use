@@ -1,4 +1,4 @@
-"""`jev mcp`: the tools run in this process, behind the user's desktop lock."""
+"""`clicker mcp`: the tools run in this process, behind the user's desktop lock."""
 
 import asyncio
 import sys
@@ -8,11 +8,11 @@ import pytest
 from fastmcp import Client
 from helper_fakes import FakeDesktop
 
-from typesafe_computer_use.helper import desk_lock, front
-from typesafe_computer_use.helper.approvals import Gate, host_apps
-from typesafe_computer_use.helper.service import Caller, Service
-from typesafe_computer_use.models import Abort
-from typesafe_computer_use.platform_adapter import desktop, using
+from yuanji_computer_use.helper import desk_lock, front
+from yuanji_computer_use.helper.approvals import Gate, host_apps
+from yuanji_computer_use.helper.service import Caller, Service
+from yuanji_computer_use.models import Abort
+from yuanji_computer_use.platform_adapter import desktop, using
 
 TOOLS = {
     "run_goal",

@@ -23,7 +23,7 @@ SECONDS = 8.0
 def _pattern_table():
     """The shared pattern ids. The import works in jev; the names work in the concatenated VM script."""
     try:
-        from typesafe_computer_use.uia_patterns import PATTERN_IDS as table
+        from yuanji_computer_use.uia_patterns import PATTERN_IDS as table
     except ImportError:
         table = globals()["PATTERN_IDS"]
     return table
@@ -39,7 +39,7 @@ TEXT_ROLES = ("AXTextField", "AXTextArea")
 def _rules():
     """The role table. The import works in jev; the names work in the concatenated VM script."""
     try:
-        from typesafe_computer_use.uia_roles import DOCUMENT_ID, document_role, pressable, role_for_id
+        from yuanji_computer_use.uia_roles import DOCUMENT_ID, document_role, pressable, role_for_id
     except ImportError:
         pressable = globals()["pressable"]
         role_for_id = globals()["role_for_id"]

@@ -59,7 +59,7 @@ windowsarena/winarena-base（固定 digest）
 
 依赖用一份自己的锁文件，不使用 WAA 的 `requirements.txt`（`numpy~=1.24` 不支持 3.12）。锁文件覆盖 `desktop_env`、`lib_run_single.py`、`run.py` 实际导入的第三方包，不含 Navi 的 GroundingDINO。`easyocr` 会带进 CPU 版 torch，镜像因此变大，换来评估器能导入。与 jev 重叠的包（`pillow`、`openai`、`numpy`）以 jev 的版本为准。
 
-`setup` 在这个 venv 里执行 `import desktop_env.evaluators` 和 `import typesafe_computer_use.waa.agent`，导入失败就停止，不进入跑任务的步骤。
+`setup` 在这个 venv 里执行 `import desktop_env.evaluators` 和 `import yuanji_computer_use.waa.agent`，导入失败就停止，不进入跑任务的步骤。
 
 基础镜像的 digest 和 WAA 的提交都写在 `scripts/waa` 里。`setup` 拉取该提交到 `.waa/WindowsAgentArena`，再构建镜像 `jev-winarena`。`.waa/` 不进 git。
 
@@ -107,7 +107,7 @@ scripts/waa results [目录]        宿主机上读结果
 
 ### 4. `JevAgent` 从 OSWorld 的实现改四元组
 
-`typesafe_computer_use/waa/agent.py` 保留 OSWorld 的线程与队列结构：worker 跑 `runner.run`，`predict` 交出一批动作后等待下一次观测，步数用尽抛 `Abort`，结束时动作列表追加 `DONE`，从不返回 `FAIL`。
+`yuanji_computer_use/waa/agent.py` 保留 OSWorld 的线程与队列结构：worker 跑 `runner.run`，`predict` 交出一批动作后等待下一次观测，步数用尽抛 `Abort`，结束时动作列表追加 `DONE`，从不返回 `FAIL`。
 
 返回值改为 WAA 要的四元组 `(response, actions, "", None)`。`logs` 留空，`computer_update_args` 为 `None`，这样 `lib_run_single` 不会调用 `update_computer`。
 
@@ -117,7 +117,7 @@ scripts/waa results [目录]        宿主机上读结果
 
 ### 5. `WAADesktop`：pyautogui 代码，浏览器改用 `start`
 
-`typesafe_computer_use/waa/desktop.py` 沿用 OSWorld 适配层的步边界：输入攒进当前动作，第一次读屏把动作交给 `predict`；步内的停顿是代码里的 `time.sleep`，跨步的等待才是单独的 `WAIT`。`ax_press`、`ax_focus`、`ax_set_value` 一律返回做不到，点击都是坐标点击。`display_scale` 返回 1.0。
+`yuanji_computer_use/waa/desktop.py` 沿用 OSWorld 适配层的步边界：输入攒进当前动作，第一次读屏把动作交给 `predict`；步内的停顿是代码里的 `time.sleep`，跨步的等待才是单独的 `WAIT`。`ax_press`、`ax_focus`、`ax_set_value` 一律返回做不到，点击都是坐标点击。`display_scale` 返回 1.0。
 
 按键与 `windows.py` 一致：Command 变成 Ctrl，Command-[ 变成 Alt-Left，Mac 的 delete 变成 backspace。
 
@@ -176,9 +176,9 @@ scripts/waa results [目录]        宿主机上读结果
 
 ## Migration Plan
 
-1. 加上 `typesafe_computer_use/waa/`、`waa_overlay/`、`scripts/waa`、镜像的 Dockerfile 与锁文件、`docs/waa.md`，以及对应测试。测试全程不启动容器、不连接虚拟机。
+1. 加上 `yuanji_computer_use/waa/`、`waa_overlay/`、`scripts/waa`、镜像的 Dockerfile 与锁文件、`docs/waa.md`，以及对应测试。测试全程不启动容器、不连接虚拟机。
 2. 更新 `README.md`、`docs/layout.md`、`docs/how-a-step-works.md`、`CONTRIBUTING.md`、`OBSERVATIONS.md`、`AGENTS.md`、`pyproject.toml` 里的 ruff 例外，以及 `screen-perception` 和 `perception-evaluation` 的规格。`AGENTS.md` 写明：启动这个容器（`prepare-image` 和 `run`）每次都要单独批准；有 KVM 的 WSL2 是运行 WAA 的机器。
-3. 删除 OSWorld：`typesafe_computer_use/osworld/`、`osworld_overlay/`、`scripts/osworld`、`scripts/osworld-gcp`、`infra/gcp/`、`docs/osworld.md`、`benchmarks/osworld/`、`tests/test_osworld_*.py`、`tests/fixtures/osworld/`，以及 `.gitignore` 里的 `.osworld/`。主包里只出现在注释中的 OSWorld 一并改掉。
+3. 删除 OSWorld：`yuanji_computer_use/osworld/`、`osworld_overlay/`、`scripts/osworld`、`scripts/osworld-gcp`、`infra/gcp/`、`docs/osworld.md`、`benchmarks/osworld/`、`tests/test_osworld_*.py`、`tests/fixtures/osworld/`，以及 `.gitignore` 里的 `.osworld/`。主包里只出现在注释中的 OSWorld 一并改掉。
 4. 回滚就是还原这次提交。没有数据迁移；删除的测评记录不保留。
 
 真实运行不在实现步骤里。`prepare-image` 与第一次 `run` 由维护者在实现完成并选定任务后执行，每次启动容器都先征得同意。

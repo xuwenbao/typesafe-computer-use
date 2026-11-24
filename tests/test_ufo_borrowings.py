@@ -13,28 +13,28 @@ from types import SimpleNamespace
 
 import pytest
 
-from typesafe_computer_use import cli, macos, windows, windows_session
-from typesafe_computer_use.actions import Context, add_item, click_item, press_offscreen
-from typesafe_computer_use.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
-from typesafe_computer_use.decide import Decision, kind_criteria
-from typesafe_computer_use.driver import act, load_driver_record, take_over
-from typesafe_computer_use.driver_agent import TOOLS, screen_packet
-from typesafe_computer_use.models import Abort, AxNode, ElementState, Item, signature
-from typesafe_computer_use.perception import to_ax_items
-from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.runner import UNCHANGED, RunConfig, RunState, resolve, screen_moved
-from typesafe_computer_use.uia_patterns import PATTERN_IDS
-from typesafe_computer_use.waa import tree
-from typesafe_computer_use.waa.desktop import WAADesktop, _operate_element
-from typesafe_computer_use.waa.walk_vm import LiveElement, walk
-from typesafe_computer_use.writer import (
+from yuanji_computer_use import cli, macos, windows, windows_session
+from yuanji_computer_use.actions import Context, add_item, click_item, press_offscreen
+from yuanji_computer_use.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
+from yuanji_computer_use.decide import Decision, kind_criteria
+from yuanji_computer_use.driver import act, load_driver_record, take_over
+from yuanji_computer_use.driver_agent import TOOLS, screen_packet
+from yuanji_computer_use.models import Abort, AxNode, ElementState, Item, signature
+from yuanji_computer_use.perception import to_ax_items
+from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.runner import UNCHANGED, RunConfig, RunState, resolve, screen_moved
+from yuanji_computer_use.uia_patterns import PATTERN_IDS
+from yuanji_computer_use.waa import tree
+from yuanji_computer_use.waa.desktop import WAADesktop, _operate_element
+from yuanji_computer_use.waa.walk_vm import LiveElement, walk
+from yuanji_computer_use.writer import (
     DRIVE_ACTIONS,
     DriveStep,
     WriterError,
     _drive_step,
 )
 
-PACKAGE = Path(__file__).resolve().parent.parent / "typesafe_computer_use"
+PACKAGE = Path(__file__).resolve().parent.parent / "yuanji_computer_use"
 # Captured before the machine guard replaces it, so the test can drive the real function
 # against a patched attribute copy and still not touch Accessibility.
 _MAC_ELEMENT_STATE = macos.element_state
@@ -328,10 +328,10 @@ def _run_steps(monkeypatch, tmp_path, screen, items, moves, steps: int = 5):
     looks = []
     from scripted_driver import ScriptedModel
 
-    from typesafe_computer_use import driver_agent
+    from yuanji_computer_use import driver_agent
 
     monkeypatch.setattr(driver_agent, "model_for", lambda: ScriptedModel(planned))
-    from typesafe_computer_use import runner
+    from yuanji_computer_use import runner
 
     def look(cfg, ctx, state, log):
         looks.append(len(state.history))
@@ -432,14 +432,14 @@ def _ask_the_driver(monkeypatch, tmp_path, screen, items, script, steps: int):
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     pressed = []
     monkeypatch.setattr(desktop, "press", lambda key, command=False: pressed.append((key, command)))
-    from typesafe_computer_use import runner
+    from yuanji_computer_use import runner
 
     def look(cfg, ctx, state, log):
         state.view = (screen, items)
         return (screen, items) if screen_moved(state, screen, items, log) else None
 
     monkeypatch.setattr(runner, "look", look)
-    from typesafe_computer_use import driver_agent
+    from yuanji_computer_use import driver_agent
 
     monkeypatch.setattr(driver_agent, "model_for", lambda: script)
     state = RunState(outcome="nothing helps")
@@ -870,7 +870,7 @@ def test_the_child_session_is_launched_acting():
 def test_the_child_binds_the_input_desktop_before_it_starts():
     source = windows_session._LAUNCHER
     attached = source.index("attach_input_desktop()")
-    started = source.index("from typesafe_computer_use.cli import main")
+    started = source.index("from yuanji_computer_use.cli import main")
     assert attached < started < source.index("\n    main()")
 
 

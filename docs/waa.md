@@ -31,7 +31,7 @@ scripts/waa results [FOLDER]              # each task's score, steps, time and t
 `setup` clones the commit pinned in `scripts/waa` into `.waa/WindowsAgentArena`, copies
 `waa_overlay/` over the client, and builds `jev-winarena` on the pinned
 `windowsarena/winarena-base` digest. It then imports `desktop_env.evaluators` and
-`typesafe_computer_use.waa.agent` inside the image, and stops if either import fails. That import
+`yuanji_computer_use.waa.agent` inside the image, and stops if either import fails. That import
 runs in a container, so it needs approval. `.waa/` is gitignored. Changing jev or the overlay does
 not need another build; changing the lock or the pinned commit does.
 

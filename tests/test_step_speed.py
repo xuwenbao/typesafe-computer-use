@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from typesafe_computer_use import perception, runner, windows_session
-from typesafe_computer_use.perception import SETTLE_POLL, SETTLE_QUIET, settle
-from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.runner import RunConfig, RunState
+from yuanji_computer_use import perception, runner, windows_session
+from yuanji_computer_use.perception import SETTLE_POLL, SETTLE_QUIET, settle
+from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.runner import RunConfig, RunState
 
 BEFORE = Image.new("RGB", (512, 512), "white")
 
@@ -161,7 +161,7 @@ def test_the_child_runs_at_full_speed_and_warms_up_before_it_starts():
     attached = source.index("attach_input_desktop()")
     unthrottled = source.index("run_at_full_speed()")
     warming = source.index("start_warm_up()")
-    started = source.index("from typesafe_computer_use.cli import main")
+    started = source.index("from yuanji_computer_use.cli import main")
     assert attached < unthrottled < warming < started
 
 

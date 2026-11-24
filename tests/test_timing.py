@@ -1,4 +1,4 @@
-from typesafe_computer_use.timing import format_timing, ordered, phase, summarize
+from yuanji_computer_use.timing import format_timing, ordered, phase, summarize
 
 
 def test_phase_records_seconds_and_tolerates_none():

@@ -4,9 +4,9 @@ import ctypes
 
 import pytest
 
-from typesafe_computer_use import windows
-from typesafe_computer_use.models import ROLE_WORDS, TEXT_ROLES, Missed
-from typesafe_computer_use.windows import (
+from yuanji_computer_use import windows
+from yuanji_computer_use.models import ROLE_WORDS, TEXT_ROLES, Missed
+from yuanji_computer_use.windows import (
     KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
@@ -90,7 +90,7 @@ def test_a_checkout_starts_the_capture_module(monkeypatch):
     assert windows.capture_command("shot.png", "") == [
         r"C:\Python\python.exe",
         "-m",
-        "typesafe_computer_use.capture_proc",
+        "yuanji_computer_use.capture_proc",
         "shot.png",
         "",
     ]
@@ -98,9 +98,9 @@ def test_a_checkout_starts_the_capture_module(monkeypatch):
 
 def test_a_frozen_build_restarts_itself_for_the_screenshot(monkeypatch):
     monkeypatch.setattr(windows.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(windows.sys, "executable", r"C:\Programs\jev\jev.exe")
+    monkeypatch.setattr(windows.sys, "executable", r"C:\Programs\clicker\clicker.exe")
     assert windows.capture_command("shot.png", "chrome") == [
-        r"C:\Programs\jev\jev.exe",
+        r"C:\Programs\clicker\clicker.exe",
         "capture-proc",
         "shot.png",
         "chrome",
@@ -111,16 +111,16 @@ def test_the_frozen_entry_peels_the_capture_command_off_argv():
     import importlib.util
     from pathlib import Path
 
-    path = Path(__file__).parents[1] / "packaging" / "windows" / "jev_entry.py"
+    path = Path(__file__).parents[1] / "packaging" / "windows" / "clicker_entry.py"
     spec = importlib.util.spec_from_file_location("jev_entry_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.capture_arguments(["jev.exe", "capture-proc", "shot.png", "chrome"]) == [
-        "jev.exe",
+    assert module.capture_arguments(["clicker.exe", "capture-proc", "shot.png", "chrome"]) == [
+        "clicker.exe",
         "shot.png",
         "chrome",
     ]
-    assert module.capture_arguments(["jev.exe", "mcp"]) is None
+    assert module.capture_arguments(["clicker.exe", "mcp"]) is None
 
 
 def test_a_window_process_id_keeps_its_high_bit():

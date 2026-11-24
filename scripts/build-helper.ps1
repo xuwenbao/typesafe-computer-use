@@ -1,11 +1,11 @@
 ﻿<#
-Build the per-user installer jev-setup-<version>.exe, on Windows.
+Build the per-user installer clicker-setup-<version>.exe, on Windows.
 
     scripts\build-helper.ps1                         unsigned
     scripts\build-helper.ps1 -Thumbprint <sha1>      signed with a code-signing certificate in your store
 
-The installer carries jev.exe and the perception's model files. Installing it needs no further
-command: it lands in %LOCALAPPDATA%\Programs\jev and shows the MCP config. Building runs nothing
+The installer carries clicker.exe and the perception's model files. Installing it needs no further
+command: it lands in %LOCALAPPDATA%\Programs\clicker and shows the MCP config. Building runs nothing
 on the screen and does not start the helper. It does download the model files.
 #>
 param(
@@ -22,21 +22,21 @@ function WinPath([string]$Path) {
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
-    $version = (uv run python -c "from importlib.metadata import version; print(version('typesafe-computer-use'))").Trim()
+    $version = (uv run python -c "from importlib.metadata import version; print(version('yuanji-computer-use'))").Trim()
     Push-Location packaging\windows
     try {
         uv run --with "pyinstaller>=6.11,<7" pyinstaller --noconfirm --clean `
-            --distpath "$root\build\helper\dist" --workpath "$root\build\helper\work" jev.spec
+            --distpath "$root\build\helper\dist" --workpath "$root\build\helper\work" clicker.spec
         if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
     } finally { Pop-Location }
 
-    $folder = "$root\build\helper\dist\jev"
+    $folder = "$root\build\helper\dist\clicker"
     # Import what a tool call loads late. A missing data file, such as an agents prompt, fails here
     # instead of on the first run_goal that hands off.
-    & "$folder\jev.exe" import-check
+    & "$folder\clicker.exe" import-check
     if ($LASTEXITCODE -ne 0) { throw "frozen import check failed" }
     if ($Thumbprint) {
-        signtool sign /sha1 $Thumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 "$folder\jev.exe"
+        signtool sign /sha1 $Thumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 "$folder\clicker.exe"
         if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
     }
     Set-Content -Path "$folder\version.txt" -Value $version -NoNewline -Encoding ascii
@@ -88,11 +88,11 @@ try {
     if (-not $head.EndsWith("`n")) { $head += "`r`n" }
     Set-Content -LiteralPath $guidePath -Value ($head + $prompt) -Encoding UTF8 -NoNewline
     $guideArg = WinPath $guidePath
-    & $iscc "$root\packaging\windows\jev.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/DInstallSkillDir=$installSkillArg" "/DPromptFile=$promptArg" "/DGuideFile=$guideArg" "/O$outDir"
+    & $iscc "$root\packaging\windows\clicker.iss" "/DVersion=$version" "/DDistDir=$distArg" "/DModelsDir=$modelsArg" "/DSkillsDir=$skillsArg" "/DInstallSkillDir=$installSkillArg" "/DPromptFile=$promptArg" "/DGuideFile=$guideArg" "/O$outDir"
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
-    $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "jev-setup-$version*" | Where-Object { $_.Extension -ne ".sha256" })
-    if ($pieces.Count -eq 0) { throw "ISCC produced no jev-setup-$version file" }
+    $pieces = @(Get-ChildItem -LiteralPath $outDir -Filter "clicker-setup-$version*" | Where-Object { $_.Extension -ne ".sha256" })
+    if ($pieces.Count -eq 0) { throw "ISCC produced no clicker-setup-$version file" }
     if ($Thumbprint) {
         foreach ($piece in ($pieces | Where-Object { $_.Extension -eq ".exe" })) {
             signtool sign /sha1 $Thumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $piece.FullName
@@ -107,5 +107,5 @@ try {
         Write-Output "sha256: $sha"
     }
     # One line per volume, so an agent can check the files beside the installer.
-    Set-Content -LiteralPath (Join-Path $outDir "jev-setup-$version.sha256") -Value ($sums -join "`n") -Encoding ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path $outDir "clicker-setup-$version.sha256") -Value ($sums -join "`n") -Encoding ascii -NoNewline
 } finally { Pop-Location }

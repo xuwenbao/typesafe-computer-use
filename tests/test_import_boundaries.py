@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-PACKAGE = Path(__file__).resolve().parent.parent / "typesafe_computer_use"
+PACKAGE = Path(__file__).resolve().parent.parent / "yuanji_computer_use"
 PLATFORM = {"platform_adapter", "macos", "windows", "perception"}
 # The desktop perception's models: the browser path reads the DOM and must not pull in PyTorch.
 MODELS = {"parse.ocr", "parse.detect", "parse.caption", "parse.fuse", "parse.marks", "parse.weights", "parse.runtime"}

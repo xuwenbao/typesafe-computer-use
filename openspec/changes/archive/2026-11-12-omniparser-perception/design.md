@@ -46,7 +46,7 @@ items ─▶ decide()：state.screen_items_in_reading_order + item Choice（纯�
 ### 1. 复制算法进 jev，新建 `parse/` 子包
 
 ```
-typesafe_computer_use/parse/
+yuanji_computer_use/parse/
   ocr.py      RapidOCR + hug_ink + reading_order（由 ocr_rapid.py 迁入）
   detect.py   YOLOv9-E TorchScript 推理（移植 OmniParser util/yolov9.py）
   fuse.py     图标与文字去重融合（移植 remove_overlap_new，纯函数）

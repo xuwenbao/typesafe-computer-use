@@ -2,24 +2,24 @@
 
 ## jev 资源
 本机：
-- 程序：%LOCALAPPDATA%\Programs\jev\jev.exe
-- MCP 配置：%LOCALAPPDATA%\Programs\jev\mcp-config.json
-- 使用技能：%LOCALAPPDATA%\Programs\jev\skills\jev\SKILL.md
+- 程序：%LOCALAPPDATA%\Programs\clicker\clicker.exe
+- MCP 配置：%LOCALAPPDATA%\Programs\clicker\mcp-config.json
+- 使用技能：%LOCALAPPDATA%\Programs\clicker\skills\jev\SKILL.md
 - 密钥和设置：%LOCALAPPDATA%\jev\.env
 - 每次运行的记录：%LOCALAPPDATA%\jev\runs\<时间>\（run.log、final.png）
 - 日志：%LOCALAPPDATA%\jev\state\jev.log
 本机文档（都在安装目录里，直接读文件，不要去网上找）：
-- 工具参数和错误种类：%LOCALAPPDATA%\Programs\jev\skills\jev\references\tools.md
-- 各宿主的配置路径：%LOCALAPPDATA%\Programs\jev\skills\jev-install\references\hosts.md
-- 装完还不对时：%LOCALAPPDATA%\Programs\jev\skills\jev-install\references\troubleshooting.md
+- 工具参数和错误种类：%LOCALAPPDATA%\Programs\clicker\skills\jev\references\tools.md
+- 各宿主的配置路径：%LOCALAPPDATA%\Programs\clicker\skills\jev-install\references\hosts.md
+- 装完还不对时：%LOCALAPPDATA%\Programs\clicker\skills\jev-install\references\troubleshooting.md
 
 ## 先接好（只做一次）
-1. 运行 "%LOCALAPPDATA%\Programs\jev\jev.exe" status，要看到版本号，并且显示 models: yes。它还会显示 TYPESAFE_API_KEY: yes/no 和 writer: compatible/openai/no，只有名字，没有密钥的值。
-2. 判断你是哪个宿主（cursor、claude-code、claude-desktop、codex、workbuddy）。先运行 jev.exe setup --host <宿主> --skill，不带 --write，把将要改的内容给我看。我同意后再加 --write。已经有一条不同的 jev 配置时，先问我要不要加 --replace。写入后输出里以 next: 开头的那一行，原样转告我。
+1. 运行 "%LOCALAPPDATA%\Programs\clicker\clicker.exe" status，要看到版本号，并且显示 models: yes。它还会显示 TYPESAFE_API_KEY: yes/no 和 writer: compatible/openai/no，只有名字，没有密钥的值。
+2. 判断你是哪个宿主（cursor、claude-code、claude-desktop、codex、workbuddy）。先运行 clicker.exe setup --host <宿主> --skill，不带 --write，把将要改的内容给我看。我同意后再加 --write。已经有一条不同的 jev 配置时，先问我要不要加 --replace。写入后输出里以 next: 开头的那一行，原样转告我。
 3. 检查密钥：看第 1 步 status 的结果，把结论明确告诉我，不要跳过这一步。
    - TYPESAFE_API_KEY: no：jev 每一步决定点哪里，用的是这个分类器，没有它 run_goal 不能运行。
    - writer: no：写作模型负责输入文字、回答问题、接手卡住的任务。用 OpenAI 时要 OPENAI_API_KEY；用 DeepSeek 这类 OpenAI 兼容服务时，要 CLICKER_WRITER_BASE_URL、CLICKER_WRITER_API_KEY、CLICKER_WRITER_MODEL 和 CLICKER_ANSWER_MODEL。
-   有任何一项是 no，就请我在自己的终端（开始菜单里的 PowerShell 或命令提示符）运行 "%LOCALAPPDATA%\Programs\jev\jev.exe" setup，按提示填写，填完告诉你，你再运行一次 status 确认。两项都有，就告诉我「密钥已配置」。密钥只由我在终端里输入：不要在对话里向我要密钥，不要自己运行 jev.exe setup 的交互向导，也不要读出 .env 里的值。
+   有任何一项是 no，就请我在自己的终端（开始菜单里的 PowerShell 或命令提示符）运行 "%LOCALAPPDATA%\Programs\clicker\clicker.exe" setup，按提示填写，填完告诉你，你再运行一次 status 确认。两项都有，就告诉我「密钥已配置」。密钥只由我在终端里输入：不要在对话里向我要密钥，不要自己运行 clicker.exe setup 的交互向导，也不要读出 .env 里的值。
 4. 让宿主加载 jev：
    - WorkBuddy：只写 mcp.json 不够，WorkBuddy 不会启动没被信任的 MCP。请我打开 WorkBuddy 的「MCP 服务管理」，在「我的 MCP」里找到 jev，点「信任」（它会提示「首次连接此 MCP 服务需要您的信任确认」），确认 jev 显示为启用，然后新开一个会话。
    - 其他宿主：请我重启或重新加载你。
@@ -44,7 +44,7 @@
 
 ## 红线
 - 不能操作：终端、UAC、锁屏和登录界面、设置、任务管理器、jev 自己，以及你所在的宿主。IDE 只能点击和滚动，不能输入。
-- 不要直接运行 jev mcp，不要申请管理员权限，不要改 jev 以外的配置。
+- 不要直接运行 clicker mcp，不要申请管理员权限，不要改 jev 以外的配置。
 - 要急停：把鼠标推到屏幕左上角，或者取消这次调用。
 - 屏幕锁着时，jev 看不到桌面。请我先解锁。
 

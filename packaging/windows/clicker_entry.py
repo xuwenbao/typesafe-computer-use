@@ -1,4 +1,4 @@
-"""PyInstaller's entry script for jev.exe.
+"""PyInstaller's entry script for clicker.exe.
 
 `huggingface_hub` reads `HF_HUB_CACHE` and `HF_HUB_OFFLINE` when it is imported, so a frozen
 program points them at the models beside this exe before `main` imports anything that loads the
@@ -11,7 +11,7 @@ import os
 import sys
 from pathlib import Path
 
-from typesafe_computer_use.helper.cli import main
+from yuanji_computer_use.helper.cli import main
 
 
 def use_bundled_models(exe: Path, environ: dict[str, str] | None = None) -> bool:
@@ -32,7 +32,7 @@ if getattr(sys, "frozen", False):
     use_bundled_models(Path(sys.executable))
 
 
-IMPORT_CHECK = ("typesafe_computer_use.driver", "typesafe_computer_use.helper.service")
+IMPORT_CHECK = ("yuanji_computer_use.driver", "yuanji_computer_use.helper.service")
 
 
 def is_import_check(argv: list[str]) -> bool:
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     child = capture_arguments(sys.argv)
     if child is not None:
         sys.argv = child
-        from typesafe_computer_use.capture_proc import main as capture_main
+        from yuanji_computer_use.capture_proc import main as capture_main
 
         capture_main()
     else:

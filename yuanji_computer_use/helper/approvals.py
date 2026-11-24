@@ -27,8 +27,8 @@ NEVER = frozenset(
         "bash", "mintty", "alacritty", "wezterm-gui", "hyper", "tabby", "putty",
         # the system's own guards and controls
         "consent", "lockapp", "logonui", "credentialuibroker", "systemsettings", "taskmgr", "regedit", "mmc",
-        # jev itself, including the names of the earlier split builds
-        "jev", "jev-helper", "clicker-mcp",
+        # this program, including the names of the earlier split builds
+        "clicker", "jev", "jev-helper", "clicker-mcp",
     }
 )  # fmt: skip
 

@@ -11,7 +11,7 @@ maintainer's own Mac, often while they are using it.
 The rule is about this machine's screen, input, and apps, not about running commands. Ask first,
 every time, before anything that would use or take them over:
 
-- running the project on this machine: `clicker`, `clicker session`, `clicker-inspect`, `jev mcp`,
+- running the project on this machine: `clicker`, `clicker session`, `clicker-inspect`, `clicker mcp`,
   or any script that imports the platform adapter and calls it. `clicker session` opens a Windows
   child session on this machine, and each command needs approval of its own
 - anything that moves the mouse, presses keys, clicks, scrolls, or types

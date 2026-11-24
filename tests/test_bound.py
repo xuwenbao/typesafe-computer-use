@@ -6,12 +6,12 @@ import time
 import pytest
 from PIL import Image
 
-from typesafe_computer_use import perception
-from typesafe_computer_use.actions import Context
-from typesafe_computer_use.bound import CaptureLines, CaptureTimeout, SilentEvent, assemble_capture, await_capture, call_within
-from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.report import Log
-from typesafe_computer_use.runner import RunConfig, RunState, run_step
+from yuanji_computer_use import perception
+from yuanji_computer_use.actions import Context
+from yuanji_computer_use.bound import CaptureLines, CaptureTimeout, SilentEvent, assemble_capture, await_capture, call_within
+from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.report import Log
+from yuanji_computer_use.runner import RunConfig, RunState, run_step
 
 
 def test_call_within_returns_a_value_that_arrives_in_time():

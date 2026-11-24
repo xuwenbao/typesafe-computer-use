@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from typesafe_computer_use import macos
+from yuanji_computer_use import macos
 
 
 @pytest.fixture

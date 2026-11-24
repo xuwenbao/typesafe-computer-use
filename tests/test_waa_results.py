@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from typesafe_computer_use.waa.results import read, summarize
+from yuanji_computer_use.waa.results import read, summarize
 
 RUN = {
     "outcome": "done",

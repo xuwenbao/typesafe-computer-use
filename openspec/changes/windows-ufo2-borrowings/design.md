@@ -39,7 +39,7 @@ UFO2 论文里对应的三个机制是：用远程桌面连回本机开一个子
 
 **控制端与会话内进程**
 
-新增 `typesafe_computer_use/windows_session.py`，只有执行对应命令时才导入，和 `windows.py` 一样不进入 macOS 的导入路径。命令行入口是 `clicker session`。
+新增 `yuanji_computer_use/windows_session.py`，只有执行对应命令时才导入，和 `windows.py` 一样不进入 macOS 的导入路径。命令行入口是 `clicker session`。
 
 - 父会话里的控制端做三件事：启用子会话、开一个窗口把远程桌面控件嵌进去（这就是画中画）、创建命名管道。它不导入平台适配器，不发任何鼠标键盘输入。
 - 子会话里启动 jev。做法是：连接成功后枚举会话，找到子会话里的 `explorer.exe`，复制它的令牌，用 `CreateProcessAsUser` 启动 jev。目标进程属于同一用户，不需要管理员。jev 的环境变量带上 `JEV_SESSION=1` 和管道名。

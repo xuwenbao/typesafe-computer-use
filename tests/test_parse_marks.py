@@ -1,8 +1,8 @@
 import pytest
 from PIL import Image, ImageDraw
 
-from typesafe_computer_use.models import Item
-from typesafe_computer_use.parse.marks import (
+from yuanji_computer_use.models import Item
+from yuanji_computer_use.parse.marks import (
     AX_COLOR,
     ICON_COLOR,
     LABEL_PX,

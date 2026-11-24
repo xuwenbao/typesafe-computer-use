@@ -1,6 +1,6 @@
 import pytest
 
-from typesafe_computer_use import cli
+from yuanji_computer_use import cli
 
 REASON = "the desktop perception needs PyTorch, which ships no build for an Intel Mac"
 

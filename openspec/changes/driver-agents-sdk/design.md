@@ -96,7 +96,7 @@ Chat Completions 会丢掉工具输出里的图片，所以每张屏幕作为一
 
 ### 6. 提示词迁到 `driver_agent.py`，去掉备注字段
 
-新建 `typesafe_computer_use/driver_agent.py`，里面放 `Agent` 的定义、各个工具，以及 `instructions`。`instructions` 由 `DRIVE_SYSTEM` 改写：
+新建 `yuanji_computer_use/driver_agent.py`，里面放 `Agent` 的定义、各个工具，以及 `instructions`。`instructions` 由 `DRIVE_SYSTEM` 改写：
 
 - 删掉「填哪些字段、哪些留空」这类 JSON 格式规则。工具的参数 schema 已经约束了这些。
 - 每个动作的含义写进对应工具的说明（docstring）。

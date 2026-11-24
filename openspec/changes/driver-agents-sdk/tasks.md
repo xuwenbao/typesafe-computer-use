@@ -20,7 +20,7 @@
 
 ## 4. 读取与计算工具
 
-- [x] 4.1 新建 `typesafe_computer_use/driver_agent.py`，写异步工具 `read_text`：先调用 `element_text`，读不到时回退到识别文字；结果注明来源和长度，超过 `MAX_READ` 截断并注明；测试覆盖辅助功能来源、识别来源、截断和元素编号不存在
+- [x] 4.1 新建 `yuanji_computer_use/driver_agent.py`，写异步工具 `read_text`：先调用 `element_text`，读不到时回退到识别文字；结果注明来源和长度，超过 `MAX_READ` 截断并注明；测试覆盖辅助功能来源、识别来源、截断和元素编号不存在
 - [x] 4.2 写异步工具 `count`：文字来源是元素原文或给定文字，支持整词匹配和区分大小写；用 `largefile.txt` 的文字做测试夹具，断言整词、不区分大小写时 `example` 计数为 22
 - [x] 4.3 写异步工具 `calculate`：用 `ast` 只放行数字、四则运算、整除、取余、乘方和括号；测试断言 `(230-1)*2` 正确，`__import__('os')` 和带名字的表达式返回错误
 
@@ -38,7 +38,7 @@
 - [x] 6.2 实现失败映射：只回文字和 `MaxTurnsExceeded` 算不可用的回复，提醒一次再问，连续两次结局为 `driver failed`；`APIError` 结局为 `driver failed` 并记录错误；端点拒绝 `reasoning_effort` 时这次接管去掉该参数并重跑这一段；每种情况一条测试
 - [x] 6.3 `done` 的理由否认屏幕上列出的名字时，沿用 `denied_listed_names`，不带截图再问一次；测试断言第一次的 done 没有生效
 - [x] 6.4 叫停：`Runner.run_sync` 返回后、执行动作前调用 `check_abort`；测试让模型请求期间标记取消，断言返回的点击没有执行，结局为 aborted
-- [x] 6.5 删除 `writer.compose_drive`、`DRIVE_PROPERTIES`、`DriveStep` 里的 `notes`，以及 `state.driver_notes`；`rg "compose_drive|driver_notes|DRIVE_PROPERTIES" typesafe_computer_use tests` 没有结果，相关测试已改写或删除
+- [x] 6.5 删除 `writer.compose_drive`、`DRIVE_PROPERTIES`、`DriveStep` 里的 `notes`，以及 `state.driver_notes`；`rg "compose_drive|driver_notes|DRIVE_PROPERTIES" yuanji_computer_use tests` 没有结果，相关测试已改写或删除
 - [x] 6.6 用量与记录：每段从 `raw_responses` 把请求数和 token 记到 `Calls` 的 driver 名下；`step-NNN-driver.json` 增加 `tools` 列表；`run.json` 增加 `driver_tool_calls`；测试断言一段里调用 `read_text`、`count` 再 `shortcut` 后，记录顺序正确，计数各为 1；更新 `docs/run-folder.md`
 
 ## 7. 接口限制与文档

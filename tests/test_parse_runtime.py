@@ -2,7 +2,7 @@ import importlib.util
 
 import pytest
 
-from typesafe_computer_use.parse import caption, detect, ocr, runtime
+from yuanji_computer_use.parse import caption, detect, ocr, runtime
 
 
 def test_an_intel_mac_is_unsupported_and_says_where_jev_runs(monkeypatch):

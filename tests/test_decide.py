@@ -1,8 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from typesafe_computer_use.config import SITES
-from typesafe_computer_use.decide import (
+from yuanji_computer_use.config import SITES
+from yuanji_computer_use.decide import (
     Decision,
     base_state,
     decide,
@@ -13,8 +13,8 @@ from typesafe_computer_use.decide import (
     row_mates,
     site_criteria,
 )
-from typesafe_computer_use.models import AxNode, Guidance
-from typesafe_computer_use.runner import RunConfig, RunState, resolve
+from yuanji_computer_use.models import AxNode, Guidance
+from yuanji_computer_use.runner import RunConfig, RunState, resolve
 
 
 def answer(choice, confidence, probabilities=None):

@@ -2611,7 +2611,7 @@ wheels = [
 ]
 
 [[package]]
-name = "typesafe-computer-use"
+name = "yuanji-computer-use"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [

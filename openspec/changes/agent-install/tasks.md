@@ -1,4 +1,4 @@
-## 1. jev setup
+## 1. clicker setup
 
 - [x] 1.1 `helper/setup.py`：预览、JSON 合并与 `.bak`、Codex 追加、Claude Code 命令、`--skill`、`--key`
 - [x] 1.2 `helper/cli.py`：`setup` 子命令，函数内导入 `helper.setup`
@@ -11,8 +11,8 @@
 
 ## 3. 打包
 
-- [x] 3.1 `jev.iss` 把 `skills\jev` 装到 `{app}\skills\jev`
-- [x] 3.2 `build-helper.ps1` 写出 `jev-setup-<版本>.sha256`
+- [x] 3.1 `clicker.iss` 把 `skills\jev` 装到 `{app}\skills\jev`
+- [x] 3.2 `build-helper.ps1` 写出 `clicker-setup-<版本>.sha256`
 
 ## 4. 测试
 

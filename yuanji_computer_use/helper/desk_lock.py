@@ -1,4 +1,4 @@
-"""One desktop for this user, shared by every `jev mcp` process.
+"""One desktop for this user, shared by every `clicker mcp` process.
 
 `Local\\jev-desk-<SID>` is a mutex. Taking it fails at once when another process holds it, and
 Windows releases it if the holder crashes. A mutex belongs to the thread that took it, so a call

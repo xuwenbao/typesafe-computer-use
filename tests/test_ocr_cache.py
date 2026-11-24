@@ -5,10 +5,10 @@ from dataclasses import replace
 import pytest
 from PIL import Image, ImageChops, ImageStat
 
-from typesafe_computer_use import perception
-from typesafe_computer_use.parse import detect as parse_detect
-from typesafe_computer_use.parse import ocr as parse_ocr
-from typesafe_computer_use.perception import (
+from yuanji_computer_use import perception
+from yuanji_computer_use.parse import detect as parse_detect
+from yuanji_computer_use.parse import ocr as parse_ocr
+from yuanji_computer_use.perception import (
     ParseCache,
     boxes_intersect,
     changed_tiles,
@@ -21,7 +21,7 @@ from typesafe_computer_use.perception import (
     tile_clusters,
     tiles_in,
 )
-from typesafe_computer_use.platform_adapter import desktop
+from yuanji_computer_use.platform_adapter import desktop
 
 REAL_DETECT_REGION = perception.detect_region  # before the fixture below stands in for it
 

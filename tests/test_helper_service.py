@@ -7,11 +7,11 @@ import pytest
 from helper_fakes import FakeDesktop
 from PIL import Image
 
-from typesafe_computer_use.helper import service as service_module
-from typesafe_computer_use.helper.approvals import Gate
-from typesafe_computer_use.helper.service import Caller, Service, ToolFailure
-from typesafe_computer_use.models import Item, Missed, Screen
-from typesafe_computer_use.platform_adapter import desktop, using
+from yuanji_computer_use.helper import service as service_module
+from yuanji_computer_use.helper.approvals import Gate
+from yuanji_computer_use.helper.service import Caller, Service, ToolFailure
+from yuanji_computer_use.models import Item, Missed, Screen
+from yuanji_computer_use.platform_adapter import desktop, using
 
 
 @pytest.fixture

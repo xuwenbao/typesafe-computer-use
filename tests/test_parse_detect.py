@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
 
-from typesafe_computer_use.parse import detect
+from yuanji_computer_use.parse import detect
 
 
 def test_the_side_rounds_up_to_a_multiple_of_32():

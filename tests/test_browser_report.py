@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from typesafe_computer_use.browser.decide import serialize_answers
-from typesafe_computer_use.browser.perceive import Element, Page, TextBlock
-from typesafe_computer_use.browser.report import RunFolder, load_step, render_answers, render_payload
-from typesafe_computer_use.browser.runner import resolve_text
-from typesafe_computer_use.writer import CREDENTIAL_HINTS, compose_browser_text, looks_credential
+from yuanji_computer_use.browser.decide import serialize_answers
+from yuanji_computer_use.browser.perceive import Element, Page, TextBlock
+from yuanji_computer_use.browser.report import RunFolder, load_step, render_answers, render_payload
+from yuanji_computer_use.browser.runner import resolve_text
+from yuanji_computer_use.writer import CREDENTIAL_HINTS, compose_browser_text, looks_credential
 
 
 def make_page(**kwargs) -> Page:

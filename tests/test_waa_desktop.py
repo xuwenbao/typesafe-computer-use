@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from conftest import busy_page
 
-from typesafe_computer_use.uia_patterns import PATTERN_IDS
-from typesafe_computer_use.waa import tree
-from typesafe_computer_use.waa.desktop import WAADesktop
+from yuanji_computer_use.uia_patterns import PATTERN_IDS
+from yuanji_computer_use.waa import tree
+from yuanji_computer_use.waa.desktop import WAADesktop
 
 FIXTURES = Path(__file__).parent / "fixtures" / "waa"
 DISPLAY = (1440, 900)
@@ -303,7 +303,7 @@ def test_nothing_can_be_pressed_through_the_tree(tmp_path, monkeypatch):
 
 
 def test_element_text_uses_the_tree_value_and_the_script_reads_text_then_value():
-    from typesafe_computer_use.waa.desktop import read_text_code
+    from yuanji_computer_use.waa.desktop import read_text_code
 
     desktop = over()
     assert desktop.element_text({"name": "Editor", "role": "AXTextArea", "value": "hello"}) == "hello"

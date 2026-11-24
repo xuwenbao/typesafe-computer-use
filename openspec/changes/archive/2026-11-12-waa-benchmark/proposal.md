@@ -10,7 +10,7 @@ jev 的桌面测评目前只有 OSWorld：任务跑在 Ubuntu 虚拟机里，无
 - jev 在 WAA 虚拟机里自己取无障碍树：通过 WAA 服务的 `/execute` 在虚拟机内运行一段 Python，只遍历前台应用的 UI Automation 树，直接按 jev 的角色词表输出；复用 `windows.py` 与 `ax_walk.py` 的纯规则。不使用 WAA 自带的 `/accessibility`，它遍历整个桌面，XML 标签是窗口类名而不是控件类型。
 - WAA 运行方式的改动放在 overlay 里（agent 模块与改写后的 `run.py`，每处改动标 `jev:`），由 `scripts/waa` 挂载进容器，与 OSWorld 的 overlay 做法一致。
 - 只在本机跑单个 worker，一次一台 Windows 虚拟机。任务之间沿用 WAA 的默认做法（关闭所有程序），不回滚虚拟机快照。
-- **BREAKING** 删除 OSWorld 集成：`typesafe_computer_use/osworld/`（含 AT-SPI 解析与 `light_walk.py`）、`osworld_overlay/`、`scripts/osworld`、`.osworld/` 的忽略项，以及 OSWorld 的测试与 fixture。
+- **BREAKING** 删除 OSWorld 集成：`yuanji_computer_use/osworld/`（含 AT-SPI 解析与 `light_walk.py`）、`osworld_overlay/`、`scripts/osworld`、`.osworld/` 的忽略项，以及 OSWorld 的测试与 fixture。
 - **BREAKING** 删除对比基线：OSWorld 的 GPT agent（Luna）的 runner、agent 与 token 计数（`osworld/usage.py`）。WAA 上只跑 jev。
 - **BREAKING** 删除云上运行：`scripts/osworld-gcp`、`infra/gcp/`。
 - **BREAKING** 删除 OSWorld 的历史测评记录 `benchmarks/osworld/` 与写入它的 `osworld/record.py`；本次不为 WAA 新建对应的记录文件。
@@ -36,7 +36,7 @@ jev 的桌面测评目前只有 OSWorld：任务跑在 Ubuntu 虚拟机里，无
 
 ## Impact
 
-- **代码**：删除 `typesafe_computer_use/osworld/`；新增 `typesafe_computer_use/waa/`（agent、Desktop 适配层、虚拟机内的 UIA 遍历脚本、树的解析、结果读取）；`windows.py` 的纯规则可能需要拆出，以便在虚拟机内的脚本里复用而不导入 pywin32。`runner.py`、`perception.py`、`actions.py`、`dates.py`、`platform_adapter.py` 里提到 OSWorld 的注释改为 WAA 或删除。
+- **代码**：删除 `yuanji_computer_use/osworld/`；新增 `yuanji_computer_use/waa/`（agent、Desktop 适配层、虚拟机内的 UIA 遍历脚本、树的解析、结果读取）；`windows.py` 的纯规则可能需要拆出，以便在虚拟机内的脚本里复用而不导入 pywin32。`runner.py`、`perception.py`、`actions.py`、`dates.py`、`platform_adapter.py` 里提到 OSWorld 的注释改为 WAA 或删除。
 - **依赖**：jev 自身的依赖不变；WAA 客户端在镜像内有一份自己的 Python 3.12 锁文件。WAA 评估器依赖的部分包（`numpy`、`gymnasium`、`pydrive`、`borb`、`librosa`、`easyocr` 等）需要升级到支持 3.12 的版本，升级后评估器的行为要逐一验证。`pyproject.toml` 中 OSWorld overlay 的 ruff 例外删除，改为 WAA overlay 的。
 - **环境**：需要有 `/dev/kvm` 的 Linux 主机与 Docker；本机（WSL2）满足。需要手动下载 Windows 11 Enterprise 评估版 ISO（约 6 GB，90 天评估期），golden image 约 30 GB，准备一次约 20 分钟；评估期过后需重新准备。Windows 虚拟机默认占 8 GB 内存与 8 个 CPU 核。
 - **测试**：删除 `tests/test_osworld_*.py` 与 `tests/fixtures/osworld/`；新增 WAA 适配层、UIA 树解析、结果读取与 `scripts/waa` 的离线测试，以及从 WAA 虚拟机保存的 UIA 树 fixture。`tests/test_import_boundaries.py` 中的 OSWorld 条目改为 WAA；`tests/conftest.py` 的机器守护保持不变。

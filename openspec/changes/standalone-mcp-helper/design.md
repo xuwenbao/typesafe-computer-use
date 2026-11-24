@@ -19,7 +19,7 @@ jev 现在只有一种用法：人在终端里运行 `clicker "目标" --act`。
 
 已有的两层边界正好是 MCP 需要的两级工具：`runner.run(RunConfig, ctx_factory)` 是与命令行无关的整段循环；`platform_adapter.Desktop` 是全部感知与动作原语，`using(adapter)` 能在一段调用里换上包装。
 
-商业产品的做法见 `proposal.md`。本次的安装形态仍是 Codex 在 Windows 上的那种：一个用户态 exe，按用户装到 `%LOCALAPPDATA%\Programs\jev\`，不注册服务。操作屏幕的代码就在 `jev mcp` 这个进程里，不再另起助手。
+商业产品的做法见 `proposal.md`。本次的安装形态仍是 Codex 在 Windows 上的那种：一个用户态 exe，按用户装到 `%LOCALAPPDATA%\Programs\clicker\`，不注册服务。操作屏幕的代码就在 `clicker mcp` 这个进程里，不再另起助手。
 
 ## Goals / Non-Goals
 
@@ -27,7 +27,7 @@ jev 现在只有一种用法：人在终端里运行 `clicker "目标" --act`。
 
 - 其他智能体经 MCP 把一个目标交给 jev，得到答案和过程（VISION：「交接时带上过程」）。
 - 调用方要亲自控制时，可以用 jev 的感知（编号元素加标注图）和动作原语。
-- jev 与宿主分开安装：一个 `jev.exe`，智能体启动 `jev mcp` 之后，工具调用就在这个进程里执行。
+- jev 与宿主分开安装：一个 `clicker.exe`，智能体启动 `clicker mcp` 之后，工具调用就在这个进程里执行。
 - 现有 `clicker`、`clicker-inspect`、WAA、沙盒的用法与行为不变。
 
 **Non-Goals:**
@@ -37,21 +37,21 @@ jev 现在只有一种用法：人在终端里运行 `clicker "目标" --act`。
 
 ## Decisions
 
-### 1. 单进程：`jev mcp` 直接操作屏幕
+### 1. 单进程：`clicker mcp` 直接操作屏幕
 
 ```mermaid
 flowchart LR
-  agentA["智能体 A"] -->|"stdio"| mcpA["jev.exe mcp"]
-  agentB["智能体 B"] -->|"stdio"| mcpB["jev.exe mcp"]
+  agentA["智能体 A"] -->|"stdio"| mcpA["clicker.exe mcp"]
+  agentB["智能体 B"] -->|"stdio"| mcpB["clicker.exe mcp"]
   mcpA --> deskLock["本用户的命名互斥量"]
   mcpB --> deskLock
   deskLock --> desk["屏幕、鼠标、键盘"]
 ```
 
-- 一个冻结产物 `jev.exe`。`helper/cli.py` 只分发 `mcp` 和 `status`。`jev mcp` 走 `helper/front.py`（FastMCP）。模块顶层只导入前端和 FastMCP；`Service`、平台适配器和感知在第一次工具调用时、在函数内部导入。导入边界测试保证 `helper.front` 的模块层不导入 `platform_adapter`、`perception`、`windows` 或模型，并且只有 `desk_lock` 导入 `win32event`。
+- 一个冻结产物 `clicker.exe`。`helper/cli.py` 只分发 `mcp` 和 `status`。`clicker mcp` 走 `helper/front.py`（FastMCP）。模块顶层只导入前端和 FastMCP；`Service`、平台适配器和感知在第一次工具调用时、在函数内部导入。导入边界测试保证 `helper.front` 的模块层不导入 `platform_adapter`、`perception`、`windows` 或模型，并且只有 `desk_lock` 导入 `win32event`。
 - 第一次调用时 `Local._ensure` 依次做这几件事：把 stdout 和 stderr 指到 `state/jev.log`（这时 MCP 的 stdio 传输已经拿到了它自己的 stdout 句柄），读入用户目录的 `.env`，创建 `Service`，再用 `ancestors()` 算出 `Gate(host_apps(...))`。
 - `call` 用 `run_in_executor` 执行 `service.call`。捕获到 `CancelledError` 时调用 `service.cancel(call_id)` 再重新抛出。`ToolFailure` 转成 MCP 工具错误 `"<kind>: <message>"`。
-- 备选：两个进程，前端经命名管道把调用转给每用户一个的 `jev helper`。做过，然后合并掉：管道、线协议、对端签名、版本替换、`shutdown`、`jev stop` 和 10 分钟空闲退出都只为了把两个进程拆开。代价是每个智能体各加载一份模型，智能体重启 MCP 时要重新加载。
+- 备选：两个进程，前端经命名管道把调用转给每用户一个的 `clicker helper`。做过，然后合并掉：管道、线协议、对端签名、版本替换、`shutdown`、`clicker stop` 和 10 分钟空闲退出都只为了把两个进程拆开。代价是每个智能体各加载一份模型，智能体重启 MCP 时要重新加载。
 - 备选：Windows 服务。否决：服务跑在 session 0，SendInput 与 UI Automation 到不了用户桌面。
 
 ### 2. 本用户的命名互斥量
@@ -90,7 +90,7 @@ flowchart LR
 
 ### 6. 不反控
 
-调用方向只有一个：智能体调用 `jev mcp` 的工具，在这个进程里等结果。没有 elicitation，没有挂起令牌，没有 `expired`。
+调用方向只有一个：智能体调用 `clicker mcp` 的工具，在这个进程里等结果。没有 elicitation，没有挂起令牌，没有 `expired`。
 
 ### 7. 用户目录与安装
 
@@ -99,17 +99,17 @@ flowchart LR
 | `.env` | `%LOCALAPPDATA%\jev\` |
 | run 文件夹 | `%LOCALAPPDATA%\jev\runs\<时间戳>\` |
 | 日志 | `%LOCALAPPDATA%\jev\state\jev.log` |
-| 程序 | `%LOCALAPPDATA%\Programs\jev\jev.exe`，旁边是 `_internal\`、`models\`、`version.txt`、`mcp-config.json` |
+| 程序 | `%LOCALAPPDATA%\Programs\clicker\clicker.exe`，旁边是 `_internal\`、`models\`、`version.txt`、`mcp-config.json` |
 
 `JEV_HOME` 可以整体移走日志、run 和 `.env`。它不移动程序目录。`clicker` 的默认行为不变。
 
-没有 `jev install`，也没有 `runtimes`、`current.json` 或目录联接。分发物是 Inno Setup 的 `jev-setup-<版本>.exe`：`PrivilegesRequired=lowest`，固定装到 `{localappdata}\Programs\jev`，不需要管理员。升级和卸载时，`CloseApplications` 会关掉仍在运行的 `jev.exe`；正在进行的调用也会被中断，智能体要重新启动 MCP。没有 `jev stop`。完成页不显示 MCP 配置，同样内容写入 `mcp-config.json`。命令是安装目录里 `jev.exe` 的绝对路径，参数是 `mcp`。再次运行安装程序即升级，目录不变，已写好的 MCP 配置不用改。`jev status` 打印版本、`sys.executable`、用户目录，以及 exe 旁边有没有 `models\`。
+没有 `clicker install`，也没有 `runtimes`、`current.json` 或目录联接。分发物是 Inno Setup 的 `clicker-setup-<版本>.exe`：`PrivilegesRequired=lowest`，固定装到 `{localappdata}\Programs\clicker`，不需要管理员。升级和卸载时，`CloseApplications` 会关掉仍在运行的 `clicker.exe`；正在进行的调用也会被中断，智能体要重新启动 MCP。没有 `clicker stop`。完成页不显示 MCP 配置，同样内容写入 `mcp-config.json`。命令是安装目录里 `clicker.exe` 的绝对路径，参数是 `mcp`。再次运行安装程序即升级，目录不变，已写好的 MCP 配置不用改。`clicker status` 打印版本、`sys.executable`、用户目录，以及 exe 旁边有没有 `models\`。
 
-打包：`packaging/windows/jev.spec`（PyInstaller，单目录，`console=True`，包含 MCP 服务与 FastMCP，`collect_all("fastmcp")`，并对 `fastmcp`、`fastmcp-slim`、`mcp` 做 `copy_metadata`）。`scripts/build-helper.ps1` 构建、可选 `signtool` 签名、写 `version.txt`，再用 `HF_HUB_CACHE` 跑 `clicker-models fetch` 把模型放到 `build\helper\models`（必须是实体文件，不能是符号链接），然后用 Inno Setup 的 `ISCC` 编译 `packaging/windows/jev.iss`（`lzma2/max`，`DiskSpanning=yes`）。模型不经过 PyInstaller。冻结进程在 `jev_entry.py` 里、导入 huggingface_hub 之前，若 exe 旁边有 `models\`，就 `setdefault` `HF_HUB_CACHE` 并设置 `HF_HUB_OFFLINE=1`。
+打包：`packaging/windows/clicker.spec`（PyInstaller，单目录，`console=True`，包含 MCP 服务与 FastMCP，`collect_all("fastmcp")`，并对 `fastmcp`、`fastmcp-slim`、`mcp` 做 `copy_metadata`）。`scripts/build-helper.ps1` 构建、可选 `signtool` 签名、写 `version.txt`，再用 `HF_HUB_CACHE` 跑 `clicker-models fetch` 把模型放到 `build\helper\models`（必须是实体文件，不能是符号链接），然后用 Inno Setup 的 `ISCC` 编译 `packaging/windows/clicker.iss`（`lzma2/max`，`DiskSpanning=yes`）。模型不经过 PyInstaller。冻结进程在 `clicker_entry.py` 里、导入 huggingface_hub 之前，若 exe 旁边有 `models\`，就 `setdefault` `HF_HUB_CACHE` 并设置 `HF_HUB_OFFLINE=1`。
 
-- 备选：`jev install` 加版本目录和联接。否决：用户要的是一次安装就能用，安装程序覆盖固定目录，MCP 路径不用改。
+- 备选：`clicker install` 加版本目录和联接。否决：用户要的是一次安装就能用，安装程序覆盖固定目录，MCP 路径不用改。
 - 备选：模型不进包，第一次使用再下载。否决：那样安装完还不能用。代价是安装包约 3 GB，代码更新也要带上模型。
-- 备选：升级时若有调用在跑就中止安装、不关进程。合并成单进程之后没有单独的助手可查询空闲，安装程序直接关掉仍占用文件的 `jev.exe`。
+- 备选：升级时若有调用在跑就中止安装、不关进程。合并成单进程之后没有单独的助手可查询空闲，安装程序直接关掉仍占用文件的 `clicker.exe`。
 
 ### 8. 测试与机器守护
 

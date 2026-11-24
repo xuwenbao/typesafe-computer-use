@@ -8,11 +8,11 @@ import anthropic
 import pytest
 from PIL import Image
 
-from typesafe_computer_use import runner, writer
-from typesafe_computer_use.actions import Context
-from typesafe_computer_use.models import Field, Guidance, Item, Popup
-from typesafe_computer_use.runner import RunConfig, RunState, answer_last, hand_off, resolve, wants_driver
-from typesafe_computer_use.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
+from yuanji_computer_use import runner, writer
+from yuanji_computer_use.actions import Context
+from yuanji_computer_use.models import Field, Guidance, Item, Popup
+from yuanji_computer_use.runner import RunConfig, RunState, answer_last, hand_off, resolve, wants_driver
+from yuanji_computer_use.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
 
 GOAL = "find the next upcoming bruno mars concert"
 

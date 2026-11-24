@@ -1,4 +1,4 @@
-﻿; Per-user installer for jev. One run leaves jev.exe and its models ready to use.
+﻿; Per-user installer for jev. One run leaves clicker.exe and its models ready to use.
 ; Build it with scripts\build-helper.ps1, which passes /DVersion. No admin rights.
 ; Keep this file UTF-8 with a BOM: without it ISCC reads the Chinese text in the ANSI code page.
 
@@ -8,7 +8,7 @@
 ; Absolute paths, passed by the build script. A relative path that still contains ".." can exceed
 ; the 260-character limit on a long checkout path before Windows normalizes it.
 #ifndef DistDir
-  #define DistDir "..\..\build\helper\dist\jev"
+  #define DistDir "..\..\build\helper\dist\clicker"
 #endif
 #ifndef ModelsDir
   #define ModelsDir "..\..\build\helper\models"
@@ -26,7 +26,7 @@
   #define GuideFile "如何接入智能体.txt"
 #endif
 
-#define AppExe "jev.exe"
+#define AppExe "clicker.exe"
 
 [Setup]
 AppId={{7C4E9A21-5B18-4D6F-A3E2-91F0C8B64D27}}
@@ -34,7 +34,7 @@ AppName=jev
 AppVersion={#Version}
 AppPublisher=jev
 VersionInfoVersion={#Version}
-DefaultDirName={localappdata}\Programs\jev
+DefaultDirName={localappdata}\Programs\clicker
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 UsePreviousAppDir=no
@@ -42,7 +42,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 OutputDir=..\..\dist
-OutputBaseFilename=jev-setup-{#Version}
+OutputBaseFilename=clicker-setup-{#Version}
 Compression=lzma2/max
 SolidCompression=no
 DiskSpanning=yes

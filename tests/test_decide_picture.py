@@ -8,9 +8,9 @@ from PIL import Image
 from typesafe_sdk import TypeSafeAPIError, TypeSafeAuthenticationError, TypeSafeBadRequestError
 from world import FakeTypeSafe, Page, World, drive, scripted
 
-from typesafe_computer_use.decide import IMAGES_HEADER, SCREEN_IMAGE, decide, refuses_the_picture, verify_typed
-from typesafe_computer_use.models import Field
-from typesafe_computer_use.parse.marks import marks
+from yuanji_computer_use.decide import IMAGES_HEADER, SCREEN_IMAGE, decide, refuses_the_picture, verify_typed
+from yuanji_computer_use.models import Field
+from yuanji_computer_use.parse.marks import marks
 
 
 def answer(choice, confidence=0.9):

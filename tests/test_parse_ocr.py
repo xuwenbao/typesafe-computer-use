@@ -10,7 +10,7 @@ import types
 import numpy as np
 import pytest
 
-from typesafe_computer_use.parse import ocr
+from yuanji_computer_use.parse import ocr
 
 REAL_ENGINE = ocr._engine  # taken at import, before the guard in conftest.py stands in for it
 
@@ -105,7 +105,7 @@ def test_a_box_with_no_ink_or_off_the_image_stays_as_it_is():
 
 def test_hugged_menu_entries_stay_apart_where_padded_ones_read_as_one_paragraph():
     """Chrome's settings sidebar at 1x: 16-pixel text every 40 pixels, which RapidOCR boxes 25 high."""
-    from typesafe_computer_use.perception import merge_blocks
+    from yuanji_computer_use.perception import merge_blocks
 
     tops = (345, 385, 425)
     image = page(strokes=[(128, top + 5, 220, top + 20) for top in (y - 300 for y in tops)])

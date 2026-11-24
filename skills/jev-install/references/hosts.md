@@ -1,8 +1,8 @@
 # 宿主路径
 
-命令一律是安装目录里 `jev.exe` 的绝对路径，参数是 `mcp`。默认目录是 `%LOCALAPPDATA%\Programs\jev\jev.exe`。
+命令一律是安装目录里 `clicker.exe` 的绝对路径，参数是 `mcp`。默认目录是 `%LOCALAPPDATA%\Programs\clicker\clicker.exe`。
 
-`jev setup` 只合并或追加名为 `jev` 的那一条。确认不了的路径它只打印，不写入。
+`clicker setup` 只合并或追加名为 `jev` 的那一条。确认不了的路径它只打印，不写入。
 
 | 宿主 | 配置 | 技能目录 | 重新加载 |
 |---|---|---|---|

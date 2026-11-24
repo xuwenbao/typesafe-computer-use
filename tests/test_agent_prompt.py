@@ -1,4 +1,4 @@
-"""The prompt the installer leaves beside jev.exe is the one the docs show."""
+"""The prompt the installer leaves beside clicker.exe is the one the docs show."""
 
 from pathlib import Path
 
@@ -13,7 +13,7 @@ def test_the_docs_show_the_installed_prompt_word_for_word():
 
 
 def test_the_installer_ships_the_prompt():
-    raw = (ROOT / "packaging" / "windows" / "jev.iss").read_bytes()
+    raw = (ROOT / "packaging" / "windows" / "clicker.iss").read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf"), "ISCC reads a file without a BOM in the ANSI code page"
     script = raw.decode("utf-8-sig")
     assert "agent-prompt.md" in script
@@ -28,7 +28,7 @@ def test_the_installer_ships_the_prompt():
 
 def test_every_document_the_prompt_names_is_installed():
     prompt = (ROOT / "packaging" / "windows" / "agent-prompt.md").read_text(encoding="utf-8")
-    script = (ROOT / "packaging" / "windows" / "jev.iss").read_text(encoding="utf-8-sig")
+    script = (ROOT / "packaging" / "windows" / "clicker.iss").read_text(encoding="utf-8-sig")
     assert "http" not in prompt, "a link to a branch that does not have the file yet returns 404"
     assert r'DestDir: "{app}\skills\jev-install"' in script
     for part in ("skills\\jev\\references\\tools.md", "skills\\jev-install\\references\\hosts.md"):

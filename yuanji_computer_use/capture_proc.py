@@ -15,10 +15,10 @@ def main() -> None:
 
     png = sys.argv[1]
     browser = sys.argv[2] if len(sys.argv) > 2 else ""
-    from typesafe_computer_use.windows_session import attach_input_desktop
+    from yuanji_computer_use.windows_session import attach_input_desktop
 
     attach_input_desktop()
-    from typesafe_computer_use.windows import browser_url, focused_field, screenshot
+    from yuanji_computer_use.windows import browser_url, focused_field, screenshot
 
     screenshot().save(png)
     print("shot", flush=True)

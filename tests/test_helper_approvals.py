@@ -5,11 +5,11 @@ import threading
 import pytest
 from helper_fakes import FakeDesktop
 
-from typesafe_computer_use import windows
-from typesafe_computer_use.helper import approvals
-from typesafe_computer_use.helper.approvals import Denied, Gate, app_key, host_apps
-from typesafe_computer_use.helper.guard import CANCELLED, GuardedDesktop
-from typesafe_computer_use.models import Abort
+from yuanji_computer_use import windows
+from yuanji_computer_use.helper import approvals
+from yuanji_computer_use.helper.approvals import Denied, Gate, app_key, host_apps
+from yuanji_computer_use.helper.guard import CANCELLED, GuardedDesktop
+from yuanji_computer_use.models import Abort
 
 
 def test_the_browser_names_are_the_windows_adapters():
@@ -35,7 +35,7 @@ def test_the_agent_and_its_launchers_are_host_apps_but_the_desktop_is_not():
 
 
 @pytest.mark.parametrize(
-    "app", ["cmd.exe", "WindowsTerminal.exe", "powershell.exe", "consent.exe", "jev.exe", "SystemSettings.exe"]
+    "app", ["cmd.exe", "WindowsTerminal.exe", "powershell.exe", "consent.exe", "clicker.exe", "jev.exe", "SystemSettings.exe"]
 )
 def test_never_driven_apps_are_refused_without_a_question(app):
     with pytest.raises(Denied, match="never driven"):

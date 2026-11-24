@@ -1,14 +1,14 @@
-"""`jev setup` prints a change, and writes only when asked. Nothing here touches a real home directory."""
+"""`clicker setup` prints a change, and writes only when asked. Nothing here touches a real home directory."""
 
 import json
 
 import pytest
 
-from typesafe_computer_use.helper import setup
+from yuanji_computer_use.helper import setup
 
 
 def _main(tmp_path, argv, **kwargs):
-    exe = kwargs.pop("exe", tmp_path / "app" / "jev.exe")
+    exe = kwargs.pop("exe", tmp_path / "app" / "clicker.exe")
     return setup.main(argv, exe=exe, home=tmp_path / "home", appdata=tmp_path / "roaming", **kwargs)
 
 
@@ -49,7 +49,7 @@ def test_a_terminal_writes_only_after_yes(tmp_path, capsys, monkeypatch):
     assert (tmp_path / "home" / ".cursor" / "skills" / "jev" / "SKILL.md").is_file()
     out = capsys.readouterr().out
     assert "已新建" in out
-    assert "jev setup --key" in out
+    assert "clicker setup --key" in out
 
 
 def test_a_host_already_configured_is_listed_first_and_is_the_default(tmp_path, capsys, monkeypatch):
@@ -133,10 +133,10 @@ def test_skipping_the_writer_leaves_a_todo(tmp_path, capsys, monkeypatch):
     assert not (tmp_path / "jev" / ".env").exists()
 
 
-def test_a_checkout_points_at_its_jev_script(tmp_path, monkeypatch):
+def test_a_checkout_points_at_its_clicker_script(tmp_path, monkeypatch):
     script = tmp_path / "venv" / ("Scripts" if setup.sys.platform == "win32" else "bin")
     script.mkdir(parents=True)
-    name = "jev.exe" if setup.sys.platform == "win32" else "jev"
+    name = "clicker.exe" if setup.sys.platform == "win32" else "clicker"
     (script / name).write_text("", encoding="utf-8")
     monkeypatch.setattr(setup.sys, "prefix", str(tmp_path / "venv"))
     monkeypatch.delattr(setup.sys, "frozen", raising=False)
@@ -147,7 +147,7 @@ def test_a_checkout_points_at_its_jev_script(tmp_path, monkeypatch):
 
 
 def test_a_frozen_build_points_at_itself(tmp_path, monkeypatch):
-    exe = tmp_path / "jev.exe"
+    exe = tmp_path / "clicker.exe"
     exe.write_text("", encoding="utf-8")
     monkeypatch.setattr(setup.sys, "frozen", True, raising=False)
     monkeypatch.setattr(setup.sys, "executable", str(exe))
@@ -158,7 +158,7 @@ def test_workbuddy_merges_its_config_and_copies_the_skill(tmp_path):
     path = tmp_path / "home" / ".workbuddy" / "mcp.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}), encoding="utf-8")
-    exe = tmp_path / "app" / "jev.exe"
+    exe = tmp_path / "app" / "clicker.exe"
     source = exe.parent / "skills" / "jev"
     source.mkdir(parents=True)
     (source / "SKILL.md").write_text("skill", encoding="utf-8")
@@ -188,7 +188,7 @@ def test_json_merge_keeps_other_entries_and_writes_a_backup(tmp_path):
     path = tmp_path / "home" / ".cursor" / "mcp.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"theme": "dark", "mcpServers": {"other": {"command": "x"}}}), encoding="utf-8")
-    exe = tmp_path / "app" / "jev.exe"
+    exe = tmp_path / "app" / "clicker.exe"
     assert _main(tmp_path, ["--host", "cursor", "--write"], exe=exe) == 0
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["theme"] == "dark"
@@ -204,7 +204,7 @@ def test_a_different_jev_entry_needs_replace(tmp_path):
     path.write_text(original, encoding="utf-8")
     assert _main(tmp_path, ["--host", "cursor", "--write"]) == 2
     assert path.read_text(encoding="utf-8") == original
-    exe = tmp_path / "app" / "jev.exe"
+    exe = tmp_path / "app" / "clicker.exe"
     assert _main(tmp_path, ["--host", "cursor", "--write", "--replace"], exe=exe) == 0
     assert json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["jev"]["command"] == str(exe)
 
@@ -220,7 +220,7 @@ def test_codex_keeps_an_existing_section(tmp_path, capsys):
 
 
 def test_claude_code_prints_the_command_and_a_stand_in_runs_it(tmp_path):
-    exe = tmp_path / "app" / "jev.exe"
+    exe = tmp_path / "app" / "clicker.exe"
     ran = []
 
     def runner(command, cwd):
@@ -274,7 +274,7 @@ def test_key_keeps_the_other_variables(tmp_path, monkeypatch):
 
 
 def test_skill_copies_the_whole_directory(tmp_path):
-    exe = tmp_path / "app" / "jev.exe"
+    exe = tmp_path / "app" / "clicker.exe"
     source = exe.parent / "skills" / "jev"
     (source / "references").mkdir(parents=True)
     (source / "SKILL.md").write_text("skill", encoding="utf-8")

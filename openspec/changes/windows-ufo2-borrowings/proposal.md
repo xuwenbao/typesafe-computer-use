@@ -31,11 +31,11 @@ Microsoft 的 UFO2（[论文](https://arxiv.org/html/2504.14603)，[代码](http
 ## Impact
 
 - **代码**：
-  - `typesafe_computer_use/windows.py`：新的 UIA 操作方式、可用状态与操作方式的采集、子会话内运行所需的会话检测。
-  - `typesafe_computer_use/driver.py`、`writer.py`（`DRIVE_ACTIONS`、`DRIVE_SYSTEM`、`DriveStep`、`compose_drive_step`）：一次多步与 `set_value`。
+  - `yuanji_computer_use/windows.py`：新的 UIA 操作方式、可用状态与操作方式的采集、子会话内运行所需的会话检测。
+  - `yuanji_computer_use/driver.py`、`writer.py`（`DRIVE_ACTIONS`、`DRIVE_SYSTEM`、`DriveStep`、`compose_drive_step`）：一次多步与 `set_value`。
   - `config.py`：一批动作的上限。
   - 新增隔离会话模块（主桌面控制端与子会话内的服务端），以及对应的命令行入口；子会话内的提问复用现有的 `ctx.ask`，经命名管道转给控制端。
-  - `typesafe_computer_use/waa/`：虚拟机内的取树脚本输出新字段；UIA 操作方式在虚拟机里的执行。
+  - `yuanji_computer_use/waa/`：虚拟机内的取树脚本输出新字段；UIA 操作方式在虚拟机里的执行。
 - **依赖**：Windows 上可能需要 `pywin32` 中 WTS 与命名管道的接口（已是 Windows 依赖的一部分则不新增）。macOS 依赖不变。
 - **环境**：隔离会话需要 Windows 专业版、企业版或教育版并开启远程桌面；具体前提（子会话开关、组策略）在设计中确定，不满足时给出明确的报错，而不是退回到在主桌面运行。
 - **测试**：新增三项能力的离线测试。`tests/conftest.py` 的机器守护 SHALL 在同一变更中加入所有新的会触及机器的调用：UIA 新操作方式、子会话的创建与连接、命名管道。

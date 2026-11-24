@@ -18,7 +18,7 @@
 
 ## 3. `parse/` 感知模块
 
-- [x] 3.1 新建 `typesafe_computer_use/parse/` 子包；把 `ocr_rapid.py` 的 RapidOCR、`hug_ink`、`reading_order` 迁入 `parse/ocr.py`，原单测随之迁移
+- [x] 3.1 新建 `yuanji_computer_use/parse/` 子包；把 `ocr_rapid.py` 的 RapidOCR、`hug_ink`、`reading_order` 迁入 `parse/ocr.py`，原单测随之迁移
 - [x] 3.2 移植 YOLOv9-E TorchScript 推理到 `parse/detect.py`（letterbox、三层特征图解码、置信度过滤、`batched_nms`、坐标还原与裁剪），检测输入尺寸做成参数；不依赖 `ultralytics`
 - [x] 3.3 实现 `parse/fuse.py`（纯函数，不依赖 torch）：图标间 IoU 0.7 保留小框、文字行 80% 落在图标内则并入、图标 80% 落在文字行内则丢弃；为规格中的每个融合场景写单测
 - [x] 3.4 实现 `parse/caption.py`：裁剪、缩放到 64×64、`<CAPTION>`、贪心解码最多 20 个 token、按批推理；裁剪失败给空描述占位，没有无文字图标时不调用模型；配单测（模型用桩）

@@ -1,7 +1,7 @@
-"""What one `jev mcp` does for a tool call: jev's whole loop, one look at the screen, or one input.
+"""What one `clicker mcp` does for a tool call: jev's whole loop, one look at the screen, or one input.
 
 One call at a time on this computer: this process holds a lock, then the user's desktop mutex, so
-another `jev mcp` is refused too. A call that finds either one taken is refused as `busy`, never
+another `clicker mcp` is refused too. A call that finds either one taken is refused as `busy`, never
 queued. Every call drives the desktop through a `GuardedDesktop`, so the gate sees each input, and
 a cancel ends it at the next abort check.
 

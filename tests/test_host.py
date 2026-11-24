@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 from world import FakeWriter, Page, World, drive, scripted
 
-from typesafe_computer_use import host
-from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.report import Log
-from typesafe_computer_use.runner import RunConfig, RunState
+from yuanji_computer_use import host
+from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.report import Log
+from yuanji_computer_use.runner import RunConfig, RunState
 
 
 def _reply(body: dict):

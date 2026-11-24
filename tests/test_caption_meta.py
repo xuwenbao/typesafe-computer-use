@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from typesafe_computer_use.parse import caption as caption_mod
+from yuanji_computer_use.parse import caption as caption_mod
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("JEV_CAPTION_CHECK") != "1", reason="set JEV_CAPTION_CHECK=1 to load Florence-2 twice"
@@ -25,8 +25,8 @@ def test_the_meta_device_load_captions_like_the_eager_load(monkeypatch):
     from safetensors.torch import load_file
     from transformers import AutoProcessor, Florence2Config, Florence2ForConditionalGeneration
 
-    from typesafe_computer_use.parse import weights
-    from typesafe_computer_use.parse.runtime import torch_device
+    from yuanji_computer_use.parse import weights
+    from yuanji_computer_use.parse.runtime import torch_device
 
     pages = [Image.new("RGB", (64, 64), color) for color in ("white", "black", "red", "blue")]
     ruled = Image.new("RGB", (64, 64), "white")

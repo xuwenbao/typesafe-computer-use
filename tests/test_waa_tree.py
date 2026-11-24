@@ -5,10 +5,10 @@ import json
 import time
 from pathlib import Path
 
-from typesafe_computer_use import uia_roles, windows
-from typesafe_computer_use.models import Field
-from typesafe_computer_use.waa import tree
-from typesafe_computer_use.waa.walk_vm import INVOKE, LEGACY, VALUE, LiveElement, empty, walk
+from yuanji_computer_use import uia_roles, windows
+from yuanji_computer_use.models import Field
+from yuanji_computer_use.waa import tree
+from yuanji_computer_use.waa.walk_vm import INVOKE, LEGACY, VALUE, LiveElement, empty, walk
 
 FIXTURES = Path(__file__).parent / "fixtures" / "waa"
 DISPLAY = (1440.0, 900.0)

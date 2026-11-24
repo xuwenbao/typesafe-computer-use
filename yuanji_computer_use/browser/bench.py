@@ -1,8 +1,8 @@
 """Benchmark: browser-only computer use, DOM perception vs the original OCR path.
 
-    uv run python -m typesafe_computer_use.browser.bench perception --url https://news.ycombinator.com
-    uv run python -m typesafe_computer_use.browser.bench perception --fixture --n 8
-    uv run python -m typesafe_computer_use.browser.bench loop --fixture
+    uv run python -m yuanji_computer_use.browser.bench perception --url https://news.ycombinator.com
+    uv run python -m yuanji_computer_use.browser.bench perception --fixture --n 8
+    uv run python -m yuanji_computer_use.browser.bench loop --fixture
 
 `perception` is the headline: the same page, the same machine, the same moment.
 One path reads the DOM over CDP. The other does what the original does —

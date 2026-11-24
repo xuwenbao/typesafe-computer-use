@@ -1,6 +1,6 @@
 import pytest
 
-from typesafe_computer_use.parse.fuse import Icon, distinct_icons, fuse, inside, one_row, overlap
+from yuanji_computer_use.parse.fuse import Icon, distinct_icons, fuse, inside, one_row, overlap
 
 
 def line(text, x1, y1, x2, y2, conf=0.9):

@@ -50,6 +50,11 @@ def ask_user(question: str) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] in (["mcp"], ["status"], ["setup"]):
+        from .helper.cli import main as helper_main
+
+        helper_main(args)
+        return
     # 隔离会话只在 Windows 上导入。其它系统在导入之前就退出，避免把那条路径带进来。
     if args[:1] == ["session"]:
         if sys.platform != "win32":

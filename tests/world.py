@@ -22,12 +22,12 @@ from types import SimpleNamespace
 from PIL import Image
 from typesafe_sdk import Noul
 
-from typesafe_computer_use import actions, runner
-from typesafe_computer_use.actions import Context
-from typesafe_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
-from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.runner import RunConfig, RunState, run
-from typesafe_computer_use.writer import WriterError
+from yuanji_computer_use import actions, runner
+from yuanji_computer_use.actions import Context
+from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
+from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.runner import RunConfig, RunState, run
+from yuanji_computer_use.writer import WriterError
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -584,7 +584,7 @@ def drive(
     client = writer or FakeWriter()
     from scripted_driver import ScriptedModel
 
-    from typesafe_computer_use import driver_agent
+    from yuanji_computer_use import driver_agent
 
     scripts = getattr(client, "drives", None)
     packets = getattr(client, "drive_packets", None)

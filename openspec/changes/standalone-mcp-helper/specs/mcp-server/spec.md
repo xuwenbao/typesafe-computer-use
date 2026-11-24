@@ -78,21 +78,21 @@ jev 经 MCP 向其他智能体提供的工具：把一个目标交给 jev 跑完
 - **THEN** 该动作没有发出，返回的 `outcome` 以 `aborted` 开头，run 文件夹里有 `run.json`
 
 ### Requirement: 永远禁止操作的目标
-服务 MUST NOT 向以下目标发出任何输入：终端与 shell、`jev.exe` 自身、发起请求的宿主智能体（前端的祖先进程）、设置、任务管理器、锁屏与登录界面、UAC 提示。没有任何配置能解除这条限制。服务 MUST NOT 打开文件。
+服务 MUST NOT 向以下目标发出任何输入：终端与 shell、`clicker.exe` 自身、发起请求的宿主智能体（前端的祖先进程）、设置、任务管理器、锁屏与登录界面、UAC 提示。没有任何配置能解除这条限制。服务 MUST NOT 打开文件。
 
 #### Scenario: 宿主应用
 - **WHEN** 宿主是 Cursor，调用方在 Cursor 前台时调用 `press_key`
 - **THEN** 返回 `forbidden`，没有按键发生
 
 ### Requirement: 一次一个调用
-一个 `jev mcp` 进程 SHALL 同一时间只执行一个调用。另一个 `jev mcp` 正在操作这台电脑时，新的调用 SHALL 立即返回 `busy`。两种情况都不排队，也不影响正在运行的调用。
+一个 `clicker mcp` 进程 SHALL 同一时间只执行一个调用。另一个 `clicker mcp` 正在操作这台电脑时，新的调用 SHALL 立即返回 `busy`。两种情况都不排队，也不影响正在运行的调用。
 
 #### Scenario: 本进程已有调用
 - **WHEN** 一个 `run_goal` 正在运行，同一进程又收到 `click`
 - **THEN** 立即返回 `busy`，正在运行的循环不受影响
 
 #### Scenario: 另一个进程正在操作
-- **WHEN** 另一个 `jev mcp` 正持有这台电脑，本进程收到 `click`
+- **WHEN** 另一个 `clicker mcp` 正持有这台电脑，本进程收到 `click`
 - **THEN** 立即返回 `busy`，没有输入发生
 
 ### Requirement: 取消与急停
@@ -103,7 +103,7 @@ jev 经 MCP 向其他智能体提供的工具：把一个目标交给 jev 跑完
 - **THEN** 该调用在下一次急停检查时以 `cancelled by the client` 停止
 
 ### Requirement: 协议输出不被日志污染
-`jev mcp` MUST 只把 MCP 协议消息写到 stdout。第一次工具调用 SHALL 把之后的标准输出与标准错误指到用户目录下的 `jev.log`；一次运行的步骤日志 SHALL 写到该次的 run 文件夹。
+`clicker mcp` MUST 只把 MCP 协议消息写到 stdout。第一次工具调用 SHALL 把之后的标准输出与标准错误指到用户目录下的 `jev.log`；一次运行的步骤日志 SHALL 写到该次的 run 文件夹。
 
 #### Scenario: 运行日志
 - **WHEN** 一次调用里有打印，或一次 `run_goal` 产生步骤日志

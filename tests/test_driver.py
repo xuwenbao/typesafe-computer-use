@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from typesafe_computer_use import config, macos, windows
-from typesafe_computer_use.actions import Context, perform
-from typesafe_computer_use.decide import Decision
-from typesafe_computer_use.driver import (
+from yuanji_computer_use import config, macos, windows
+from yuanji_computer_use.actions import Context, perform
+from yuanji_computer_use.decide import Decision
+from yuanji_computer_use.driver import (
     BANNED,
     DONE_BEFORE,
     KEYS,
@@ -20,10 +20,10 @@ from typesafe_computer_use.driver import (
     _take,
     act,
 )
-from typesafe_computer_use.models import AxNode, Field, Item, signature
-from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.runner import UNCHANGED, RunState, screen_moved
-from typesafe_computer_use.writer import DriveStep, WriterError, _drive_step, _last_action, checked
+from yuanji_computer_use.models import AxNode, Field, Item, signature
+from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.runner import UNCHANGED, RunState, screen_moved
+from yuanji_computer_use.writer import DriveStep, WriterError, _drive_step, _last_action, checked
 
 
 @pytest.fixture
@@ -420,7 +420,7 @@ def test_a_second_cut_of_files_already_on_the_clipboard_presses_with_a_note(scre
 
 
 def test_a_cut_goes_ahead_when_the_key_the_files_or_the_clipboard_change(screen, machine, monkeypatch):
-    from typesafe_computer_use.actions import forget_clipboard
+    from yuanji_computer_use.actions import forget_clipboard
 
     both = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True)]
     held = {"files": (), "next": ()}

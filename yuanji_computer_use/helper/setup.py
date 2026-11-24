@@ -1,6 +1,6 @@
-"""Point an agent at the installed `jev.exe`, when the person at the keyboard says to.
+"""Point an agent at the installed `clicker.exe`, when the person at the keyboard says to.
 
-`jev setup` prints the change and writes nothing. `--write` is what stores it. A key is read
+`clicker setup` prints the change and writes nothing. `--write` is what stores it. A key is read
 only from a terminal, into the user's `.env`, and is never printed back.
 """
 
@@ -43,14 +43,14 @@ class SetupError(Exception):
 
 
 def program_exe() -> Path:
-    """What an agent starts. A frozen build is `jev.exe`; a checkout is the `jev` script in its environment,
+    """What an agent starts. A frozen build is `clicker.exe`; a checkout is the `clicker` script in its environment,
     since the interpreter alone would run `python mcp`."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
     windows = sys.platform == "win32"
-    script = Path(sys.prefix) / ("Scripts" if windows else "bin") / ("jev.exe" if windows else "jev")
+    script = Path(sys.prefix) / ("Scripts" if windows else "bin") / ("clicker.exe" if windows else "clicker")
     if not script.is_file():
-        raise SetupError(f"找不到 jev 命令：{script}。请从安装好的 jev.exe 运行 jev setup。")
+        raise SetupError(f"找不到 clicker 命令：{script}。请从安装好的 clicker.exe 运行 clicker setup。")
     return script
 
 
@@ -283,7 +283,7 @@ TYPESAFE_NOTE = "TYPESAFE_API_KEY：jev 每一步决定点哪里，用的是 Typ
 
 def read_key(is_tty, prompt=getpass) -> int:
     if not is_tty():
-        raise SetupError("请在你自己的终端里运行 jev setup --key，密钥不要经过智能体的对话。")
+        raise SetupError("请在你自己的终端里运行 clicker setup --key，密钥不要经过智能体的对话。")
     print(TYPESAFE_NOTE)
     print(f"它会保存到 {home.env_file()}，文件里的其他设置保持不变。")
     _ask_secret(ENTRY_KEY, "TypeSafe API key", prompt)
@@ -518,10 +518,10 @@ def _choose_writer(ask, done, todo) -> list[tuple[str, str, str]]:
     options = [
         ("OpenAI 官方", "填 OPENAI_API_KEY"),
         ("OpenAI 兼容服务", "DeepSeek、通义千问、自建服务等：填地址、模型和密钥"),
-        ("先跳过", "之后重新运行 jev setup 补上"),
+        ("先跳过", "之后重新运行 clicker setup 补上"),
     ]
     choice = _choose(ask, "写作模型用哪家服务?", options, 2 if _env_value(WRITER_URL) else 1)
-    later = "之后重新运行 jev setup 补上"
+    later = "之后重新运行 clicker setup 补上"
     if choice == 2:
         todo.append(f"还没有配置写作模型：{later}")
         return []
@@ -549,7 +549,7 @@ def _save_keys(ask, prompt, done, todo) -> None:
     print()
     secrets = _choose_writer(ask, done, todo)
     saved = []
-    for name, label, later in (*secrets, (ENTRY_KEY, "TypeSafe API key", "之后在终端运行 jev setup --key")):
+    for name, label, later in (*secrets, (ENTRY_KEY, "TypeSafe API key", "之后在终端运行 clicker setup --key")):
         print()
         if name == ENTRY_KEY:
             print(TYPESAFE_NOTE)
@@ -594,7 +594,7 @@ def _ask_setup(ask, exe: Path, home_dir: Path, appdata: Path, runner, which, pro
             print("已写入。")
         else:
             print("没有写入任何文件。")
-            todo.append("想接上助手时，重新运行 jev setup")
+            todo.append("想接上助手时，重新运行 clicker setup")
         _save_keys(ask, prompt, done, todo)
     except (KeyboardInterrupt, EOFError):
         print("\n已退出。之后的步骤没有执行。")
@@ -622,7 +622,7 @@ def main(
     is_tty=None,
     prompt=getpass,
 ) -> int:
-    parser = argparse.ArgumentParser(prog="jev setup", description="Show or write how an agent starts jev.")
+    parser = argparse.ArgumentParser(prog="clicker setup", description="Show or write how an agent starts jev.")
     parser.add_argument("--host", choices=HOSTS)
     parser.add_argument("--scope", choices=("user", "project"), default="user")
     parser.add_argument("--project", type=Path)
@@ -642,7 +642,7 @@ def main(
         if args.host is None:
             tty = sys.stdin.isatty if is_tty is None else is_tty
             if not tty():
-                raise SetupError("请在你自己的终端里运行 jev setup，或加上 --host。")
+                raise SetupError("请在你自己的终端里运行 clicker setup，或加上 --host。")
             return _ask_setup(ask, chosen, home or folder, appdata or roaming, runner, which, prompt)
         project = args.project or Path.cwd()
         apply(

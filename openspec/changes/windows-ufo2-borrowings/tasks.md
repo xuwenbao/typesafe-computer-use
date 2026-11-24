@@ -31,7 +31,7 @@
 
 ## 5. 隔离会话
 
-- [x] 5.1 新增 `typesafe_computer_use/windows_session.py`，只在执行 `clicker session` 时导入。`cli.py` 增加该子命令。验证：`tests/test_import_boundaries.py` 断言 macOS 的导入路径不包含它；在非 Windows 上执行子命令的测试断言报错且没有启动进程
+- [x] 5.1 新增 `yuanji_computer_use/windows_session.py`，只在执行 `clicker session` 时导入。`cli.py` 增加该子命令。验证：`tests/test_import_boundaries.py` 断言 macOS 的导入路径不包含它；在非 Windows 上执行子命令的测试断言报错且没有启动进程
 - [x] 5.2 实现前提检查：专业版、企业版或教育版，远程桌面能连 `localhost`，不是智能卡登录，没有另一个子会话。任一不成立就报出原因并退出，不在控制台会话运行 jev。验证：把检查拆成纯函数，单测逐条覆盖家庭版、已有子会话、连不上本机
 - [x] 5.3 控制端启用子会话、嵌入远程桌面控件、创建只允许当前用户且拒绝远程客户端的命名管道。控制端不导入平台适配器。消息类型限于 `task`、`log`、`progress`、`question`、`answer`、`cancel`、`done`。验证：消息的编码与解码有单测覆盖全部七种类型；另有一条测试断言控制端模块不导入 `platform_adapter`
 - [x] 5.4 子会话里的 `ctx.ask` 把问题写成 `question` 并等待 `answer`；`cancel` 走现有的中止路径。验证：用一对假管道覆盖提问得到回答、以及取消后 `check_abort` 触发

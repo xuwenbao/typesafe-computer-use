@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from huggingface_hub.errors import LocalEntryNotFoundError
 
-from typesafe_computer_use.parse import weights
+from yuanji_computer_use.parse import weights
 
 
 @pytest.fixture(autouse=True)

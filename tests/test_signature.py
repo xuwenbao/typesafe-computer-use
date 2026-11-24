@@ -1,9 +1,9 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from typesafe_computer_use.decide import Decision
-from typesafe_computer_use.models import LINES_PER_DIFFERENCE, Field, same_screen, signature
-from typesafe_computer_use.runner import MAX_REPEATS, RunState, answers, earlier_screens, repeating, tried_here
+from yuanji_computer_use.decide import Decision
+from yuanji_computer_use.models import LINES_PER_DIFFERENCE, Field, same_screen, signature
+from yuanji_computer_use.runner import MAX_REPEATS, RunState, answers, earlier_screens, repeating, tried_here
 
 
 def texts(*words: str):

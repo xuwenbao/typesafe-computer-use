@@ -1,4 +1,4 @@
-"""`python -m typesafe_computer_use ...`, for when the installed clicker/clicker-inspect exes are blocked.
+"""`python -m yuanji_computer_use ...`, for when the installed clicker/clicker-inspect exes are blocked.
 
 `clicker` args pass straight through; prefix with `inspect` to reach clicker-inspect instead.
 """

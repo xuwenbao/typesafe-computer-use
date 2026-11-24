@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import socket
 
-from typesafe_computer_use.models import Abort
+from yuanji_computer_use.models import Abort
 
 
 class SocketStream:

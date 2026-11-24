@@ -1,11 +1,11 @@
-"""The MCP server inside `jev.exe`: `jev mcp` is what other agents start.
+"""The MCP server inside `clicker.exe`: `clicker mcp` is what other agents start.
 
 It stays light until the first tool call (no PyTorch, no perception, no desktop). That call loads
 the models, then drives this computer in this process. A call is one tool and its result. jev
 never asks the user or the agent a question. Cancelling the call stops it at the next input.
 
 Its stdout carries the MCP protocol and nothing else. The first call sends later prints to
-`state/jev.log`. `jev status` lives in `helper.cli`.
+`state/jev.log`. `clicker status` lives in `helper.cli`.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ process or in another jev, fails as busy.
 
 def helper_version() -> str:
     try:
-        return version("typesafe-computer-use")
+        return version("yuanji-computer-use")
     except PackageNotFoundError:
         return "unknown"
 

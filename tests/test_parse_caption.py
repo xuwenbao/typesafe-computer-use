@@ -1,7 +1,7 @@
 import pytest
 from PIL import Image, ImageDraw
 
-from typesafe_computer_use.parse.caption import CROP_PX, IMAGE_TOKENS, CaptionCache, caption, crop, key, native_name, native_state
+from yuanji_computer_use.parse.caption import CROP_PX, IMAGE_TOKENS, CaptionCache, caption, crop, key, native_name, native_state
 
 
 def toolbar():

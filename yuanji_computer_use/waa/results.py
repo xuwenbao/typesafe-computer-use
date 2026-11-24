@@ -9,7 +9,7 @@ its own run folder there, `jev/`, whose `run.json` holds the outcome, the tokens
 more and, apart, over the tasks that scored below 1. A task with no score is listed, not averaged.
 Earlier runs that `scripts/waa` moved aside live under `<results>/archive/` and are left out.
 
-    python -m typesafe_computer_use.waa.results [results folder]
+    python -m yuanji_computer_use.waa.results [results folder]
 """
 
 from __future__ import annotations
@@ -271,7 +271,7 @@ def summarize(results: list[TaskResult]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if len(args) > 1:
-        print("usage: python -m typesafe_computer_use.waa.results [results folder]", file=sys.stderr)
+        print("usage: python -m yuanji_computer_use.waa.results [results folder]", file=sys.stderr)
         return 2
     root = Path(args[0] if args else "results")
     results = read(root)

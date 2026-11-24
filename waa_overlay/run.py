@@ -18,7 +18,7 @@ from tqdm import tqdm
 import lib_run_single
 from desktop_env.envs.desktop_env import DesktopEnv
 from mm_agents.jev.agent import JevAgent, browser_for  # jev: the only agent this copy builds
-from typesafe_computer_use.waa.chrome import chrome_cdp_config, install_chrome_setup  # jev: Chrome's debugging port needs a private profile
+from yuanji_computer_use.waa.chrome import chrome_cdp_config, install_chrome_setup  # jev: Chrome's debugging port needs a private profile
 import requests
 import time
 

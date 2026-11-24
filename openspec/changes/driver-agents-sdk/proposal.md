@@ -27,7 +27,7 @@
 
 ## Impact
 
-- 代码：`typesafe_computer_use/driver.py`（接管里向模型提问的部分改为 Agents SDK 的工具循环，动作执行和防打转逻辑留在原处）；`writer.py`（`DRIVE_SYSTEM`、`compose_drive`、`DRIVE_PROPERTIES` 移到驱动的 agent 定义中）；`config.py`（接口为 `anthropic` 时关闭驱动）；`runner.py`（`driver_ready` 判断接口）。
+- 代码：`yuanji_computer_use/driver.py`（接管里向模型提问的部分改为 Agents SDK 的工具循环，动作执行和防打转逻辑留在原处）；`writer.py`（`DRIVE_SYSTEM`、`compose_drive`、`DRIVE_PROPERTIES` 移到驱动的 agent 定义中）；`config.py`（接口为 `anthropic` 时关闭驱动）；`runner.py`（`driver_ready` 判断接口）。
 - 平台适配器：`windows.py`、`macos.py` 和 WAA 的 `waa/desktop.py` 增加「读元素原文」。这是新增的碰机器调用，同一变更里要加进 `tests/conftest.py` 的拦截。
 - 依赖：新增 `openai-agents==0.20.0`，这是最后一个与现有 `openai==2.54.0` 兼容的版本。WAA 客户端镜像需要重建（`scripts/waa setup`，需要单独批准），Windows 画中画用的 venv 需要重新 `uv sync`。
 - 测试：用不联网的假模型驱动工具循环；删除或改写只针对单 JSON 驱动的测试。已知的 10 个失败测试保持不动。

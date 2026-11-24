@@ -1,12 +1,12 @@
 # The sandbox computer. Drive it with scripts/sandbox; see docs/sandbox.md.
 # One name for every checkout and worktree, so there is only ever one sandbox on port 6080.
-name: typesafe-computer-use-sandbox
+name: yuanji-computer-use-sandbox
 services:
   sandbox:
     build:
       context: .
       dockerfile: sandbox/Dockerfile
-    image: typesafe-computer-use-sandbox
+    image: yuanji-computer-use-sandbox
     init: true
     volumes:
       - .:/work                      # the source, live: edits apply to the next run

@@ -11,10 +11,10 @@ from agents.tracing import get_trace_provider
 from PIL import Image
 from scripted_driver import ScriptedModel
 
-from typesafe_computer_use import driver_agent, macos
-from typesafe_computer_use.config import reset_settings
-from typesafe_computer_use.driver import load_driver_record, take_over
-from typesafe_computer_use.driver_agent import (
+from yuanji_computer_use import driver_agent, macos
+from yuanji_computer_use.config import reset_settings
+from yuanji_computer_use.driver import load_driver_record, take_over
+from yuanji_computer_use.driver_agent import (
     INSTRUCTIONS,
     KEEP_SCREENS,
     TOOLS,
@@ -25,10 +25,10 @@ from typesafe_computer_use.driver_agent import (
     screen_message,
     screen_packet,
 )
-from typesafe_computer_use.models import Abort, Item
-from typesafe_computer_use.platform_adapter import desktop
-from typesafe_computer_use.runner import RunConfig, RunState
-from typesafe_computer_use.writer import PLACEHOLDER_KEY
+from yuanji_computer_use.models import Abort, Item
+from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.runner import RunConfig, RunState
+from yuanji_computer_use.writer import PLACEHOLDER_KEY
 
 _MAC_ELEMENT_TEXT = macos.element_text
 LARGE = (Path(__file__).parent / "fixtures" / "largefile.txt").read_text(encoding="utf-8")
@@ -39,7 +39,7 @@ def _request():
 
 
 def test_importing_the_driver_disables_tracing():
-    import typesafe_computer_use.driver  # noqa: F401
+    import yuanji_computer_use.driver  # noqa: F401
 
     assert get_trace_provider()._disabled is True
 
@@ -67,7 +67,7 @@ def test_macos_element_text_is_the_accessibility_value(monkeypatch):
 
 
 def _turn(text: str = "Save", ref=None) -> Turn:
-    from typesafe_computer_use.models import Screen
+    from yuanji_computer_use.models import Screen
 
     shown = Screen(image=Image.new("RGB", (20, 20)), scale=1.0, app="Notes", field=None, url=None)
     item = Item(0, text, 1.0, 0, 0, 20, 20)
@@ -210,7 +210,7 @@ def _drive(monkeypatch, tmp_path, screen, scripts):
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     clicks = []
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: clicks.append(args))
-    from typesafe_computer_use import runner
+    from yuanji_computer_use import runner
 
     def look(cfg, ctx, state, log):
         state.view = (screen, [])
@@ -343,7 +343,7 @@ def test_an_offline_takeover_records_the_read_the_count_and_the_action(monkeypat
 def test_a_takeover_records_the_seconds_the_driver_spent(monkeypatch, tmp_path):
     from world import FakeWriter, Page, World, drive
 
-    from typesafe_computer_use import driver
+    from yuanji_computer_use import driver
 
     clock = {"t": 0.0}
 

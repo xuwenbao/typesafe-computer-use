@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/banner.svg" alt="typesafe-computer-use" width="100%">
+  <img src="docs/banner.svg" alt="yuanji-computer-use" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/awlevin/typesafe-computer-use/actions/workflows/ci.yaml"><img alt="CI" src="https://github.com/awlevin/typesafe-computer-use/actions/workflows/ci.yaml/badge.svg"></a>
+  <a href="https://github.com/xuwenbao/yuanji-computer-use/actions/workflows/ci.yaml"><img alt="CI" src="https://github.com/xuwenbao/yuanji-computer-use/actions/workflows/ci.yaml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
   <img alt="macOS, Windows experimental" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20(experimental)-000000">
@@ -11,7 +11,7 @@
   <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json"></a>
 </p>
 
-**typesafe-computer-use** (jev for short) drives a Mac toward a goal you type in plain English,
+**yuanji-computer-use** (jev for short) drives a Mac toward a goal you type in plain English,
 for about a fiftieth of a cent per step. It reads the screen deterministically, asks a small
 classifier which action comes next, and only calls a writing model when a text field genuinely
 needs free text or the classifier has stopped and the screen needs reading.
@@ -28,7 +28,7 @@ clicker "go to techcrunch and take me to the checkout page for the cheapest tick
 ```
 
 > **Beta.** This is under heavy development. Expect rough edges, and expect settings and
-> behavior to change between 0.x [releases](https://github.com/awlevin/typesafe-computer-use/releases).
+> behavior to change between 0.x [releases](https://github.com/xuwenbao/yuanji-computer-use/releases).
 > It drives your real mouse and keyboard, so start with a dry run.
 
 ## Why a classifier
@@ -72,8 +72,8 @@ or Education, `clicker session` runs the task in a child session; see
 build for it.
 
 ```
-git clone https://github.com/awlevin/typesafe-computer-use
-cd typesafe-computer-use
+git clone https://github.com/xuwenbao/yuanji-computer-use
+cd yuanji-computer-use
 uv sync
 uv run clicker-models fetch   # the perception's model files, about 1.4 GB, once
 cp .env.example .env          # fill in the keys
@@ -160,9 +160,9 @@ KVM, including on WSL2; see [WindowsAgentArena](docs/waa.md).
 - [Browser backend](docs/browser-backend.md): DOM perception over Chrome DevTools, no OCR, no screen permission
 - [Writer endpoints](docs/writer-endpoints.md): every writer variable, and other models over the Anthropic or OpenAI API
 - [Windows](docs/windows.md): the experimental adapter and how it differs from macOS
-- [MCP server](docs/helper.md): jev as tools for other agents on Windows; `jev mcp` drives the screen in that process, one `jev-setup.exe` with the models included, no questions back
-- [Install with an agent](docs/agent-install.md): a prompt and two skills, then `jev setup` writes the host the person chooses
-- [After install](docs/agent-start.md): the prompt the installer leaves beside `jev.exe`, to paste into WorkBuddy or another agent
+- [MCP server](docs/helper.md): jev as tools for other agents on Windows; `clicker mcp` drives the screen in that process, one `clicker-setup.exe` with the models included, no questions back
+- [Install with an agent](docs/agent-install.md): a prompt and two skills, then `clicker setup` writes the host the person chooses
+- [After install](docs/agent-start.md): the prompt the installer leaves beside `clicker.exe`, to paste into WorkBuddy or another agent
 - [WindowsAgentArena](docs/waa.md): setup, the golden image, one run command, and results
 - [Layout](docs/layout.md): every module and what it owns
 - [Known limits](docs/known-limits.md)

@@ -1,6 +1,6 @@
 from datetime import date
 
-from typesafe_computer_use.dates import date_hints, describe_offset, first_date
+from yuanji_computer_use.dates import date_hints, describe_offset, first_date
 
 TODAY = date(2026, 9, 16)
 

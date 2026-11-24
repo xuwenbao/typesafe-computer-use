@@ -3,8 +3,8 @@ import json
 import pytest
 from PIL import Image, ImageDraw
 
-from typesafe_computer_use import perception_eval as pe
-from typesafe_computer_use.models import Item
+from yuanji_computer_use import perception_eval as pe
+from yuanji_computer_use.models import Item
 
 
 def item(text, x1, y1, x2, y2, index=0):

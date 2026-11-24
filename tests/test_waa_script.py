@@ -116,7 +116,7 @@ def test_setup_prints_the_pinned_fetch_the_build_and_the_import_check(script):
     assert "sha256:5f503d0bdb1b09bdfffebdc7337c237af4d6bd08d046a18c97e1c244c0e1a028" in text
     assert "docker build" in text
     assert "src/win-arena-container/waa-requirements.txt" in text
-    assert "desktop_env.evaluators" in text and "typesafe_computer_use.waa.agent" in text
+    assert "desktop_env.evaluators" in text and "yuanji_computer_use.waa.agent" in text
     assert "docker run" in text
 
 
@@ -284,4 +284,4 @@ def test_setup_passes_the_proxy_to_the_image_build(script):
 def test_results_invokes_the_reader(script):
     result = script("results", "results")
     assert result.returncode == 0, result.stderr
-    assert "typesafe_computer_use.waa.results" in result.stdout
+    assert "yuanji_computer_use.waa.results" in result.stdout

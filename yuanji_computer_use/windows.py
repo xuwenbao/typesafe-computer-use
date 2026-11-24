@@ -655,10 +655,10 @@ def display_scale(image: Image.Image) -> float:
 
 
 def capture_command(png: str, browser: str) -> list[str]:
-    """The screenshot child. A frozen `jev.exe` has no Python `-m`, so it restarts itself."""
+    """The screenshot child. A frozen `clicker.exe` has no Python `-m`, so it restarts itself."""
     if getattr(sys, "frozen", False):
         return [sys.executable, "capture-proc", png, browser]
-    return [sys.executable, "-m", "typesafe_computer_use.capture_proc", png, browser]
+    return [sys.executable, "-m", "yuanji_computer_use.capture_proc", png, browser]
 
 
 def read_capture(browser: str, shot_wait: float, detail_wait: float, timing: dict | None = None):

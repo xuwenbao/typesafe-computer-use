@@ -183,7 +183,7 @@ setup() {
     -v "$REPO:/jev" \
     -v "$CLIENT:/client" \
     -e PYTHONPATH=/client:/jev \
-    "$IMAGE" -c "import desktop_env.evaluators, typesafe_computer_use.waa.agent"
+    "$IMAGE" -c "import desktop_env.evaluators, yuanji_computer_use.waa.agent"
 }
 
 # ----- prepare-image -------------------------------------------------------------------------
@@ -358,7 +358,7 @@ run_tasks() {
 
 results() {
   [[ $# -le 1 ]] || die "results reads one folder"
-  run uv run --frozen --quiet python -m typesafe_computer_use.waa.results "${1:-$RESULTS}"
+  run uv run --frozen --quiet python -m yuanji_computer_use.waa.results "${1:-$RESULTS}"
 }
 
 load_env

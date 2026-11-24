@@ -69,7 +69,7 @@ def test_the_runner_builds_only_jev_hands_it_the_controller_and_does_not_ask_waa
 def test_the_agent_module_reexports_jev():
     module = ast.parse((OVERLAY / "mm_agents" / "jev" / "agent.py").read_text(encoding="utf-8"))
     imports = [node for node in ast.walk(module) if isinstance(node, ast.ImportFrom)]
-    assert {node.module for node in imports} == {"typesafe_computer_use.waa.agent"}
+    assert {node.module for node in imports} == {"yuanji_computer_use.waa.agent"}
     names = sorted(alias.name for node in imports for alias in node.names)
     assert names == ["JevAgent", "browser_for"]
 

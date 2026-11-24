@@ -81,7 +81,7 @@ def should_refuse_session(jev_session: bool, in_console: bool) -> bool:
 
 def child_command(executable: str) -> str:
     """jev inside the child session. `--act` is what makes it type and click."""
-    return f'"{executable}" -m typesafe_computer_use --act'
+    return f'"{executable}" -m yuanji_computer_use --act'
 
 
 def child_wait_failure(elapsed: float, connected: bool, found: bool, limit: float, seen_connected: bool) -> str | None:
@@ -1462,7 +1462,7 @@ try:
     os.environ["JEV_SESSION_PIPE"] = sys.argv[1]
     os.chdir(sys.argv[2])
     sys.path.insert(0, sys.argv[2])
-    from typesafe_computer_use.windows_session import attach_input_desktop, run_at_full_speed
+    from yuanji_computer_use.windows_session import attach_input_desktop, run_at_full_speed
 
     attach_input_desktop()
     stamp("desktop")
@@ -1470,7 +1470,7 @@ try:
     stamp("full_speed")
     # Importing perception before the bind fails SetThreadDesktop: the import opens the desktop
     # the thread is already on, and a thread that has opened one cannot switch.
-    from typesafe_computer_use.perception import adopt_start, mark, snapshot_session_cpu, start_warm_up
+    from yuanji_computer_use.perception import adopt_start, mark, snapshot_session_cpu, start_warm_up
 
     adopt_start(born, stamps)
     snapshot_session_cpu("at_start")
@@ -1478,7 +1478,7 @@ try:
     with open(pid_path, "w", encoding="utf-8") as handle:
         handle.write(str(os.getpid()))
     sys.argv = [sys.argv[0], "--act"]
-    from typesafe_computer_use.cli import main
+    from yuanji_computer_use.cli import main
 
     mark("cli_imported")
     main()

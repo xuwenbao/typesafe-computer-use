@@ -5,12 +5,12 @@ through it step by step, over [MCP](https://modelcontextprotocol.io). The agent 
 process, and that process does the work:
 
 ```
-agent ──stdio MCP──▶ jev mcp ──▶ screen, mouse, keyboard
+agent ──stdio MCP──▶ clicker mcp ──▶ screen, mouse, keyboard
                      (this process: the tools, the perception,
                       the loop, the gate)
 ```
 
-Two agents can each start `jev mcp`. A named mutex, `Local\jev-desk-<your SID>`, lets only one of
+Two agents can each start `clicker mcp`. A named mutex, `Local\jev-desk-<your SID>`, lets only one of
 them move the mouse at a time. The one that does not get it is told `busy` and sends no input.
 Windows releases the mutex if the holder crashes.
 
@@ -25,10 +25,10 @@ Windows only for now. Like the rest of the Windows adapter, it is untested on a 
 
 ## Install
 
-`scripts\build-helper.ps1` builds `jev-setup-<version>.exe` (Inno Setup, per user, no admin) and
-writes `jev-setup-<version>.sha256` beside it. The installer includes `jev.exe` and the perception's
+`scripts\build-helper.ps1` builds `clicker-setup-<version>.exe` (Inno Setup, per user, no admin) and
+writes `clicker-setup-<version>.sha256` beside it. The installer includes `clicker.exe` and the perception's
 model files. An agent can install it from those local files: [paste this prompt](agent-install.md).
-Run the installer once. It installs to `%LOCALAPPDATA%\Programs\jev\`: `jev.exe`, `_internal\`,
+Run the installer once. It installs to `%LOCALAPPDATA%\Programs\clicker\`: `clicker.exe`, `_internal\`,
 `models\`, `skills\jev\`, `agent-prompt.md`, `如何接入智能体.txt`, and `version.txt`. A manual
 install leaves "打开接入说明" checked on the last page; finishing opens that text file in Notepad,
 with three steps and then the prompt to paste into the agent ([the same prompt](agent-start.md)).
@@ -41,26 +41,26 @@ as MSIX does not inherit `PATH`.
 {
   "mcpServers": {
     "jev": {
-      "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\jev\\jev.exe",
+      "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\jev\\clicker.exe",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-The first call reads the bundled models and does not download them. `jev status` prints this
+The first call reads the bundled models and does not download them. `clicker status` prints this
 program's version, the path of the executable, the home directory, whether `models\` sits
 beside the executable, and whether `.env` holds `TYPESAFE_API_KEY` and a writer model. It prints
 names only, never a value.
 
 WorkBuddy does not start a server from its `mcp.json` until the user trusts it: in WorkBuddy's
-MCP manager, under 我的 MCP, find jev and click 信任. `jev setup --host workbuddy --write` says so
+MCP manager, under 我的 MCP, find jev and click 信任. `clicker setup --host workbuddy --write` says so
 on its `next:` line.
 
 Run the installer again to upgrade. It stays in the same folder, so the MCP config does not
-change. The installer closes any `jev.exe` that still has the files open, which interrupts a call
-in progress; the agent starts `jev mcp` again afterwards. Uninstall from Apps & features does the
-same. There is no `jev stop`, and a process does not exit on its own after sitting idle: it lives
+change. The installer closes any `clicker.exe` that still has the files open, which interrupts a call
+in progress; the agent starts `clicker mcp` again afterwards. Uninstall from Apps & features does the
+same. There is no `clicker stop`, and a process does not exit on its own after sitting idle: it lives
 as long as the agent keeps the MCP session.
 
 From a checkout, without a frozen build:
@@ -76,11 +76,11 @@ From a checkout, without a frozen build:
 }
 ```
 
-`jev mcp` reads its keys from `%LOCALAPPDATA%\jev\.env` (the same variables as the repo's `.env`;
+`clicker mcp` reads its keys from `%LOCALAPPDATA%\jev\.env` (the same variables as the repo's `.env`;
 `TYPESAFE_API_KEY` is required for `run_goal`) and writes its log to
 `%LOCALAPPDATA%\jev\state\jev.log` and every run to `%LOCALAPPDATA%\jev\runs\`. `JEV_HOME` moves
 all of it. A checkout has no bundled models: fetch them once with `uv run clicker-models fetch`,
-or the first look downloads them and waits. The installed `jev.exe` reads the `models` folder
+or the first look downloads them and waits. The installed `clicker.exe` reads the `models` folder
 beside it and does not download.
 
 Each agent loads its own copy of the models. Restarting the MCP server loads them again.
@@ -99,7 +99,7 @@ Every tool acts on the real machine; there is no dry run.
 
 An element number holds only for the `state_id` it came with; any input makes that state stale,
 and an element action on a stale state fails as `stale_state` without input. One call runs at a
-time. A second call in the same process, or a call in another `jev mcp` while this one holds the
+time. A second call in the same process, or a call in another `clicker mcp` while this one holds the
 desktop, fails as `busy` and is not queued. Failures come back as tool errors that start with
 their kind: `forbidden`, `busy`, `stale_state`, `invalid_arguments`, `missed`, `aborted`,
 `not_found`, `unsupported`, `not_configured`, `not_supported`.

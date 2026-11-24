@@ -4,7 +4,7 @@ import inspect
 import json
 from pathlib import Path
 
-from typesafe_computer_use.waa.chrome import CHROME_USER_DATA, _open_chrome_tabs, chrome_cdp_config
+from yuanji_computer_use.waa.chrome import CHROME_USER_DATA, _open_chrome_tabs, chrome_cdp_config
 
 EXAMPLES = (
     Path(__file__).resolve().parent.parent
