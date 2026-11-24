@@ -133,8 +133,11 @@ def _replacing_click(item: Item, items: list[Item] | None) -> str | None:
     return f"{listed} were selected; this plain click on {item.text!r} replaces them"
 
 
-def click_item(item: Item, screen: Screen, items: list[Item] | None = None) -> str:
+def click_item(item: Item, screen: Screen, items: list[Item] | None = None, method: str = "auto") -> str:
     """Press an item the app declared through the accessibility tree; click the pixel under it otherwise.
+
+    `method` is `auto` (accessibility, then the pixel), `pointer` (the pixel only), or
+    `accessibility` (the tree only, never the pixel).
 
     A press goes to the control itself, so it lands even when the center of the box is covered by
     a sticky header, a cookie banner, or a tooltip. An element that refuses still has a location.
@@ -143,16 +146,16 @@ def click_item(item: Item, screen: Screen, items: list[Item] | None = None) -> s
     A control the tree says is disabled, or a plain click that replaces a selection of two or more
     file rows, is still clicked; the line carries a note about it.
     """
-    return noted(_click(item, screen), _disabled(item) or _replacing_click(item, items))
+    return noted(_click(item, screen, method), _disabled(item) or _replacing_click(item, items))
 
 
-def _click(item: Item, screen: Screen) -> str:
+def _click(item: Item, screen: Screen, method: str = "auto") -> str:
     ref = _action_ref(item, screen)
     # A file row lists both. Invoke is the double-click, so a click must not take it.
     selectable = "selection_item" in item.controls
-    if ref is not None and not selectable and desktop.ax_press(ref):
+    if method != "pointer" and ref is not None and not selectable and desktop.ax_press(ref):
         return f"pressed {item.text!r} via accessibility"
-    if ref is not None:
+    if method != "pointer" and ref is not None:
         # A radio button's Select() is reported as success by Qt and then changes nothing.
         # The circle only moves when the pointer clicks it, so that pattern is not used here.
         role = ref.get("role") if isinstance(ref, dict) else None
@@ -163,6 +166,8 @@ def _click(item: Item, screen: Screen) -> str:
                 if operation == "select":
                     desktop.ax_focus(ref)  # Select() does not give the list the keyboard, so a later cut misses it
                 return f"{verb} {item.text!r} via accessibility"
+    if method == "accessibility":
+        return f"click refused: {item.text!r} was not clicked via accessibility"
     popup = screen.covered.get(item.index)
     closed = f"{close_popup(popup)} then " if popup is not None else ""
     try:

@@ -6,9 +6,10 @@ from types import SimpleNamespace
 from world import FakeWriter, Page, World, drive, scripted
 
 from yuanji_computer_use import host
+from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.platform_adapter import desktop
 from yuanji_computer_use.report import Log
-from yuanji_computer_use.runner import RunConfig, RunState
+from yuanji_computer_use.runner import RunConfig
 
 
 def _reply(body: dict):
@@ -53,7 +54,7 @@ def _desktop(monkeypatch, windows, front):
 
 
 def test_an_open_window_is_focused_and_not_launched(monkeypatch, tmp_path):
-    state = RunState()
+    state = Session()
     shown = {"app": "explorer.exe"}
     launched = _desktop(monkeypatch, [("1", "Untitled - Notepad", "notepad.exe")], shown)
     host.prepare(
@@ -68,7 +69,7 @@ def test_an_open_window_is_focused_and_not_launched(monkeypatch, tmp_path):
 
 
 def test_a_missing_app_is_launched_by_name(monkeypatch, tmp_path):
-    state = RunState()
+    state = Session()
     shown = {"app": "explorer.exe"}
     launched = _desktop(monkeypatch, [], shown)
     host.prepare(
@@ -87,7 +88,7 @@ def test_a_name_with_a_path_or_arguments_is_refused(monkeypatch, tmp_path):
     assert host.executable_name("notepad.exe") == "notepad.exe"
     assert host.executable_name(r"C:\Windows\notepad.exe") is None
     assert host.executable_name("notepad /c calc") is None
-    state = RunState()
+    state = Session()
     launched = _desktop(monkeypatch, [], {"app": "explorer.exe"})
     host.prepare(
         RunConfig(goal="open notepad", out=tmp_path, act=True),

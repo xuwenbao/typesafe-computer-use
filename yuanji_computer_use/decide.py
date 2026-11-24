@@ -126,10 +126,14 @@ def row_mates(items: list[Item], limit: int | None = ROW_MATES) -> dict[int, lis
     return out
 
 
-def item_criteria(screen: Screen, items: list[Item]) -> dict[str, str]:
+def item_criteria(screen: Screen, items: list[Item], only: list[Item] | None = None) -> dict[str, str]:
     """Each item as one line. A role prefix marks the ones the app itself declared, and "icon"
     an icon named by what an image model saw in it rather than by text on the screen. A
-    duplicated label carries its row, and one under a popup says which."""
+    duplicated label carries its row, and one under a popup says which.
+
+    `only` lists a subset. The numbers stay the indexes they have in `items`.
+    """
+    shown = items if only is None else only
     hints = date_hints(items, screen)
     mates = row_mates(items)
     return {
@@ -141,7 +145,7 @@ def item_criteria(screen: Screen, items: list[Item]) -> dict[str, str]:
             f"{'; selected' if it.selected else ''}"
             f"{'; under ' + screen.covered[it.index].title if it.index in screen.covered else ''})"
         )
-        for it in items
+        for it in shown
     }
 
 
@@ -283,6 +287,7 @@ def decide(
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
     picture: Marked | None = None,
+    candidates: list[Item] | None = None,
 ) -> Decision:
     """One step's decision. With a `picture`, the state refers to it as `screen_image` and the
     request carries it as an asset; when System One refuses the picture, the step is asked once
@@ -314,8 +319,9 @@ def decide(
             criteria=site_criteria(),
         ),
     }
-    if items:
-        questions["item"] = item_question(screen, items, pictured=picture is not None)
+    shown = items if candidates is None else candidates
+    if shown:
+        questions["item"] = item_question(screen, items, pictured=picture is not None, only=shown)
     if screen.offscreen:
         questions["offscreen"] = Choice(
             instructions=(
@@ -348,8 +354,8 @@ def decide(
                 raise
             refused = str(e)
             log.warning("System One refused the screen picture, asking again without it: %s", refused)
-            if items:
-                questions["item"] = item_question(screen, items, pictured=False)
+            if shown:
+                questions["item"] = item_question(screen, items, pictured=False, only=shown)
             answers = client.system_one(state=state, questions=questions).answers
     return Decision(
         kind=answers["kind"],
@@ -361,7 +367,7 @@ def decide(
     )
 
 
-def item_question(screen: Screen, items: list[Item], pictured: bool) -> Choice:
+def item_question(screen: Screen, items: list[Item], pictured: bool, only: list[Item] | None = None) -> Choice:
     return Choice(
         instructions=(
             ("Each item's number is drawn beside its box in the screen_image. " if pictured else "")
@@ -373,8 +379,61 @@ def item_question(screen: Screen, items: list[Item], pictured: bool) -> Choice:
             "listed as already tried on this screen clicked or pressed: each of those led "
             "straight back here."
         ),
-        criteria=item_criteria(screen, items),
+        criteria=item_criteria(screen, items, only),
     )
+
+
+def merged_margin(answer, items: list[Item]) -> float:
+    """第一名减第二名，先把同一个控件被拆开的概率加回去。
+
+    框的交并比至少 0.5，或者标签相同且垂直中心相差不到半个行高，算同一个控件。
+    """
+    probabilities = getattr(answer, "probabilities", None) or {}
+    groups = _same_targets(items)
+    totals = sorted((sum(float(probabilities.get(str(index), 0.0)) for index in group) for group in groups), reverse=True)
+    if not totals:
+        return 0.0
+    second = totals[1] if len(totals) > 1 else 0.0
+    return totals[0] - second
+
+
+def _same_targets(items: list[Item]) -> list[list[int]]:
+    parent = {it.index: it.index for it in items}
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for i, left in enumerate(items):
+        for right in items[i + 1 :]:
+            if _one_target(left, right):
+                parent[find(right.index)] = find(left.index)
+    groups: dict[int, list[int]] = {}
+    for it in items:
+        groups.setdefault(find(it.index), []).append(it.index)
+    return list(groups.values())
+
+
+def _one_target(left: Item, right: Item) -> bool:
+    if _iou(left, right) >= 0.5:
+        return True
+    label = "".join(left.text.split()).casefold()
+    if not label or label != "".join(right.text.split()).casefold():
+        return False
+    half = max(left.y2 - left.y1, right.y2 - right.y1) / 2
+    return abs(left.center[1] - right.center[1]) < half
+
+
+def _iou(left: Item, right: Item) -> float:
+    x1, y1 = max(left.x1, right.x1), max(left.y1, right.y1)
+    x2, y2 = min(left.x2, right.x2), min(left.y2, right.y2)
+    overlap = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    if overlap <= 0:
+        return 0.0
+    area = (left.x2 - left.x1) * (left.y2 - left.y1) + (right.x2 - right.x1) * (right.y2 - right.y1) - overlap
+    return overlap / area if area else 0.0
 
 
 def image_asset(picture: Marked) -> dict:

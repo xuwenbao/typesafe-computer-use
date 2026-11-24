@@ -10,12 +10,13 @@ import pytest
 from yuanji_computer_use.calls import Calls, MeteredWriter
 from yuanji_computer_use.config import load_dotenv, reset_settings, settings
 from yuanji_computer_use.driver_agent import INSTRUCTIONS, screen_packet
-from yuanji_computer_use.models import AxNode, Field
+from yuanji_computer_use.models import AxNode, Field, Guidance
 from yuanji_computer_use.writer import (
     ANSWER_SYSTEM,
     WriterError,
     _structured,
     compose_answer,
+    compose_plan,
     compose_url,
     make_writer,
     parse_json,
@@ -402,6 +403,17 @@ def test_a_tunable_comes_from_its_variable(clean_env):
     assert (cfg.max_options, cfg.min_ocr_confidence, cfg.abort_corner_px) == (40, 0.5, 8)
 
 
+def test_the_planner_defaults_on_and_rejects_a_margin_past_one(clean_env):
+    cfg = settings()
+    assert cfg.planner is True
+    assert (cfg.plan_skip_margin, cfg.decide_margin, cfg.max_replans, cfg.max_subgoals) == (0.3, 0.15, 2, 5)
+    clean_env.setenv("CLICKER_PLANNER", "0")
+    assert settings().planner is False
+    clean_env.setenv("CLICKER_PLAN_SKIP_MARGIN", "2")
+    with pytest.raises(ValueError, match="CLICKER_PLAN_SKIP_MARGIN"):
+        settings()
+
+
 def test_a_bad_tunable_names_its_variable(clean_env):
     clean_env.setenv("CLICKER_MAX_OPTIONS", "lots")
     with pytest.raises(ValueError, match="CLICKER_MAX_OPTIONS"):
@@ -425,3 +437,47 @@ def test_variables_that_are_not_prefixed_keep_their_names(clean_env):
     assert cfg.anthropic_base_url is None
     clean_env.setenv("OPENAI_API_KEY", "sk-openai")
     assert settings().openai_api_key == "sk-openai"
+
+
+def _plan_writer(payload: dict):
+    text = json.dumps(payload)
+
+    def create(**_request):
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+    return SimpleNamespace(messages=SimpleNamespace(create=create))
+
+
+def _one_plan(**subgoal) -> dict:
+    goal = {"space": {"controls": ["toggle"], "label": "TUN|虚拟网卡"}, "require": {"checked": False}}
+    return {"goal_state": goal, "subgoals": [subgoal or {"do": "click", "space": {"controls": ["toggle"], "label": "TUN"}, "verify": {"checked": False}}]}
+
+
+def test_a_usable_plan_keeps_its_subgoal(clean_env, screen):
+    plan = compose_plan(_plan_writer(_one_plan()), "turn TUN off", screen, [], [], Guidance())
+    assert len(plan.subgoals) == 1 and plan.subgoals[0].do == "click"
+    assert plan.goal_state.require.checked is False
+
+
+def test_drag_is_not_a_usable_plan(clean_env, screen):
+    plan = compose_plan(_plan_writer(_one_plan(do="drag")), "turn TUN off", screen, [], [], Guidance())
+    assert plan.subgoals == ()
+
+
+def test_a_label_regex_that_does_not_compile_is_not_a_plan(clean_env, screen):
+    plan = compose_plan(
+        _plan_writer(_one_plan(do="click", space={"label": "("}, verify={"exists": True})),
+        "turn TUN off",
+        screen,
+        [],
+        [],
+        Guidance(),
+    )
+    assert plan.subgoals == ()
+
+
+def test_four_subgoals_are_not_a_plan(clean_env, screen):
+    payload = _one_plan()
+    payload["subgoals"] = [{"do": "wait", "space": {}, "verify": {}}] * 4
+    plan = compose_plan(_plan_writer(payload), "turn TUN off", screen, [], [], Guidance())
+    assert plan.subgoals == ()

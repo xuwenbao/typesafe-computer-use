@@ -163,7 +163,7 @@ def checked(data: dict, properties: dict, defaults: dict | None = None) -> dict:
             out[name] = defaults[name]
         elif spec["type"] == "string" and name not in out:
             out[name] = ""
-        kind = {"boolean": bool, "string": str, "array": list, "number": (int, float)}[spec["type"]]
+        kind = {"boolean": bool, "string": str, "array": list, "number": (int, float), "object": dict}[spec["type"]]
         if not isinstance(out.get(name), kind):
             raise WriterError(f"the writer's reply has no {spec['type']} {name!r}: {json.dumps(data)[:400]}")
     return out
@@ -580,6 +580,47 @@ HOST_PROPERTIES = {
     "executable": {"type": "string"},
     "reason": {"type": "string"},
 }
+
+
+PLAN_SYSTEM = (
+    "Turn the user's goal into a checkable state and at most three subgoals for the screen in front "
+    "of you. You do not click. Each subgoal names an action the classifier already has, plus the "
+    "control to find and the state that shows it worked. do is one of click, open, press_offscreen, "
+    "scroll, press_enter, press_escape, go_back, wait, or ensure. ensure only checks. space.role is "
+    "a short role such as button or checkbox. space.controls is a UI Automation pattern such as "
+    "toggle. space.label is a case-insensitive regular expression matched against the control and "
+    "the rest of its row. verify and require use only checked, expanded, current, and exists."
+)
+
+PLAN_PROPERTIES = {
+    "goal_state": {"type": "object"},
+    "subgoals": {"type": "array"},
+}
+
+
+def compose_plan(writer: Writer, goal: str, screen, items: list, history: list[str], guidance, previous: list | None = None):
+    """一份计划。读不成、动作不在名单里、正则编译不了，或子目标超过 3 个，就返回空计划。"""
+    from .agents.planner import plan_from
+    from .decide import base_state
+
+    packet = base_state(goal, screen, items, history, None, guidance)
+    packet["items"] = [
+        {
+            "i": it.index,
+            "text": it.text,
+            "role": it.role,
+            **({"checked": it.checked} if it.checked is not None else {}),
+            **({"expanded": it.expanded} if it.expanded is not None else {}),
+            **({"current": it.current} if it.current is not None else {}),
+        }
+        for it in items
+    ]
+    packet["previous_subgoals"] = list(previous or [])
+    try:
+        data = _structured(writer, PLAN_SYSTEM, packet, PLAN_PROPERTIES, 800)
+    except WriterError:
+        return plan_from({})
+    return plan_from(data)
 
 
 def compose_host(writer: Writer, goal: str, windows: list[tuple[str, str, str]], frontmost: str) -> dict:

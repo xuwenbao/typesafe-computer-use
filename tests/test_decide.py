@@ -1,6 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.agents.strategies import resolve
 from yuanji_computer_use.config import SITES
 from yuanji_computer_use.decide import (
     Decision,
@@ -9,12 +11,13 @@ from yuanji_computer_use.decide import (
     item_criteria,
     key_criteria,
     kind_criteria,
+    merged_margin,
     offscreen_criteria,
     row_mates,
     site_criteria,
 )
 from yuanji_computer_use.models import AxNode, Guidance
-from yuanji_computer_use.runner import RunConfig, RunState, resolve
+from yuanji_computer_use.runner import RunConfig
 
 
 def answer(choice, confidence, probabilities=None):
@@ -207,7 +210,7 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
 
 
 def _stopped(tmp_path, screen, decision) -> str:
-    state = RunState()
+    state = Session()
     resolve(
         RunConfig(goal="open the chat", out=tmp_path),
         None,
@@ -269,3 +272,39 @@ def test_a_shortcut_key_under_the_floor_needs_a_lead(tmp_path, screen):
         key=answer("x", 0.35, {"x": 0.35, "v": 0.3}),
     )
     assert _stopped(tmp_path, screen, split) == "low confidence"
+
+
+def test_a_candidate_subset_keeps_the_original_numbers(screen, make_item):
+    asked = []
+
+    def system_one(state, questions, **_extra):
+        asked.append(questions)
+        return SimpleNamespace(answers={"kind": answer("click_item", 0.9), "item": answer("1", 0.9), "site": answer("none", 1.0)})
+
+    items = [make_item(0, "Title"), make_item(1, "Switch", y1=200, y2=230), make_item(2, "Other", y1=300, y2=330)]
+    decide(
+        SimpleNamespace(system_one=system_one),
+        "toggle it",
+        screen,
+        items,
+        [],
+        "Google Chrome",
+        None,
+        candidates=[items[1]],
+    )
+    assert list(asked[0]["item"].criteria) == ["1"]
+    assert "scroll" in asked[0]["kind"].criteria or "done" in asked[0]["kind"].criteria
+
+
+def test_the_same_name_on_one_row_is_one_target(screen, make_item):
+    title = make_item(0, "虚拟网卡模式", x1=100, x2=280, y1=100, y2=140)
+    switch = make_item(1, "虚拟网卡模式", x1=420, x2=480, y1=100, y2=140)
+    other = make_item(2, "其他", y1=400, y2=430)
+    margin = merged_margin(answer("1", 0.41, {"0": 0.41, "1": 0.37, "2": 0.22}), [title, switch, other])
+    assert margin > 0.15
+
+
+def test_edit_and_delete_on_one_row_stay_apart(make_item):
+    edit = make_item(0, "编辑", x1=100, x2=180, y1=100, y2=130)
+    delete = make_item(1, "删除", x1=400, x2=480, y1=100, y2=130)
+    assert abs(merged_margin(answer("0", 0.41, {"0": 0.41, "1": 0.37}), [edit, delete]) - 0.04) < 1e-9

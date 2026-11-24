@@ -22,11 +22,12 @@ from types import SimpleNamespace
 from PIL import Image
 from typesafe_sdk import Noul
 
-from yuanji_computer_use import actions, runner
+from yuanji_computer_use import actions, driver_agent, runner
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.runner import RunConfig, RunState, run
+from yuanji_computer_use.runner import RunConfig, run
 from yuanji_computer_use.writer import WriterError
 
 CAPTURE = (2000, 1200)
@@ -568,23 +569,25 @@ def drive(
     replies: list[str] | None = None,
     handoffs: int | None = None,
     driver_steps: int = 0,
-) -> RunState:
+    act: bool = True,
+    capture: Callable | None = None,
+) -> Session:
     """Run the real loop against the world until it stops itself. `world.fake` holds the classifier.
 
     `replies` are what the user types when the writer asks, in order; with none, nobody is at the
     terminal and the writer is told so. `world.asked` collects the questions that were put.
     """
     world.install(monkeypatch)
+    if capture is not None:
+        monkeypatch.setattr(runner, "capture", capture)
     fake = FakeTypeSafe(policy, noul)
     world.fake = fake
     monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)
-    cfg = RunConfig(goal=goal, out=tmp_path / "run", act=True, steps=steps, delay=0, driver_steps=driver_steps)
+    cfg = RunConfig(goal=goal, out=tmp_path / "run", act=act, steps=steps, delay=0, driver_steps=driver_steps)
     if handoffs is not None:
         cfg.handoffs = handoffs
     client = writer or FakeWriter()
     from scripted_driver import ScriptedModel
-
-    from yuanji_computer_use import driver_agent
 
     scripts = getattr(client, "drives", None)
     packets = getattr(client, "drive_packets", None)

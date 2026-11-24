@@ -14,8 +14,9 @@ import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
 from yuanji_computer_use import driver, runner
+from yuanji_computer_use.agents.strategies import MAX_REPEATS, UNCHANGED
 from yuanji_computer_use.driver import BANNED, DONE_BEFORE
-from yuanji_computer_use.runner import MAX_REPEATS, MAX_STALLS, STOPPED, UNCHANGED
+from yuanji_computer_use.runner import MAX_STALLS, STOPPED
 
 GOAL = "buy a ticket to the next show"
 

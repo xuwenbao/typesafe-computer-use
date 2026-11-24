@@ -341,6 +341,39 @@ result, and the `tools` called on that screen in order (name, arguments, and a t
 the action count, the call count, and `driver_tool_calls`. An older file with
 no call index is read as one call and one action.
 
+## Agents and status
+
+`runner.run` is a loop over a status, not a nest of branches. `agents/status.py`
+names the statuses and the only edges between them:
+
+| from | to |
+| --- | --- |
+| `HOST` | `POLICY` |
+| `POLICY` | `POLICY`, `WRITER`, `FINISH` |
+| `WRITER` | `POLICY`, `DRIVER`, `FINISH` |
+| `DRIVER` | `FINAL_ANSWER`, `FINISH` |
+| `FINAL_ANSWER` | `FINISH` |
+
+`HOST` is `agents/host.py`: it only brings the goal's app forward. `POLICY` is
+`agents/policy.py`: one classifier step, or `WRITER` when that step stops or
+`steps` is used up. A step that used up the budget is not handed back to the
+classifier. `WRITER` is `agents/writer.py`: the hand-off above. `DRIVER` is
+`agents/driver.py`: the takeover. It loads the model SDK only when a takeover
+actually starts. `FINAL_ANSWER` asks the writer once more, then `FINISH`.
+Abort stays outside the table.
+
+One classifier step is four stages in `agents/strategies.py`, in order:
+`PerceiveStrategy` (capture, perceive, unchanged screen), `DecideStrategy`
+(the classifier, including a stop for `done`, `none`, or low confidence),
+`ActStrategy` (perform, or a dry run), `MemoryStrategy` (history and the
+repeat check). `agents/middleware.py` wraps that pipeline. `Timing` records
+the step even when a stage raises. `StepFiles` writes `step-NNN-raw.png`,
+`step-NNN-sent.png`, and `step-NNN-payload.txt` before the decision, and
+`step-NNN.png` plus `step-NNN-answers.json` after it. `SessionReport` tells
+the session window what was done. `StepLog` writes the file line and the
+timing line. The session itself is `agents/session.py`. `runner.py` keeps
+`RunConfig`, `run`, and `run.json`.
+
 ## Who did the work
 
 Every run ends by counting the requests each model took:

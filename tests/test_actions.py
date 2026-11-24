@@ -47,6 +47,35 @@ def test_a_refused_press_falls_back_to_the_mouse(screen, calls, monkeypatch):
     assert calls == [("click", (100.0, 60.0))]
 
 
+def test_pointer_does_not_ask_accessibility(screen, calls, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: pytest.fail("pointer does not press"))
+    monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation: pytest.fail("pointer does not operate"))
+    item = Item(3, "Register Now", 1.0, 100.0, 100.0, 300.0, 140.0, role="button", source="ax", controls=("toggle",))
+    live = replace(screen, ax_refs={3: object()})
+    assert click_item(item, live, method="pointer") == "clicked 'Register Now'"
+    assert calls == [("click", (100.0, 60.0))]
+
+
+def test_accessibility_does_not_click_the_pixel(screen, monkeypatch):
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
+    monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation: False)
+    monkeypatch.setattr(desktop, "click_at", lambda point: pytest.fail("accessibility does not click"))
+    item = Item(3, "Register Now", 1.0, 100.0, 100.0, 300.0, 140.0, role="button", source="ax")
+    live = replace(screen, ax_refs={3: object()})
+    assert click_item(item, live, method="accessibility") == "click refused: 'Register Now' was not clicked via accessibility"
+
+
+def test_auto_tries_accessibility_before_the_pixel(screen, calls, monkeypatch):
+    order = []
+    monkeypatch.setattr(desktop, "ax_press", lambda ref: order.append("press") or False)
+    monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation: order.append(operation) or False)
+    monkeypatch.setattr(desktop, "click_at", lambda point: order.append("click") or calls.append(("click", point)))
+    item = Item(3, "Register Now", 1.0, 100.0, 100.0, 300.0, 140.0, role="link", source="ax")
+    live = replace(screen, ax_refs={3: object()})
+    assert click_item(item, live, method="auto") == "clicked 'Register Now'"
+    assert order == ["press", "toggle", "select", "expand_toggle", "click"]
+
+
 def test_an_ocr_only_item_is_clicked_without_asking_accessibility(screen, calls, monkeypatch):
     monkeypatch.setattr(desktop, "ax_press", lambda ref: pytest.fail("no element to press"))
     item = Item(3, "Register Now", 0.9, 100.0, 100.0, 300.0, 140.0)
@@ -220,7 +249,7 @@ def context(writer=None) -> actions.Context:
 
 
 def browsing(site: str) -> SimpleNamespace:
-    return SimpleNamespace(chosen="use_browser", site=SimpleNamespace(choice=site))
+    return SimpleNamespace(chosen="use_browser", kind=SimpleNamespace(choice="use_browser"), site=SimpleNamespace(choice=site))
 
 
 @pytest.fixture
@@ -286,7 +315,9 @@ def test_a_writer_that_fails_refuses_the_url_instead_of_ending_the_run(screen, b
 
 def test_a_writer_that_fails_refuses_the_text_instead_of_ending_the_run(screen, calls, broken_writer):
     focused = replace(screen, field=field())
-    refusal = actions.perform(SimpleNamespace(chosen="type_text"), focused, [], context(broken_writer))
+    refusal = actions.perform(
+        SimpleNamespace(chosen="type_text", kind=SimpleNamespace(choice="type_text")), focused, [], context(broken_writer)
+    )
     assert refusal.startswith("type_text refused: the writer failed (") and "not found" in refusal
     assert calls == []
 
@@ -355,7 +386,7 @@ def test_clicking_a_duplicated_label_says_which_row(screen, calls):
     ]
 
     def clicking(key: str):
-        return SimpleNamespace(chosen=key)
+        return SimpleNamespace(chosen=key, adding=False, opening=False)
 
     assert actions.perform(clicking("3"), screen, items, None) == "clicked 'Buy' beside 'Adele'"
     assert actions.perform(clicking("4"), screen, items, None) == "clicked 'Terms'"

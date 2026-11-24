@@ -20,6 +20,22 @@ model or send it to another endpoint. `config.settings()` is the only way the pr
 | `CLICKER_WRITER_TIMEOUT` | no | seconds one writer request may take before it is given up; defaults to `120`, and a request is retried once |
 | `CLICKER_ANSWER_REASONING` | no | the same for the answer model, such as `low` |
 
+## Planning
+
+`compose_plan` asks the writer model for a checkable goal and at most three subgoals before the
+classifier spends a step it is unsure about. It is on by default.
+
+| Variable | Default | |
+| --- | --- | --- |
+| `CLICKER_PLANNER` | `true` | `0` turns planning off. The classifier then steps as before |
+| `CLICKER_PLAN_SKIP_MARGIN` | `0.3` | a first step whose merged margin is at least this is acted on, and not planned |
+| `CLICKER_DECIDE_MARGIN` | `0.15` | below this merged margin the candidate set is widened and the classifier is asked again |
+| `CLICKER_MAX_REPLANS` | `2` | how many times a later stop may plan again. The first plan does not count |
+| `CLICKER_MAX_SUBGOALS` | `5` | subgoals kept across the whole run. A single reply may name at most three |
+
+A reply whose action is not one the classifier has, whose label is not a regular expression, or
+which names more than three subgoals is dropped. The run then goes to the writer as it did before.
+
 ## Other models
 
 Point `CLICKER_WRITER_BASE_URL` at any endpoint that speaks OpenAI's Chat Completions API, which is

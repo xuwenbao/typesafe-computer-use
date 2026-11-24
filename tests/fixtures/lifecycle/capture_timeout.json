@@ -1,0 +1,31 @@
+{
+  "files": {},
+  "history": [],
+  "outcome": "capture timed out",
+  "route": "",
+  "run_json_keys": [
+    "act",
+    "answer",
+    "calls",
+    "config",
+    "driver_actions",
+    "driver_calls",
+    "driver_error",
+    "driver_tool_calls",
+    "goal",
+    "goal_achieved",
+    "handoffs",
+    "history",
+    "image_refusals",
+    "outcome",
+    "perception",
+    "questions",
+    "seconds",
+    "session_cpu",
+    "startup",
+    "steps_taken",
+    "timing",
+    "usage",
+    "warm_up"
+  ]
+}

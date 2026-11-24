@@ -37,6 +37,19 @@ so a stall can be replayed offline with `--image`.
   after every `monkeypatch.setenv` or `delenv`, so change the environment through `monkeypatch`.
 - Never add a path that types a password.
 
+## Where the loop lives
+
+`runner.py` holds `RunConfig`, `run`, and the writing of `run.json`. The rest of a
+run is the agents. `agents/status.py` is the status table (`HOST`, `POLICY`,
+`WRITER`, `DRIVER`, `FINAL_ANSWER`, `FINISH`). `agents/base.py` creates an agent
+by name. `agents/host.py`, `agents/policy.py`, `agents/writer.py`, and
+`agents/driver.py` are the four roles. `agents/session.py` is the session.
+`agents/strategies.py` is the four stages of one classifier step
+(`PerceiveStrategy`, `DecideStrategy`, `ActStrategy`, `MemoryStrategy`).
+`agents/middleware.py` is `Timing`, `StepFiles`, `SessionReport`, `StepLog`, and
+`StepPipeline`. The takeover model SDK loads only inside `agents/driver.py`,
+when a takeover starts.
+
 ## A task the loop cannot do
 
 Write it as a scenario in `tests/test_scenarios.py`: a page graph on the simulated

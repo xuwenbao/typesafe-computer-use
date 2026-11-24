@@ -23,12 +23,15 @@ from .actions import (
     focus_landed,
     noted,
 )
+from .agents.strategies import MAX_IDLE, MAX_REPEATS, UNCHANGED, tried_here
 from .calls import DRIVER
 from .config import settings
-from .models import AxNode, Item, Missed, Screen, signature
+from .models import AxNode, Item, Missed, Screen, same_screen, signature
 from .parse.marks import marks
 from .perception import ocr_region, settle
 from .platform_adapter import desktop
+from .runner import STOPPED as classifier_stopped
+from .runner import earlier_screens, stops_so_far
 from .writer import DriveStep, denied_listed_names, looks_credential
 
 # 模型可以按的单个键。名单以外的按键直接拒绝。start 在 Windows 上打开开始菜单，在 Mac 上打开 Spotlight。
@@ -69,7 +72,11 @@ MODIFIER_ALIASES = {"control": "add", "ctrl": "add", "command": "add", "cmd": "a
 CLICKS = ("click", "double_click", "right_click")
 # 这些动作用编号点名屏幕上的一项。执行前 target 必须对得上那一项的文字，对不上就不碰机器。
 NAMED = frozenset({*CLICKS, "type", "drag", "set_value", "scroll_down", "scroll_up"})
-_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff\u2060"), None)
+# 零宽字符，以及时钟标签里包住时间的双向控制符（U+200E 等）。模型复述时不会带上它们。
+_INVISIBLE = dict.fromkeys(
+    map(ord, "\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2066\u2067\u2068\u2069\ufeff"),
+    None,
+)
 MAX_TEXT = 2000  # 一次输入的字数上限
 DRAG_LIMIT = 600  # 按像素拖动时，横向和纵向都不能超过这么远
 
@@ -100,7 +107,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
     步数是接管自己的 `driver_steps`，不从分类器剩下的 `--steps` 里扣。每一步只问一个动作，做完再看新截图。
     真正开始之后，`state.outcome` 会改成上面 STOPPED 里的一种，做过的动作都在 `state.history` 里，每行以 `driver: ` 开头。
     """
-    from . import runner  # runner 会调用本模块，顶层互相导入会成环，所以用到时再导入
+    from .runner import look
 
     # 目标：确认这次接管可以开始。完成：步数为 0 或没有写手时返回 False，后面的循环不会跑。
     budget = cfg.driver_steps
@@ -109,7 +116,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
 
     # 目标：记下分类器为什么停下，并准备接管自己的计数。
     # 完成：日志写出最多几步；空转、重复和换路从 0 计；结局先写成“步数用完”，中途完成或卡住再改。
-    stopped = runner.STOPPED[state.outcome]
+    stopped = classifier_stopped[state.outcome]
     model = driver_agent.model_for()
     if model is None:
         log("the driver needs CLICKER_WRITER_API=openai; stopping at the classifier")
@@ -134,9 +141,9 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
             desktop.check_abort()
 
             # 目标：拿到这一步要看的屏幕。完成：连续没变化时第一次逼模型换路，第二次定为卡住并返回。
-            seen = runner.look(cfg, ctx, state, log)
+            seen = look(cfg, ctx, state, log)
             if seen is None:
-                if _loop(state, f"the last {runner.MAX_IDLE} actions changed nothing on screen", last_sig, log):
+                if _loop(state, f"the last {MAX_IDLE} actions changed nothing on screen", last_sig, log):
                     return True
                 same_streak, same_sig = 0, None
                 seen = state.view
@@ -148,8 +155,8 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
             picture = marks(screen.image, items, ocr_region(screen))
             prefix = cfg.out / f"step-{cursor:03d}"
             prefix.with_name(prefix.name + "-sent.png").write_bytes(picture.png)
-            earlier = runner.earlier_screens(state, signature(screen, items))
-            earlier_stops = runner.stops_so_far(state)
+            earlier = earlier_screens(state, signature(screen, items))
+            earlier_stops = stops_so_far(state)
             change = state.change_course
             state.change_course = None
 
@@ -278,7 +285,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
             sig = _signature(move, items, screen.offscreen)
             last_sig = sig
             if _repeat(state, sig, move.action == "wait", log):
-                if _loop(state, f"{runner.MAX_REPEATS} actions in a row were already taken on this screen", sig, log):
+                if _loop(state, f"{MAX_REPEATS} actions in a row were already taken on this screen", sig, log):
                     return True
                 same_streak, same_sig = 0, None
             elif move.action != "wait" and _revisited(state, started, sig):
@@ -332,11 +339,9 @@ def _loop(state, why: str, sig: str, log) -> bool:
 
 def _banned_here(state, sig: str) -> bool:
     """这个动作是换路时打转的那一个，而现在又回到了打转的那一屏。两个页面来回跳时，回到原处也认得出来。"""
-    from . import runner
-
     if sig not in state.banned or state.banned_on is None or state.last is None:
         return False
-    return runner.same_screen(state.last, state.banned_on)
+    return same_screen(state.last, state.banned_on)
 
 
 def _record(state, line: str) -> None:
@@ -431,31 +436,25 @@ def _mark_tried(state) -> None:
     """上一动做完后，如果下一张截图显示屏幕没变，就把这个结论记到“已尝试”里。
 
     历史行上的“屏幕没变”是截图比较时加上的。这里把它同步到动作签名上，下一步才会拒绝再做同一个动作。"""
-    from . import runner
-
-    if not state.history or not state.seen or not state.history[-1].endswith(runner.UNCHANGED):
+    if not state.history or not state.seen or not state.history[-1].endswith(UNCHANGED):
         return
     seen, what = state.seen[-1]
-    if what and not what.endswith(runner.UNCHANGED):
-        state.seen[-1] = (seen, what + runner.UNCHANGED)
+    if what and not what.endswith(UNCHANGED):
+        state.seen[-1] = (seen, what + UNCHANGED)
 
 
 def _tried_report(state) -> list[dict]:
     """当前这张屏幕上已经做过的动作，以及每一次有没有改变屏幕。发给模型，让它换一条路。"""
-    from . import runner
-
     report = []
-    for what in runner.tried_here(state):
-        dead = what.endswith(runner.UNCHANGED)
-        report.append({"action": what.removesuffix(runner.UNCHANGED), "screen_changed": not dead})
+    for what in tried_here(state):
+        dead = what.endswith(UNCHANGED)
+        report.append({"action": what.removesuffix(UNCHANGED), "screen_changed": not dead})
     return report
 
 
 def _dead(state) -> set[str]:
     """当前屏幕上做过、而且没改变屏幕的动作。这些动作不会再执行一次。"""
-    from . import runner
-
-    return {what.removesuffix(runner.UNCHANGED) for what in runner.tried_here(state) if what.endswith(runner.UNCHANGED)}
+    return {what.removesuffix(UNCHANGED) for what in tried_here(state) if what.endswith(UNCHANGED)}
 
 
 def _modifier(name: str) -> str:
@@ -529,13 +528,11 @@ def _revisited(state, started: int, sig: str) -> bool:
 
     连续重复由 `_repeat` 管。这里数的是中间夹了别的动作的情况：两个标签来回切时，每一步的屏幕都变了，
     连续计数一直是 0，但同一个动作在同一屏上已经出现了好几次。"""
-    from . import runner
-
     if not sig or state.last is None:
         return False
     count = 0
     for seen, what in state.seen[started:]:
-        if what and what.removesuffix(runner.UNCHANGED) == sig and runner.same_screen(seen, state.last):
+        if what and what.removesuffix(UNCHANGED) == sig and same_screen(seen, state.last):
             count += 1
     return count >= MAX_REVISITS
 
@@ -545,19 +542,17 @@ def _repeat(state, sig: str, waiting: bool, log) -> bool:
 
     重复指的是：当前屏幕上这个动作以前做过。换到另一张屏幕不会把计数清掉，所以两个页面来回跳，绕第二圈时就会停。
     等待不算重复，连续等待由“屏幕没变”那条规则去限制。"""
-    from . import runner
-
     # 目标：等待不计入重复。完成：只记下当时的屏幕，计数不变，接管继续。
     if waiting:
         state.seen.append((state.last, None))
         return False
 
     # 目标：数这个动作在当前屏幕上连续重复了几次。完成：够次数返回 True，否则记入已尝试并继续。
-    prior = [what.removesuffix(runner.UNCHANGED) for what in runner.tried_here(state)]
+    prior = [what.removesuffix(UNCHANGED) for what in tried_here(state)]
     state.repeats = state.repeats + 1 if sig in prior else 0
     state.seen.append((state.last, sig))
-    if state.repeats >= runner.MAX_REPEATS:
-        log(f"  {runner.MAX_REPEATS} actions in a row already taken on the same screen")
+    if state.repeats >= MAX_REPEATS:
+        log(f"  {MAX_REPEATS} actions in a row already taken on the same screen")
         return True
     return False
 
@@ -629,7 +624,7 @@ def act(move: DriveStep, screen: Screen, items: list[Item]) -> str:
 
 
 def _plain(text: str) -> str:
-    """条目文字和 target 比之前先去掉零宽字符、首尾空白，并忽略大小写。"""
+    """条目文字和 target 比之前先去掉零宽字符和双向控制符、首尾空白，并忽略大小写。"""
     return text.translate(_INVISIBLE).strip().casefold()
 
 

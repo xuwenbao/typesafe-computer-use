@@ -313,6 +313,9 @@ run_tasks() {
   need_image
   copy_overlay
   run mkdir -p "$REPO/.waa/hf"
+  # The container runs as root. Create the results folder first so a later archive can move
+  # task directories; a folder the container creates is not writable by this user.
+  run mkdir -p "$RESULTS"
   meta=$(task_meta "${tasks[@]}")
   stamp=$(date +%Y%m%d-%H%M%S)
   archive_earlier "$stamp" "${tasks[@]}"

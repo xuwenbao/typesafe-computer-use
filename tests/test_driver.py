@@ -7,6 +7,8 @@ import pytest
 
 from yuanji_computer_use import config, macos, windows
 from yuanji_computer_use.actions import Context, perform
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.agents.strategies import UNCHANGED, screen_moved
 from yuanji_computer_use.decide import Decision
 from yuanji_computer_use.driver import (
     BANNED,
@@ -22,7 +24,6 @@ from yuanji_computer_use.driver import (
 )
 from yuanji_computer_use.models import AxNode, Field, Item, signature
 from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.runner import UNCHANGED, RunState, screen_moved
 from yuanji_computer_use.writer import DriveStep, WriterError, _drive_step, _last_action, checked
 
 
@@ -372,9 +373,11 @@ def test_a_paste_goes_ahead_when_a_file_is_missing_or_the_clipboard_cannot_be_re
 def test_a_target_matches_a_zero_width_name_and_a_longer_label(screen, machine):
     cut = Item(0, "剪切\u200b\u200b", 1.0, 100.0, 100.0, 300.0, 140.0)
     pinned = Item(1, "文档 (已固定)", 1.0, 0.0, 200.0, 40.0, 220.0)
-    assert act(move("click", item="0", target="剪切"), screen, [cut, pinned]).startswith("clicked ")
-    assert act(move("click", item="1", target="文档"), screen, [cut, pinned]).startswith("clicked ")
-    assert len(machine) == 2
+    clock = Item(2, "Remaining Of, 30 minutes 0 seconds, \u200e9\u200e:\u200e44\u200e AM", 1.0, 0.0, 300.0, 40.0, 320.0)
+    assert act(move("click", item="0", target="剪切"), screen, [cut, pinned, clock]).startswith("clicked ")
+    assert act(move("click", item="1", target="文档"), screen, [cut, pinned, clock]).startswith("clicked ")
+    assert act(move("scroll_down", item="2", target="9:44 AM"), screen, [cut, pinned, clock]).startswith("scrolled ")
+    assert len(machine) == 3
 
 
 def test_a_target_that_names_a_different_item_clicks_nothing(screen, machine):
@@ -488,13 +491,13 @@ def test_a_cut_is_a_clipboard_shortcut_and_an_unchanged_screen_is_not_idle(scree
     assert act(move("shortcut", key="c"), screen, ITEMS).endswith("(to the clipboard; the screen need not change)")
     seen = signature(screen, ITEMS)
     line = "driver: pressed command+x (to the clipboard; the screen need not change)"
-    quiet = RunState(last=seen, history=[line], compared=0, markable=False, quiet=True)
+    quiet = Session(last=seen, history=[line], compared=0, markable=False, quiet=True)
     assert screen_moved(quiet, screen, ITEMS, lambda *_a, **_k: None) is True
     assert quiet.idle == 0 and quiet.history == [line]
-    loud = RunState(last=seen, history=["driver: pressed tab"], compared=0, markable=True)
+    loud = Session(last=seen, history=["driver: pressed tab"], compared=0, markable=True)
     assert screen_moved(loud, screen, ITEMS, lambda *_a, **_k: None) is True
     assert loud.idle == 1 and loud.history[0].endswith(UNCHANGED)
-    state = RunState(last=seen, seen=[(seen, "shortcut x")])
+    state = Session(last=seen, seen=[(seen, "shortcut x")])
     assert _take(move("shortcut", key="x"), screen, ITEMS, state).startswith("pressed command+x")
     assert ("press", "x", True) in machine
 
@@ -514,14 +517,14 @@ def test_the_last_action_says_whether_it_was_refused():
 
 def test_an_action_that_already_did_nothing_here_is_taken_with_a_note(screen, machine):
     seen = signature(screen, ITEMS)
-    state = RunState(last=seen, seen=[(seen, f"click 'Archive'{UNCHANGED}")])
+    state = Session(last=seen, seen=[(seen, f"click 'Archive'{UNCHANGED}")])
     assert _take(move("click", item="0", target="Archive"), screen, ITEMS, state) == f"clicked 'Archive' (note: {DONE_BEFORE})"
     assert [entry[0] for entry in machine] == ["click"]
 
 
 def test_the_action_that_looped_is_refused_after_a_change_of_course(screen, machine):
     here = signature(screen, ITEMS)
-    state = RunState(last=here, banned={"click 'Archive'"}, banned_on=here)
+    state = Session(last=here, banned={"click 'Archive'"}, banned_on=here)
     assert _take(move("click", item="0", target="Archive"), screen, ITEMS, state) == BANNED
     assert _take(move("key", key="tab"), screen, ITEMS, state) == "pressed tab"
     assert machine == [("press", "tab", False)]

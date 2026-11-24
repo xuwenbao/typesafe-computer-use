@@ -15,6 +15,8 @@ import pytest
 
 from yuanji_computer_use import cli, macos, windows, windows_session
 from yuanji_computer_use.actions import Context, add_item, click_item, press_offscreen
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.agents.strategies import UNCHANGED, resolve, screen_moved
 from yuanji_computer_use.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
 from yuanji_computer_use.decide import Decision, kind_criteria
 from yuanji_computer_use.driver import act, load_driver_record, take_over
@@ -22,7 +24,7 @@ from yuanji_computer_use.driver_agent import TOOLS, screen_packet
 from yuanji_computer_use.models import Abort, AxNode, ElementState, Item, signature
 from yuanji_computer_use.perception import to_ax_items
 from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.runner import UNCHANGED, RunConfig, RunState, resolve, screen_moved
+from yuanji_computer_use.runner import RunConfig
 from yuanji_computer_use.uia_patterns import PATTERN_IDS
 from yuanji_computer_use.waa import tree
 from yuanji_computer_use.waa.desktop import WAADesktop, _operate_element
@@ -199,7 +201,7 @@ def test_a_cut_does_not_count_as_an_unchanged_screen(screen, monkeypatch, tmp_pa
         site=SimpleNamespace(choice="none", confidence=1.0, probabilities={"none": 1.0}),
         key=SimpleNamespace(choice="x", confidence=0.8, probabilities={"x": 0.8}),
     )
-    state = RunState()
+    state = Session()
     ctx = Context(goal="cut the files", browser="Google Chrome", email=None, typesafe=None, writer=None, history=[])
     assert resolve(RunConfig(goal="cut the files", out=tmp_path, act=True), ctx, state, screen, [], decision, {}, lambda _m: None)
     assert pressed == [("x", True)]
@@ -339,7 +341,7 @@ def _run_steps(monkeypatch, tmp_path, screen, items, moves, steps: int = 5):
         return (screen, items) if screen_moved(state, screen, items, log) else None
 
     monkeypatch.setattr(runner, "look", look)
-    state = RunState(outcome="nothing helps")
+    state = Session(outcome="nothing helps")
     take_over(
         RunConfig(goal="save", out=tmp_path, driver_steps=steps), SimpleNamespace(writer=object()), state, lambda *a: None, 0
     )
@@ -442,7 +444,7 @@ def _ask_the_driver(monkeypatch, tmp_path, screen, items, script, steps: int):
     from yuanji_computer_use import driver_agent
 
     monkeypatch.setattr(driver_agent, "model_for", lambda: script)
-    state = RunState(outcome="nothing helps")
+    state = Session(outcome="nothing helps")
     take_over(
         RunConfig(goal="move the docx files into Archive", out=tmp_path, driver_steps=steps),
         SimpleNamespace(writer=object()),
