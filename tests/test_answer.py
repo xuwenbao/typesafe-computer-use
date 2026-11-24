@@ -565,7 +565,7 @@ def test_a_second_stop_on_the_same_page_is_handed_back_when_the_driver_is_off(tm
 
 
 def test_an_action_makes_the_last_capture_stale(tmp_path, screen, monkeypatch):
-    monkeypatch.setattr("yuanji_computer_use.agents.strategies.perform", lambda *a: "scrolled down")
+    monkeypatch.setattr("yuanji_computer_use.agents.strategies.perform", lambda *a, **_k: "scrolled down")
     state = Session(view=(screen, []))
     _, log = logged()
 

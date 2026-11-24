@@ -31,7 +31,7 @@ class Context:
     guidance: Guidance = field(default_factory=Guidance)  # the runner replaces the context when the writer or the user adds to it
 
 
-def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context) -> str:
+def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context, method: str = "auto") -> str:
     desktop.check_abort()
     key = decision.chosen
     by_index = {str(it.index): it for it in items}
@@ -41,7 +41,7 @@ def perform(decision: Decision, screen: Screen, items: list[Item], ctx: Context)
         elif decision.opening:
             what = open_item(by_index[key], screen)
         else:
-            what = click_item(by_index[key], screen, items)
+            what = click_item(by_index[key], screen, items, method=method)
         mates = row_mates(items, limit=None).get(int(key))
         # Three rows each end in a Buy: the line must say which, or trying one marks them all as tried.
         # The whole row goes in, so two rows that open alike still get lines of their own.
@@ -153,6 +153,7 @@ def _click(item: Item, screen: Screen, method: str = "auto") -> str:
     ref = _action_ref(item, screen)
     # A file row lists both. Invoke is the double-click, so a click must not take it.
     selectable = "selection_item" in item.controls
+    # method 来自换按法：pointer 只点坐标，accessibility 只走无障碍，auto 先无障碍、按不下去再点坐标。
     if method != "pointer" and ref is not None and not selectable and desktop.ax_press(ref):
         return f"pressed {item.text!r} via accessibility"
     if method != "pointer" and ref is not None:
@@ -167,6 +168,7 @@ def _click(item: Item, screen: Screen, method: str = "auto") -> str:
                     desktop.ax_focus(ref)  # Select() does not give the list the keyboard, so a later cut misses it
                 return f"{verb} {item.text!r} via accessibility"
     if method == "accessibility":
+        # 这一下指定了无障碍却按不下去。不再改用鼠标，换按法才能和上一次区分开。
         return f"click refused: {item.text!r} was not clicked via accessibility"
     popup = screen.covered.get(item.index)
     closed = f"{close_popup(popup)} then " if popup is not None else ""
@@ -315,7 +317,8 @@ def _use_browser(decision: Decision, screen, items, ctx: Context) -> str:
 
     `none` is the page already open there, so bringing the browser forward is the whole action. A
     catalog key is its URL, and `other` is a site outside the catalog, which only the writer can
-    name. Opening a URL activates the browser too, so the three cases differ only in the page.
+    name. When that proposal is empty, the browser is still brought forward. Opening a URL
+    activates the browser too, so the cases differ only in the page.
     """
     site = decision.site.choice
     if site == "none":
@@ -331,7 +334,10 @@ def _use_browser(decision: Decision, screen, items, ctx: Context) -> str:
         except WriterError as e:
             return f"use_browser refused: the writer failed ({e})"
     if not url:
-        return "use_browser refused: the writer proposed no usable URL for this goal"
+        # 写作者给不出网址。把浏览器带到前台，比拒绝这一步、让窗口一直留在后面有用。
+        if desktop.activate(ctx.browser):
+            return f"activated {ctx.browser}"
+        return f"use_browser failed: {ctx.browser} did not come to the front"
     if desktop.open_url(ctx.browser, url):
         return f"opened {url}"
     return f"use_browser failed: opened {url} but {ctx.browser} did not come to the front"

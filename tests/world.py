@@ -141,6 +141,9 @@ class World:
         self.asked: list[str] = []  # the questions the writer put to the user
         self.loading = {p.name: p.loads_in for p in pages}
         self.ticks = 0  # captures taken so far, so a page can show something that moves on its own
+        self.toggles: dict[str, bool] = {}  # label -> checked. A row named here is a switch
+        self.flips = True  # a press changes the switch. False leaves it, so an assertion can fail
+        self.pointer_flips = False  # only a pixel click flips the switch; an accessibility press does not
         self._refs: dict[str, Ref] = {}  # action -> the element, so a ref stays the same object
         self._fields: dict[str, Ref] = {}  # label -> the field's element
 
@@ -239,10 +242,23 @@ class World:
         cells = self.cells()
         popup = self.popup(cells)
         for n, cell in enumerate(cells):
-            items.append(Item(n, cell.text, 1.0, *cell.box, role=cell.role, source="ax" if cell.role else "ocr"))
+            switched = cell.text in self.toggles
+            role = cell.role or ("button" if switched else "")
+            items.append(
+                Item(
+                    n,
+                    cell.text,
+                    1.0,
+                    *cell.box,
+                    role=role,
+                    source="ax" if role else "ocr",
+                    controls=("toggle",) if switched else (),
+                    checked=self.toggles[cell.text] if switched else None,
+                )
+            )
             if popup is not None and cell.text in self.page.under_popup:
                 screen.covered[n] = popup
-            elif cell.role:
+            elif role:
                 screen.ax_refs[n] = self._ref(self.click_action(cell, cells))
         return items
 
@@ -304,6 +320,8 @@ class World:
             return
         action = self.click_action(hit, cells) if hit is not None else "click:nothing"
         self.apply(self._pointer(action, button, count, modifier))
+        if self.pointer_flips and hit is not None:
+            self._flip(action)
 
     @staticmethod
     def _pointer(action: str, button: str, count: int, modifier: str | None) -> str:
@@ -319,7 +337,17 @@ class World:
         if not isinstance(ref, Ref) or self._refs.get(ref.name) is not ref:
             return False
         self.apply(ref.name)
+        if not self.pointer_flips:
+            self._flip(ref.name)
         return True
+
+    def _flip(self, action: str) -> None:
+        """A switch named in `toggles` changes when it is pressed, unless `flips` is off."""
+        if not self.flips:
+            return
+        text = action.split(":", 1)[-1].split("@", 1)[0]
+        if text in self.toggles:
+            self.toggles[text] = not self.toggles[text]
 
     def press(self, name: str, command: bool = False) -> None:
         if command and name == "[":
@@ -514,6 +542,7 @@ class FakeWriter:
         submit: bool = False,
         drives: list | None = None,
         host_fails: bool = False,
+        plans: list | None = None,
     ):
         self.requests: list[dict] = []
         self.text = text
@@ -522,7 +551,9 @@ class FakeWriter:
         self.reviews = list(reviews or [])
         self.drives = list(drives or [])
         self.host_fails = host_fails
+        self.plans = list(plans or [])
         self.packets: list[dict] = []  # the packet of every answer asked for, in order
+        self.plan_packets: list[dict] = []  # the packet of every plan asked for, in order
         self.drive_packets: list[dict] = []  # the packet of every driver action asked for, in order
         self.messages = SimpleNamespace(create=self._create)
 
@@ -547,6 +578,10 @@ class FakeWriter:
                 "missing": [],
                 **scripted,
             }
+        elif asked == {"goal_state", "subgoals"}:
+            self.plan_packets.append(packet)
+            scripted = self.plans.pop(0) if self.plans else {"goal_state": {}, "subgoals": []}
+            reply = scripted(packet) if callable(scripted) else scripted
         elif asked == {"action", "executable", "id", "reason"}:
             if self.host_fails:
                 raise WriterError("the host could not be asked")
@@ -571,12 +606,16 @@ def drive(
     driver_steps: int = 0,
     act: bool = True,
     capture: Callable | None = None,
+    planner: bool = False,
 ) -> Session:
     """Run the real loop against the world until it stops itself. `world.fake` holds the classifier.
 
     `replies` are what the user types when the writer asks, in order; with none, nobody is at the
     terminal and the writer is told so. `world.asked` collects the questions that were put.
     """
+    # The planner is off unless a scenario turns it on. A stop would otherwise ask for a plan,
+    # and the stand-in writer rejects a schema it was not given.
+    monkeypatch.setenv("CLICKER_PLANNER", "1" if planner else "0")
     world.install(monkeypatch)
     if capture is not None:
         monkeypatch.setattr(runner, "capture", capture)

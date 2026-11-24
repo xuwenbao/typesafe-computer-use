@@ -96,6 +96,30 @@ def test_offscreen_criteria_and_state_name_the_role_and_say_it_is_not_visible(sc
         {"k": 1, "role": "cell", "label": "Note 900"},
     ]
     assert "offscreen_controls" not in base_state("buy the thing", screen, [make_item(0, "Buy")], [])
+    banned = base_state("buy the thing", live, [make_item(0, "Buy")], [], banned_offscreen={"Register Now"})
+    assert banned["offscreen_controls"] == [{"k": 1, "role": "cell", "label": "Note 900"}]
+    assert offscreen_criteria(nodes, {"Register Now"}) == {"1": "cell 'Note 900' (not visible)"}
+
+
+def test_the_state_carries_the_current_subgoal_only_when_a_plan_has_one(screen, make_item):
+    items = [make_item(0, "Hour")]
+    assert "current_subgoal" not in base_state("set a timer", screen, items, [])
+    packet = {"do": "shortcut", "label": None, "role": None, "verify": {"exists": True}, "key": "v"}
+    state = base_state("set a timer", screen, items, [], subgoal=packet)
+    assert state["current_subgoal"] == packet
+
+    seen = {}
+
+    class Client:
+        def system_one(self, state, questions, **extra):
+            seen["state"] = state
+            seen["kind"] = questions["kind"].instructions
+            return SimpleNamespace(answers={"kind": answer("done", 0.9), "site": answer("none", 1.0), "item": answer("0", 0.9)})
+
+    decide(Client(), "set a timer", screen, items, [], "Google Chrome", None, subgoal=packet)
+    assert seen["state"]["current_subgoal"]["key"] == "v"
+    assert "current_subgoal" in seen["kind"]
+    assert "user's goal" in seen["kind"]
 
 
 def test_kind_criteria_offers_one_browser_action():

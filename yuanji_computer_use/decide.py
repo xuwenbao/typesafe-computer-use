@@ -34,6 +34,11 @@ FOCUS_RULE = (
     " The current focus is the next step on the way to the goal, set by a reviewer that read the "
     "screen when you last stopped: work toward it. 'done' still means the goal itself, not the focus."
 )
+# Said only while a plan has a current subgoal, so a run with no plan asks the question it always asked.
+SUBGOAL_RULE = (
+    " The current_subgoal in the state is the next step toward the goal: take the action it names, "
+    "on the control it names. 'done' still means the user's goal, not this subgoal."
+)
 
 
 def fixed_actions(browser: str, email: str | None, typing: bool = True) -> dict[str, str]:
@@ -149,14 +154,23 @@ def item_criteria(screen: Screen, items: list[Item], only: list[Item] | None = N
     }
 
 
-def offscreen_criteria(nodes: list[AxNode]) -> dict[str, str]:
-    """Each off-screen control as one line, keyed by its position in `screen.offscreen`."""
-    return {str(i): f"{node.role_word} {node.label!r} (not visible)" for i, node in enumerate(nodes)}
+def offscreen_criteria(nodes: list[AxNode], banned: set[str] | None = None) -> dict[str, str]:
+    """Each off-screen control as one line, keyed by its position in `screen.offscreen`.
+
+    `banned` drops labels refused on this screen. The keys that remain are still the indexes in
+    `nodes`, so a later press finds the same control.
+    """
+    skip = banned or set()
+    return {str(i): f"{node.role_word} {node.label!r} (not visible)" for i, node in enumerate(nodes) if node.label not in skip}
 
 
-def offscreen_records(nodes: list[AxNode]) -> list[dict]:
-    """The same controls as state, with the key the offscreen question answers with."""
-    return [{"k": i, "role": node.role_word, "label": node.label} for i, node in enumerate(nodes)]
+def offscreen_records(nodes: list[AxNode], banned: set[str] | None = None) -> list[dict]:
+    """The same controls as state, with the key the offscreen question answers with.
+
+    `banned` drops refused labels and keeps the original indexes, the same way the question does.
+    """
+    skip = banned or set()
+    return [{"k": i, "role": node.role_word, "label": node.label} for i, node in enumerate(nodes) if node.label not in skip]
 
 
 # The file-list chords. Quit, close, hide, and minimize are not here; the driver keeps its own wider list.
@@ -189,15 +203,21 @@ def base_state(
     history: list[str],
     tried: list[str] | None = None,
     guidance: Guidance | None = None,
+    subgoal: dict | None = None,
+    banned_offscreen: set[str] | None = None,
 ) -> dict:
     """The facts the classifier reads. `tried` lists the actions already taken on this same screen
     earlier in the run, each of which led back here: a fact the code knows and the model cannot.
-    `guidance` is what the writer and the user added to the goal when the classifier last stopped."""
+    `guidance` is what the writer and the user added to the goal when the classifier last stopped.
+    `subgoal` is the plan's current step. With no plan it is omitted, and the packet is unchanged.
+    `banned_offscreen` drops labels refused on this screen from `offscreen_controls`."""
     hints = date_hints(items, screen)
     mates = row_mates(items)
+    offscreen = offscreen_records(screen.offscreen, banned_offscreen)
     return {
         "goal": goal,
         **(guidance.state() if guidance else {}),
+        **({"current_subgoal": subgoal} if subgoal else {}),
         "now": now_context(),
         "frontmost_app": screen.app,
         "browser_active_tab_url": screen.url,
@@ -216,7 +236,7 @@ def base_state(
             }
             for it in items
         ],
-        **({"offscreen_controls": offscreen_records(screen.offscreen)} if screen.offscreen else {}),
+        **({"offscreen_controls": offscreen} if offscreen else {}),
     }
 
 
@@ -288,11 +308,14 @@ def decide(
     guidance: Guidance | None = None,
     picture: Marked | None = None,
     candidates: list[Item] | None = None,
+    subgoal: dict | None = None,
+    banned_offscreen: set[str] | None = None,
 ) -> Decision:
     """One step's decision. With a `picture`, the state refers to it as `screen_image` and the
     request carries it as an asset; when System One refuses the picture, the step is asked once
     more without it, and the decision says why (see `refuses_the_picture`)."""
     on_desktop = screen.url is None and screen.app != browser
+    offered = offscreen_criteria(screen.offscreen, banned_offscreen)
     questions = {
         "kind": Choice(
             instructions=(
@@ -301,11 +324,12 @@ def decide(
                 "that was just taken unless the screen changed, and never one listed as already "
                 "tried on this screen: each of those led straight back here."
                 + (FOCUS_RULE if guidance and guidance.focus else "")
+                + (SUBGOAL_RULE if subgoal else "")
             ),
             criteria=kind_criteria(
                 browser,
                 email,
-                bool(screen.offscreen),
+                bool(offered),
                 bool(screen.field and screen.field.is_text),
                 desktop=on_desktop,
             ),
@@ -322,21 +346,21 @@ def decide(
     shown = items if candidates is None else candidates
     if shown:
         questions["item"] = item_question(screen, items, pictured=picture is not None, only=shown)
-    if screen.offscreen:
+    if offered:
         questions["offscreen"] = Choice(
             instructions=(
                 "If activating a control that is not on screen is the right move, which control? "
                 "These are real controls of the app, reachable without the mouse, but nothing on "
                 "the capture points at them."
             ),
-            criteria=offscreen_criteria(screen.offscreen),
+            criteria=offered,
         )
     if on_desktop:
         questions["key"] = Choice(
             instructions="If this step presses a command shortcut, which key?",
             criteria=key_criteria(),
         )
-    state = base_state(goal, screen, items, history, tried, guidance)
+    state = base_state(goal, screen, items, history, tried, guidance, subgoal, banned_offscreen)
     refused = None
     if picture is None:
         answers = client.system_one(state=state, questions=questions).answers
@@ -398,6 +422,7 @@ def merged_margin(answer, items: list[Item]) -> float:
 
 
 def _same_targets(items: list[Item]) -> list[list[int]]:
+    """把点的是同一个控件的条目并成一组。分差按组算，不按被拆开的编号算。"""
     parent = {it.index: it.index for it in items}
 
     def find(index: int) -> int:
@@ -417,6 +442,7 @@ def _same_targets(items: list[Item]) -> list[list[int]]:
 
 
 def _one_target(left: Item, right: Item) -> bool:
+    """框的交并比至少 0.5，或同一行上的同名文字，算同一个控件。行标题和真开关常是这一种。"""
     if _iou(left, right) >= 0.5:
         return True
     label = "".join(left.text.split()).casefold()

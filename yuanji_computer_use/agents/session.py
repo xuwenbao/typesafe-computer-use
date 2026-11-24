@@ -64,6 +64,24 @@ class Session:
     ctx: object = None  # 执行动作用的 Context
     log: object = None  # 运行日志
     step: int = 0  # 刚跑过的分类器步号。0 表示还没跑
+    plan: object = None  # 当前还没执行完的计划。重规划时清掉，剩下的子目标不再执行
+    last_plan: object = None  # 最近一份计划，写进 run.json。清掉 plan 之后仍留着
+    subgoal: int = 0  # 当前子目标在 plan.subgoals 里的下标
+    replans: int = 0  # 第一次规划不算。断言失败或分类器停下之后又规划的次数
+    widened: int = 0  # 候选放宽的次数
+    verdicts: list = field(default_factory=list)  # 已执行子目标的断言结果：true、false、unknown
+    planner_calls: int = 0
+    planner_seconds: float = 0.0
+    goal_state_held: bool = False  # 目标状态已由断言确认。写手据此不再为完成与否重读文案
+    executed_subgoals: int = 0  # 累计执行过的子目标，含已经成立而跳过的。超过 max_subgoals 就截断
+    followup: str = ""  # 这一步结束时要去的地方：policy、plan、writer。空表示按原来的停或继续
+    reuse_view: bool = False  # 断言刚感知过动作之后的画面。下一步直接用，不再连拍
+    fresh: object = None  # 动作之后那张画面的指纹。和 last（动作前）比，看这一下改没改画面
+    alt: dict | None = None  # 下一步对同一条目换按法：index、method、text。不问分类器
+    swapped: set = field(default_factory=set)  # 这一屏已经换过按法的条目编号
+    press_tried: list = field(default_factory=list)  # 换过仍无效时，两种按法都算已尝试
+    last_press: dict | None = None  # 刚点过的条目。下一屏没变时换成另一种按法，有没有计划都一样
+    refused_offscreen: dict = field(default_factory=dict)  # 这一屏被拒的屏外控件标签，按动作那一屏的指纹记
 
 
 @dataclass
@@ -81,3 +99,5 @@ class StepContext:
     keep_going: bool = True
     prefix: Path | None = None
     started: float = 0.0
+    method: str = "auto"  # click_item 的按法。换按法时是 pointer 或 accessibility
+    skip_decide: bool = False  # 换按法不再问分类器

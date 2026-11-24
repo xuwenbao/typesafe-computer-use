@@ -100,6 +100,66 @@ def test_a_name_with_a_path_or_arguments_is_refused(monkeypatch, tmp_path):
     assert state.history == ["host: refused 'notepad /c calc'"]
 
 
+def test_settings_counts_as_open_when_the_frame_host_is_in_front(monkeypatch, tmp_path):
+    state = Session()
+    launched = _Launched()
+    windows: list[tuple[str, str, str]] = []
+
+    def launch(name):
+        launched.append(name)
+        windows.append(("1", "Settings", "ApplicationFrameHost.exe"))
+
+    def activate(app, timeout=3.0):
+        launched.activated.append(app)
+        return any(host._same_app(app, process) for _, _, process in windows)
+
+    monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
+    monkeypatch.setattr(desktop, "launch_app", launch)
+    monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: ("explorer.exe", 1))
+    monkeypatch.setattr(desktop, "activate", activate)
+    monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
+    monkeypatch.setattr(desktop, "check_abort", lambda: None)
+    host.prepare(
+        RunConfig(goal="turn notifications off", out=tmp_path, act=True),
+        SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "SystemSettings", "reason": "open settings"})),
+        state,
+        Log(),
+    )
+    assert launched == ["ms-settings:"]
+    assert launched.activated == ["ms-settings:", "applicationframehost"]
+    assert state.history == ["host: launched ms-settings:"]
+
+
+def test_control_panel_counts_when_explorer_shows_that_title(monkeypatch, tmp_path):
+    state = Session()
+    launched = _Launched()
+    windows: list[tuple[str, str, str]] = []
+
+    def launch(name):
+        launched.append(name)
+        windows.append(("1", "Control Panel", "explorer.exe"))
+
+    def activate(app, timeout=3.0):
+        launched.activated.append(app)
+        return any(host._same_app(app, process) for _, _, process in windows)
+
+    monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
+    monkeypatch.setattr(desktop, "launch_app", launch)
+    monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: ("explorer.exe", 1))
+    monkeypatch.setattr(desktop, "activate", activate)
+    monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
+    monkeypatch.setattr(desktop, "check_abort", lambda: None)
+    host.prepare(
+        RunConfig(goal="set the time zone", out=tmp_path, act=True),
+        SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "control", "reason": "open it"})),
+        state,
+        Log(),
+    )
+    assert launched == ["control"]
+    assert launched.activated == ["control", "explorer.exe"]
+    assert state.history == ["host: launched control"]
+
+
 def test_the_loop_still_runs_when_the_host_cannot_choose(monkeypatch, tmp_path):
     world = World([Page(name="desk", items=["This PC"])])
     state = drive(

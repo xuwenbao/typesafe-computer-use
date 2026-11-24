@@ -92,6 +92,11 @@ def _scrub(value):
     return value
 
 
+# Planning records an empty plan and zero counts even when the planner never ran. The recorded
+# runs predate those keys, so the comparison ignores exactly these and still requires them.
+_PLAN_KEYS = {"plan", "verdicts", "widened", "replans", "planner_calls", "planner_seconds"}
+
+
 def _snapshot(out: Path, state) -> dict:
     files = {}
     for path in sorted(out.iterdir()):
@@ -105,11 +110,12 @@ def _snapshot(out: Path, state) -> dict:
         else:
             files[path.name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
     summary = json.loads((out / "run.json").read_text())
+    assert set(summary) >= _PLAN_KEYS
     return {
         "outcome": state.outcome,
         "route": state.route,
         "history": state.history,
-        "run_json_keys": sorted(summary),
+        "run_json_keys": sorted(set(summary) - _PLAN_KEYS),
         "files": files,
     }
 

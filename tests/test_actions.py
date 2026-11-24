@@ -291,11 +291,10 @@ def test_use_browser_without_a_writer_refuses_a_site_outside_the_catalog(screen,
     assert browser == []
 
 
-def test_use_browser_refuses_when_the_writer_proposes_nothing(screen, browser, monkeypatch):
+def test_use_browser_activates_when_the_writer_proposes_nothing(screen, browser, monkeypatch):
     monkeypatch.setattr(actions, "compose_url", lambda writer, goal, history, guidance: "")
-    refusal = actions.perform(browsing("other"), screen, [], context(object()))
-    assert refusal == "use_browser refused: the writer proposed no usable URL for this goal"
-    assert browser == []
+    assert actions.perform(browsing("other"), screen, [], context(object())) == "activated Google Chrome"
+    assert browser == [("activate", "Google Chrome")]
 
 
 @pytest.fixture

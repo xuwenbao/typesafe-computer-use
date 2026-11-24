@@ -18,6 +18,7 @@ _registry: dict[str, type] = {}
 _MODULES = {
     "host": "yuanji_computer_use.agents.host",
     "policy": "yuanji_computer_use.agents.policy",
+    "plan": "yuanji_computer_use.agents.plan",
     "writer": "yuanji_computer_use.agents.writer",
     "driver": "yuanji_computer_use.agents.driver",
 }

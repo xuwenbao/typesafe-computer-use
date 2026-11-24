@@ -1,9 +1,10 @@
 """主循环：每一步截屏 → 让分类器选动作 → 执行，并把每一步的记录写进运行目录。
 
-几个角色：
-- 分类器（classifier）：TypeSafe 模型，每一步从固定选项里挑一个动作。
-- 写手（writer）：大语言模型，分类器停下时读屏幕、回答用户，必要时给分类器一个“焦点”让它继续。
+几个角色按状态表交接，主循环本身不再决定下一步交给谁：
 - 宿主（host）：真操作开始前，只负责把目标应用打开或调到前台，然后把同一条目标交给分类器。
+- 分类器（policy）：TypeSafe 模型，每一步从固定选项里挑一个动作。有计划时只在当前子目标的候选里选。
+- 规划（plan）：分类器分差太小，或低置信、没有可用动作、卡住时，把目标拆成带验收条件的子目标，再交回分类器。
+- 写手（writer）：大语言模型，分类器停下时读屏幕、回答用户，必要时给分类器一个“焦点”让它继续。
 - 接管（driver）：分类器彻底做不下去时，由更强的模型一步一步接着操作。
 """
 
@@ -18,6 +19,7 @@ from typesafe_sdk import TypeSafeClient
 
 from .actions import Context, forget_clipboard
 from .agents.base import AgentFactory
+from .agents.plan import dump_plan
 from .agents.session import Handoff, Session
 from .agents.status import Status, allows
 from .agents.strategies import (
@@ -83,6 +85,7 @@ STOPPED = {
         "and the focus given each time did not help, so the run ends with this answer"
     ),
     "step limit": "the run used every step it was allowed",
+    "replanned": "the planner used its replans without the goal state holding",
 }
 
 
@@ -117,8 +120,10 @@ RunState = Session
 def run(cfg: RunConfig, ctx_factory) -> RunState:
     """跑完整次运行。
 
-    流程：真操作时宿主先打开目标应用；分类器一步步走；它停下时交给写手；写手可能让它继续，也可能给出最终回答；
-    如果目标没完成又没路可走，再交给接管模型。无论怎么结束，最后都写 run.json。
+    从宿主开始，按 `agents.status` 的转移表把运行交给分类器、规划、写手或接管。
+    分类器一步步走；首步分差不够，或它因低置信、没有可用动作、卡住而停下时，先规划。
+    它说完成，或步数用完，交给写手。写手可能让它继续，也可能给出最终回答。
+    目标没完成又没路可走，再交给接管；接管跑完后写手再看最后一屏。结束时写 run.json。
     ctx_factory(typesafe, history) 负责构造执行动作用的 Context。
     """
     cfg.out.mkdir(parents=True, exist_ok=True)
@@ -134,12 +139,15 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
     try:
         with TypeSafeClient() as typesafe:
             state.ctx = metered(ctx_factory(typesafe, state.history), state.calls)
+            # 状态只回答“下一步该谁”。为什么停写在 state.outcome，不写在状态里。
             status = Status.HOST
             while status is not Status.FINISH:
+                # 最终回答不走 handle：接管已经结束，写手只看最后一屏，然后必须到 FINISH。
                 if status is Status.FINAL_ANSWER:
                     nxt = AgentFactory.create("writer").conclude(state)
                 else:
                     nxt = AgentFactory.create(status.value).handle(state)
+                # 表里没有的边是程序错误。停在这里，避免运行交到没有角色接的状态。
                 if not allows(status, nxt):
                     raise RuntimeError(f"illegal transition {status.value} -> {nxt.value}")
                 status = nxt
@@ -171,6 +179,13 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "driver_calls": state.driver_calls,
             "driver_tool_calls": state.driver_tool_calls,
             "history": state.history,
+            # 规划层的记录。规划关掉时 plan 是 null，次数和耗时是 0。last_plan 在计划被清掉后仍留着。
+            "plan": dump_plan(state.last_plan),
+            "verdicts": state.verdicts,  # 已执行子目标的断言：true、false、unknown
+            "widened": state.widened,  # 候选空间放宽的次数
+            "replans": state.replans,  # 第一次规划不算
+            "planner_calls": state.planner_calls,
+            "planner_seconds": round(state.planner_seconds, 3),
             "config": {k: str(v) for k, v in asdict(cfg).items()},
         }
         (cfg.out / "run.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -403,7 +418,17 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
     earlier = earlier_screens(state, signature(screen, items))
     earlier_stops = stops_so_far(state)
     answer = compose_answer(
-        ctx.writer, cfg.goal, screen, items, state.history, stopped, earlier, state.guidance, earlier_stops, can_ask
+        ctx.writer,
+        cfg.goal,
+        screen,
+        items,
+        state.history,
+        stopped,
+        earlier,
+        state.guidance,
+        earlier_stops,
+        can_ask,
+        goal_state_held=state.goal_state_held,
     )
     # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准。
     denied = denied_listed_names(f"{answer.text}\n{answer.focus}", answer.achieved, items)
@@ -425,6 +450,7 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
         can_ask,
         picture=False,
         denied=denied,
+        goal_state_held=state.goal_state_held,
     )
 
 

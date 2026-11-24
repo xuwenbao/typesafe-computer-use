@@ -3,6 +3,8 @@
 #
 #   scripts/waa setup                         clone the pinned commit into .waa/, build jev-winarena, check imports
 #   scripts/waa prepare-image [--iso PATH]    make the golden image in .waa/storage from the evaluation ISO
+#   scripts/waa snapshot                      copy the shut-down disk to .waa/snapshot
+#   scripts/waa restore                       copy that snapshot back over .waa/storage
 #   scripts/waa run DOMAIN/ID...              run those tasks, one after another, in one VM
 #   scripts/waa results [FOLDER]              each task's score, steps, time and tokens, then the means
 #
@@ -25,12 +27,27 @@ REPO=$(pwd)
 CHECKOUT="$REPO/.waa/WindowsAgentArena"
 CLIENT="$CHECKOUT/src/win-arena-container/client"
 STORAGE="$REPO/.waa/storage"
+SNAPSHOT="$REPO/.waa/snapshot"
 RESULTS="$REPO/results"
+# The installed disk and the firmware next to it. The installer ISO is not the installed system.
+DISK_FILES=(
+  data.img
+  windows.boot
+  windows.base
+  windows.mac
+  windows.mode
+  windows.ver
+  windows.rom
+  windows.vars
+  windows_secure.rom
+  windows_secure.tpm
+  windows_secure.vars
+)
 IMAGE=jev-winarena
 MODEL=jev
 ISO_PAGE=https://info.microsoft.com/ww-landing-windows-11-enterprise.html
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
 
 die() {
   echo "scripts/waa: $*" >&2
@@ -258,6 +275,13 @@ task_meta() {
   echo "$meta"
 }
 
+reclaim_results() {
+  [[ -d "$RESULTS" ]] || return 0
+  # The container runs as root, so the task folders it writes cannot be moved aside next time.
+  find "$RESULTS" -user root -print -quit | grep -q . || return 0
+  run docker run --rm -v "$RESULTS:/results" alpine:3.20 chown -R "$(id -u):$(id -g)" /results
+}
+
 # WAA deletes a task directory that has no result.txt, and skips one that has one. Move both out
 # of the way first, so a rerun starts clean and the previous jev/ folder is kept.
 archive_earlier() {
@@ -316,6 +340,7 @@ run_tasks() {
   # The container runs as root. Create the results folder first so a later archive can move
   # task directories; a folder the container creates is not writable by this user.
   run mkdir -p "$RESULTS"
+  reclaim_results
   meta=$(task_meta "${tasks[@]}")
   stamp=$(date +%Y%m%d-%H%M%S)
   archive_earlier "$stamp" "${tasks[@]}"
@@ -335,6 +360,10 @@ run_tasks() {
   fi
   if [[ -n "${WAA_MAX_STEPS:-}" ]]; then
     cmd+=(-e WAA_MAX_STEPS)
+  fi
+  # The agent reads this inside the container. Without -e the tree stays on the host and is never saved.
+  if [[ -n "${JEV_WAA_SAVE_TREE:-}" ]]; then
+    cmd+=(-e JEV_WAA_SAVE_TREE)
   fi
   while IFS= read -r name; do
     cmd+=(-e "$name")
@@ -364,6 +393,83 @@ results() {
   run uv run --frozen --quiet python -m yuanji_computer_use.waa.results "${1:-$RESULTS}"
 }
 
+# ----- snapshot ------------------------------------------------------------------------------
+
+require_vm_stopped() {
+  local listing
+  listing=$(docker ps --format '{{.Image}} {{.Ports}}') || die "could not list containers"
+  if [[ "$listing" == *jev-winarena* || "$listing" == *:8006* || "$listing" == *:3390* ]]; then
+    die "the VM is running; stop it before copying the disk"
+  fi
+}
+
+files_here() {
+  local dir=$1 name
+  for name in "${DISK_FILES[@]}"; do
+    if [[ -e "$dir/$name" ]]; then
+      printf '%s\n' "$name"
+    fi
+  done
+}
+
+copy_sparse() {
+  local src=$1 dest=$2 from=$3 to=$4 name
+  shift 4
+  local args=()
+  for name in "$@"; do
+    args+=("/$from/$name")
+  done
+  run mkdir -p "$dest"
+  run docker run --rm --entrypoint cp \
+    -v "$src:/$from:ro" \
+    -v "$dest:/$to" \
+    "$IMAGE" \
+    --sparse=always "${args[@]}" "/$to/"
+}
+
+clear_managed() {
+  local dest=$1 mount=$2 name
+  local args=()
+  for name in "${DISK_FILES[@]}"; do
+    args+=("/$mount/$name")
+  done
+  run docker run --rm --entrypoint rm \
+    -v "$dest:/$mount" \
+    "$IMAGE" \
+    -f "${args[@]}"
+}
+
+snapshot_disk() {
+  [[ $# -eq 0 ]] || die "snapshot takes no arguments"
+  [[ -f "$STORAGE/data.img" && -f "$STORAGE/windows.boot" ]] ||
+    die "this is not a finished install (storage needs data.img and windows.boot)"
+  require_vm_stopped
+  local names=() name
+  while IFS= read -r name; do
+    names+=("$name")
+  done < <(files_here "$STORAGE")
+  run mkdir -p "$SNAPSHOT"
+  for name in "${DISK_FILES[@]}"; do
+    rm -f "$SNAPSHOT/$name"
+  done
+  copy_sparse "$STORAGE" "$SNAPSHOT" from to "${names[@]}"
+  run docker run --rm -v "$SNAPSHOT:/snapshot" alpine:3.20 chown -R "$(id -u):$(id -g)" /snapshot
+}
+
+restore_disk() {
+  [[ $# -eq 0 ]] || die "restore takes no arguments"
+  [[ -f "$SNAPSHOT/data.img" && -f "$SNAPSHOT/windows.boot" ]] ||
+    die "no snapshot. Shut the VM down and run scripts/waa snapshot"
+  require_vm_stopped
+  local names=() name
+  while IFS= read -r name; do
+    names+=("$name")
+  done < <(files_here "$SNAPSHOT")
+  run mkdir -p "$STORAGE"
+  clear_managed "$STORAGE" storage
+  copy_sparse "$SNAPSHOT" "$STORAGE" snapshot storage "${names[@]}"
+}
+
 load_env
 case "${1:-}" in
   setup)
@@ -377,6 +483,14 @@ case "${1:-}" in
   run)
     shift
     run_tasks "$@"
+    ;;
+  snapshot)
+    shift
+    snapshot_disk "$@"
+    ;;
+  restore)
+    shift
+    restore_disk "$@"
     ;;
   results)
     shift

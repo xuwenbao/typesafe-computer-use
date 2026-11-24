@@ -41,9 +41,9 @@ so a stall can be replayed offline with `--image`.
 
 `runner.py` holds `RunConfig`, `run`, and the writing of `run.json`. The rest of a
 run is the agents. `agents/status.py` is the status table (`HOST`, `POLICY`,
-`WRITER`, `DRIVER`, `FINAL_ANSWER`, `FINISH`). `agents/base.py` creates an agent
-by name. `agents/host.py`, `agents/policy.py`, `agents/writer.py`, and
-`agents/driver.py` are the four roles. `agents/session.py` is the session.
+`WRITER`, `DRIVER`, `PLAN`, `FINAL_ANSWER`, `FINISH`). `agents/base.py` creates an agent
+by name. `agents/host.py`, `agents/policy.py`, `agents/plan.py`, `agents/writer.py`, and
+`agents/driver.py` are the roles. `agents/session.py` is the session.
 `agents/strategies.py` is the four stages of one classifier step
 (`PerceiveStrategy`, `DecideStrategy`, `ActStrategy`, `MemoryStrategy`).
 `agents/middleware.py` is `Timing`, `StepFiles`, `SessionReport`, `StepLog`, and

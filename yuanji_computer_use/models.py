@@ -98,6 +98,8 @@ ROW_PT = 20.0  # the row a line sits in, in screen points: coarse enough to surv
 # "Settings - Memory usage - 56.0 MB", or "High memory usage". The figure drifts between two
 # captures of one screen, and with the clock it makes two changed lines, so it is left out.
 TAB_MEMORY = re.compile(r" - (?:high )?memory usage - [\d.,]+ ?[kmgt]?b$", re.IGNORECASE)
+# 这些控件带着文字里没有的状态。开关翻转、菜单展开、滑块移动，文字可以一字不变，画面却已经换了。
+# 进度条和文本框不在这里：它们的值会自己变，写进指纹会把同一步误判成换了屏。
 # These controls carry a state the text does not. A toggle that flips, a menu that opens, or a
 # slider that moves is a different screen even when every line of text is the same. A progress
 # bar and a text field are not in this set: their value moves on its own.
@@ -129,6 +131,7 @@ def signature(screen: Screen, items: list[Item]) -> Signature:
     focused = f"{screen.field.role}:{screen.field.label}" if screen.field else None
     row = ROW_PT * screen.scale
     lines = tuple((TAB_MEMORY.sub("", it.text), round(it.center[1] / row)) for it in items)
+    # 第五段是有状态控件的勾选、展开和当前值。和文字分开比，不吃“差一行仍算同一屏”的容差。
     return (screen.app, screen.url, focused, lines, _control_state(items, row))
 
 
@@ -143,6 +146,7 @@ def same_screen(a: Signature, b: Signature) -> bool:
     """
     if a[:3] != b[:3]:
         return False
+    # 控件状态必须完全相同。开关一翻转就是另一屏。旧指纹没有这一段时，当作没有状态。
     if (a[4] if len(a) > 4 else ()) != (b[4] if len(b) > 4 else ()):
         return False
     lines_a, lines_b = set(a[3]), set(b[3])
