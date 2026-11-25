@@ -22,11 +22,12 @@ from types import SimpleNamespace
 from PIL import Image
 from typesafe_sdk import Noul
 
-from yuanji_computer_use import actions, runner
+from yuanji_computer_use import actions, driver_agent, runner
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.runner import RunConfig, RunState, run
+from yuanji_computer_use.runner import RunConfig, run
 from yuanji_computer_use.writer import WriterError
 
 CAPTURE = (2000, 1200)
@@ -140,6 +141,9 @@ class World:
         self.asked: list[str] = []  # the questions the writer put to the user
         self.loading = {p.name: p.loads_in for p in pages}
         self.ticks = 0  # captures taken so far, so a page can show something that moves on its own
+        self.toggles: dict[str, bool] = {}  # label -> checked. A row named here is a switch
+        self.flips = True  # a press changes the switch. False leaves it, so an assertion can fail
+        self.pointer_flips = False  # only a pixel click flips the switch; an accessibility press does not
         self._refs: dict[str, Ref] = {}  # action -> the element, so a ref stays the same object
         self._fields: dict[str, Ref] = {}  # label -> the field's element
 
@@ -238,10 +242,23 @@ class World:
         cells = self.cells()
         popup = self.popup(cells)
         for n, cell in enumerate(cells):
-            items.append(Item(n, cell.text, 1.0, *cell.box, role=cell.role, source="ax" if cell.role else "ocr"))
+            switched = cell.text in self.toggles
+            role = cell.role or ("button" if switched else "")
+            items.append(
+                Item(
+                    n,
+                    cell.text,
+                    1.0,
+                    *cell.box,
+                    role=role,
+                    source="ax" if role else "ocr",
+                    controls=("toggle",) if switched else (),
+                    checked=self.toggles[cell.text] if switched else None,
+                )
+            )
             if popup is not None and cell.text in self.page.under_popup:
                 screen.covered[n] = popup
-            elif cell.role:
+            elif role:
                 screen.ax_refs[n] = self._ref(self.click_action(cell, cells))
         return items
 
@@ -303,6 +320,8 @@ class World:
             return
         action = self.click_action(hit, cells) if hit is not None else "click:nothing"
         self.apply(self._pointer(action, button, count, modifier))
+        if self.pointer_flips and hit is not None:
+            self._flip(action)
 
     @staticmethod
     def _pointer(action: str, button: str, count: int, modifier: str | None) -> str:
@@ -318,7 +337,17 @@ class World:
         if not isinstance(ref, Ref) or self._refs.get(ref.name) is not ref:
             return False
         self.apply(ref.name)
+        if not self.pointer_flips:
+            self._flip(ref.name)
         return True
+
+    def _flip(self, action: str) -> None:
+        """A switch named in `toggles` changes when it is pressed, unless `flips` is off."""
+        if not self.flips:
+            return
+        text = action.split(":", 1)[-1].split("@", 1)[0]
+        if text in self.toggles:
+            self.toggles[text] = not self.toggles[text]
 
     def press(self, name: str, command: bool = False) -> None:
         if command and name == "[":
@@ -439,14 +468,24 @@ class FakeTypeSafe:
     def _answers(self, state: dict, questions: dict, kind: str, target, confidence: float) -> dict:
         answers = {"kind": _answer(kind, confidence), "site": _answer(target if kind == "use_browser" else "none", confidence)}
         if "item" in questions:
-            answers["item"] = _answer(
-                self._item_key(state, target) if kind in ("click_item", "open_item", "add_item") else "0", confidence
+            # A click names its target. Any other kind still answers the item question, and the key
+            # has to be one this question offered: a target withdrawn after a click that did nothing
+            # is no longer "0".
+            # A click names its target. Any other kind still answers the item question, and that
+            # key has to be one this question offered: "0" may have been withdrawn.
+            key = (
+                self._item_key(state, target)
+                if kind in ("click_item", "open_item", "add_item")
+                else next(iter(questions["item"].criteria))
             )
+            answers["item"] = _answer(key, confidence)
         if "offscreen" in questions:
-            key = self._offscreen_key(state, target) if kind == "press_offscreen" else "0"
+            key = self._offscreen_key(state, target) if kind == "press_offscreen" else next(iter(questions["offscreen"].criteria))
             answers["offscreen"] = _answer(key, confidence)
         if "key" in questions:
-            answers["key"] = _answer(target if kind == "shortcut" else "x", confidence)
+            offered = questions["key"].criteria
+            key = target if kind == "shortcut" and target in offered else next(iter(offered))
+            answers["key"] = _answer(key, confidence)
         return answers
 
     @staticmethod
@@ -568,23 +607,25 @@ def drive(
     replies: list[str] | None = None,
     handoffs: int | None = None,
     driver_steps: int = 0,
-) -> RunState:
+    act: bool = True,
+    capture: Callable | None = None,
+) -> Session:
     """Run the real loop against the world until it stops itself. `world.fake` holds the classifier.
 
     `replies` are what the user types when the writer asks, in order; with none, nobody is at the
     terminal and the writer is told so. `world.asked` collects the questions that were put.
     """
     world.install(monkeypatch)
+    if capture is not None:
+        monkeypatch.setattr(runner, "capture", capture)
     fake = FakeTypeSafe(policy, noul)
     world.fake = fake
     monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)
-    cfg = RunConfig(goal=goal, out=tmp_path / "run", act=True, steps=steps, delay=0, driver_steps=driver_steps)
+    cfg = RunConfig(goal=goal, out=tmp_path / "run", act=act, steps=steps, delay=0, driver_steps=driver_steps)
     if handoffs is not None:
         cfg.handoffs = handoffs
     client = writer or FakeWriter()
     from scripted_driver import ScriptedModel
-
-    from yuanji_computer_use import driver_agent
 
     scripts = getattr(client, "drives", None)
     packets = getattr(client, "drive_packets", None)

@@ -1,20 +1,27 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.agents.strategies import resolve
 from yuanji_computer_use.config import SITES
 from yuanji_computer_use.decide import (
     Decision,
+    MalformedAnswer,
     base_state,
+    check_answer,
     decide,
     item_criteria,
     key_criteria,
     kind_criteria,
+    merged_margin,
     offscreen_criteria,
     row_mates,
     site_criteria,
 )
 from yuanji_computer_use.models import AxNode, Guidance
-from yuanji_computer_use.runner import RunConfig, RunState, resolve
+from yuanji_computer_use.runner import RunConfig
 
 
 def answer(choice, confidence, probabilities=None):
@@ -93,6 +100,30 @@ def test_offscreen_criteria_and_state_name_the_role_and_say_it_is_not_visible(sc
         {"k": 1, "role": "cell", "label": "Note 900"},
     ]
     assert "offscreen_controls" not in base_state("buy the thing", screen, [make_item(0, "Buy")], [])
+    banned = base_state("buy the thing", live, [make_item(0, "Buy")], [], banned_offscreen={"Register Now"})
+    assert banned["offscreen_controls"] == [{"k": 1, "role": "cell", "label": "Note 900"}]
+    assert offscreen_criteria(nodes, {"Register Now"}) == {"1": "cell 'Note 900' (not visible)"}
+
+
+def test_the_state_carries_the_current_subgoal_only_when_a_plan_has_one(screen, make_item):
+    items = [make_item(0, "Hour")]
+    assert "current_subgoal" not in base_state("set a timer", screen, items, [])
+    packet = {"do": "shortcut", "label": None, "role": None, "verify": {"exists": True}, "key": "v"}
+    state = base_state("set a timer", screen, items, [], subgoal=packet)
+    assert state["current_subgoal"] == packet
+
+    seen = {}
+
+    class Client:
+        def system_one(self, state, questions, **extra):
+            seen["state"] = state
+            seen["kind"] = questions["kind"].instructions
+            return SimpleNamespace(answers={"kind": answer("done", 0.9), "site": answer("none", 1.0), "item": answer("0", 0.9)})
+
+    decide(Client(), "set a timer", screen, items, [], "Google Chrome", None, subgoal=packet)
+    assert seen["state"]["current_subgoal"]["key"] == "v"
+    assert "current_subgoal" in seen["kind"]
+    assert "user's goal" in seen["kind"]
 
 
 def test_kind_criteria_offers_one_browser_action():
@@ -206,10 +237,10 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
         assert "led straight back here" in questions[key].instructions
 
 
-def _stopped(tmp_path, screen, decision) -> str:
-    state = RunState()
+def _stopped(tmp_path, screen, decision, floor: float = 0.4) -> str:
+    state = Session()
     resolve(
-        RunConfig(goal="open the chat", out=tmp_path),
+        RunConfig(goal="open the chat", out=tmp_path, min_confidence=floor),
         None,
         state,
         screen,
@@ -269,3 +300,109 @@ def test_a_shortcut_key_under_the_floor_needs_a_lead(tmp_path, screen):
         key=answer("x", 0.35, {"x": 0.35, "v": 0.3}),
     )
     assert _stopped(tmp_path, screen, split) == "low confidence"
+
+
+def test_a_choice_that_is_not_the_highest_probability_cannot_lead(tmp_path, screen):
+    """领先看的是所选项自己的概率。旁边有一项更高时，不能靠那一项放行。"""
+    decision = Decision(
+        kind=answer("click_item", 0.9, {"click_item": 0.9, "none": 0.1}),
+        item=answer("23", 0.2, {"23": 0.2, "20": 0.5}),
+        site=answer("none", 1.0),
+    )
+    assert _stopped(tmp_path, screen, decision) == "low confidence"
+
+
+def test_a_stop_names_the_layer_that_missed_the_floor(tmp_path, screen):
+    lines = []
+    kind_low = Decision(
+        kind=answer("click_item", 0.30, {"click_item": 0.35, "none": 0.25}),
+        item=answer("25", 0.41, {"25": 0.43, "5": 0.15}),
+        site=answer("none", 1.0),
+    )
+    resolve(RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], kind_low, {}, lines.append)
+    assert any("kind 0.30, item 0.41" in line and "the kind layer is below the floor" in line for line in lines)
+
+    lines.clear()
+    no_lead = Decision(
+        kind=answer("click_item", 0.5, {"click_item": 0.5, "none": 0.2}),
+        item=answer("23", 0.34, {"23": 0.35, "20": 0.28}),
+        site=answer("none", 1.0),
+    )
+    resolve(RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], no_lead, {}, lines.append)
+    assert any("kind 0.50, item 0.34" in line and "the target layer has no clear lead" in line for line in lines)
+
+
+def test_the_default_floor_lets_a_click_at_0_32_through(tmp_path, screen):
+    decision = Decision(kind=answer("click_item", 0.9), item=answer("0", 0.32), site=answer("none", 1.0))
+    assert _stopped(tmp_path, screen, decision, floor=0.3) == "dry run"
+
+
+OFFERED = {"click_item", "none"}
+
+
+def test_a_partial_distribution_that_names_its_choice_is_legal():
+    check_answer("kind", answer("click_item", 0.4), OFFERED)
+    check_answer("kind", answer("click_item", 0.6, {"click_item": 0.6, "none": 0.4}), OFFERED)
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        answer("scroll", 0.9),
+        answer("click_item", 0.2, {"click_item": 0.2, "none": 0.5}),
+        answer("click_item", 0.9, {"click_item": 0.9, "extra": 0.1}),
+        answer("click_item", 2.0),
+        SimpleNamespace(choice="click_item", confidence=0.9, probabilities=["click_item"]),
+        answer("click_item", 0.9, {"click_item": 0.9, "none": 0.9}),
+    ],
+    ids=["not-offered", "not-the-highest", "unknown-key", "confidence-out-of-range", "probabilities-not-a-map", "sum-above-one"],
+)
+def test_an_inconsistent_answer_is_refused(given):
+    with pytest.raises(MalformedAnswer):
+        check_answer("kind", given, OFFERED)
+
+
+def test_decide_refuses_a_choice_that_was_not_offered(screen, make_item):
+    items = [make_item(0, "Stay")]
+
+    def system_one(state, questions, **_extra):
+        return SimpleNamespace(answers={"kind": answer("not_a_kind", 0.9), "site": answer("none", 1.0), "item": answer("0", 0.9)})
+
+    with pytest.raises(MalformedAnswer):
+        decide(SimpleNamespace(system_one=system_one), "look", screen, items, [], "Google Chrome", None)
+
+
+def test_a_candidate_subset_keeps_the_original_numbers(screen, make_item):
+    asked = []
+
+    def system_one(state, questions, **_extra):
+        asked.append(questions)
+        return SimpleNamespace(answers={"kind": answer("click_item", 0.9), "item": answer("1", 0.9), "site": answer("none", 1.0)})
+
+    items = [make_item(0, "Title"), make_item(1, "Switch", y1=200, y2=230), make_item(2, "Other", y1=300, y2=330)]
+    decide(
+        SimpleNamespace(system_one=system_one),
+        "toggle it",
+        screen,
+        items,
+        [],
+        "Google Chrome",
+        None,
+        candidates=[items[1]],
+    )
+    assert list(asked[0]["item"].criteria) == ["1"]
+    assert "scroll" in asked[0]["kind"].criteria or "done" in asked[0]["kind"].criteria
+
+
+def test_the_same_name_on_one_row_is_one_target(screen, make_item):
+    title = make_item(0, "虚拟网卡模式", x1=100, x2=280, y1=100, y2=140)
+    switch = make_item(1, "虚拟网卡模式", x1=420, x2=480, y1=100, y2=140)
+    other = make_item(2, "其他", y1=400, y2=430)
+    margin = merged_margin(answer("1", 0.41, {"0": 0.41, "1": 0.37, "2": 0.22}), [title, switch, other])
+    assert margin > 0.15
+
+
+def test_edit_and_delete_on_one_row_stay_apart(make_item):
+    edit = make_item(0, "编辑", x1=100, x2=180, y1=100, y2=130)
+    delete = make_item(1, "删除", x1=400, x2=480, y1=100, y2=130)
+    assert abs(merged_margin(answer("0", 0.41, {"0": 0.41, "1": 0.37}), [edit, delete]) - 0.04) < 1e-9

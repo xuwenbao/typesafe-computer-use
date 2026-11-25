@@ -10,8 +10,10 @@ from PIL import Image
 
 from yuanji_computer_use import runner, writer
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.agents.strategies import resolve
 from yuanji_computer_use.models import Field, Guidance, Item, Popup
-from yuanji_computer_use.runner import RunConfig, RunState, answer_last, hand_off, resolve, wants_driver
+from yuanji_computer_use.runner import RunConfig, answer_last, hand_off, wants_driver
 from yuanji_computer_use.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
 
 GOAL = "find the next upcoming bruno mars concert"
@@ -150,7 +152,7 @@ def test_requests_without_a_capture_stay_text_only_on_the_writer_model(monkeypat
 @pytest.mark.parametrize("outcome", ["dry run", "aborted (Ctrl-C)", "crashed"])
 def test_a_run_that_has_nothing_to_report_asks_for_no_answer(outcome, tmp_path, screen):
     fake = FakeWriter({"achieved": True, "answer": "unused"})
-    state = RunState(outcome=outcome, view=(screen, []))
+    state = Session(outcome=outcome, view=(screen, []))
     lines, log = logged()
 
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(fake), state, 1, log)
@@ -159,7 +161,7 @@ def test_a_run_that_has_nothing_to_report_asks_for_no_answer(outcome, tmp_path, 
 
 
 def test_without_a_writer_the_run_says_why_there_is_no_answer(tmp_path, screen):
-    state = RunState(outcome="done", view=(screen, []))
+    state = Session(outcome="done", view=(screen, []))
     lines, log = logged()
 
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(), state, 1, log)
@@ -171,7 +173,7 @@ def test_without_a_writer_the_run_says_why_there_is_no_answer(tmp_path, screen):
 def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path, screen, make_item, monkeypatch):
     monkeypatch.setattr(runner, "capture", lambda *a, **k: pytest.fail("captured again"))
     fake = FakeWriter({"achieved": True, "answer": "Sep 19, 2026 in Miami."})
-    state = RunState(outcome="done", view=(screen, [make_item(0, "SEP 19, 2026")]))
+    state = Session(outcome="done", view=(screen, [make_item(0, "SEP 19, 2026")]))
     lines, log = logged()
 
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(fake), state, 1, log)
@@ -187,7 +189,7 @@ def test_the_screen_is_captured_again_when_an_action_made_the_last_capture_stale
     monkeypatch.setattr(runner, "capture", lambda *a, **k: screen)
     monkeypatch.setattr(runner, "perceive", lambda *a, **k: [make_item(0, "TICKETS")])
     fake = FakeWriter({"achieved": False, "answer": "No dates on screen."})
-    state = RunState(outcome="step limit", view=None)
+    state = Session(outcome="step limit", view=None)
     lines, log = logged()
 
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(fake), state, 1, log)
@@ -204,7 +206,7 @@ def test_a_writer_that_fails_costs_the_answer_and_not_the_run(tmp_path, screen):
 
     fake = FakeWriter({})
     fake.messages.create = refuse
-    state = RunState(outcome="done", view=(screen, []))
+    state = Session(outcome="done", view=(screen, []))
     lines, log = logged()
 
     hand_off(RunConfig(goal=GOAL, out=tmp_path), context(fake), state, 1, log)
@@ -221,6 +223,7 @@ def decision(kind: str, confidence: float = 0.9) -> SimpleNamespace:
         chosen=kind,
         clicking=False,
         pressing_offscreen=False,
+        shortcutting=False,
     )
 
 
@@ -234,7 +237,7 @@ def decision(kind: str, confidence: float = 0.9) -> SimpleNamespace:
     ],
 )
 def test_every_stop_names_its_outcome(kind, confidence, outcome, tmp_path, screen):
-    state = RunState()
+    state = Session()
     _, log = logged()
 
     keep_going = resolve(RunConfig(goal=GOAL, out=tmp_path), context(), state, screen, [], decision(kind, confidence), {}, log)
@@ -273,7 +276,7 @@ def test_a_listed_name_called_absent_is_judged_again_without_the_capture(tmp_pat
             {"achieved": True, "answer": "Doc01.docx and Doc02.docx are in the folder.", "focus": ""},
         ]
     )
-    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
+    state = Session(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
     lines, log = logged()
 
     keep = hand_off(
@@ -298,7 +301,7 @@ def test_files_still_in_the_place_being_cleared_stay_unfinished(tmp_path, screen
             {"achieved": False, "answer": "Both files are still in Documents.", "focus": "Open Archive"},
         ]
     )
-    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
+    state = Session(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
     lines, log = logged()
 
     keep = hand_off(
@@ -347,7 +350,7 @@ def test_a_file_row_named_absent_in_missing_is_judged_again_without_the_capture(
             {"achieved": True, "answer": "they are listed", "missing": []},
         ]
     )
-    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
+    state = Session(outcome="done", view=(screen, file_rows("Doc01.docx", "Doc02.docx")))
     _, log = logged()
 
     hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
@@ -368,7 +371,7 @@ def test_a_file_row_that_should_have_left_is_not_asked_again(tmp_path, screen):
             }
         ]
     )
-    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    state = Session(outcome="done", view=(screen, file_rows("Doc01.docx")))
     _, log = logged()
 
     hand_off(
@@ -389,7 +392,7 @@ def test_an_absent_name_that_is_not_a_file_row_is_not_asked_again(tmp_path, scre
             }
         ]
     )
-    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    state = Session(outcome="done", view=(screen, file_rows("Doc01.docx")))
     _, log = logged()
 
     hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
@@ -404,7 +407,7 @@ def test_a_writer_who_disagrees_with_a_finished_driver_is_asked_once_more(tmp_pa
             {"achieved": True, "answer": "both files are in Archive", "missing": []},
         ]
     )
-    state = RunState(
+    state = Session(
         outcome="driver done",
         driver_done="both files are listed",
         view=(screen, file_rows("Doc01.docx", "Doc02.docx")),
@@ -423,7 +426,7 @@ def test_a_writer_who_disagrees_with_a_finished_driver_is_asked_once_more(tmp_pa
 @pytest.mark.parametrize(("driver_done", "achieved"), [("", False), ("both files are listed", True)])
 def test_the_writer_is_not_asked_again_when_there_is_no_disagreement(driver_done, achieved, tmp_path, screen):
     fake = Replies([{"achieved": achieved, "answer": "the screen decides", "missing": []}])
-    state = RunState(
+    state = Session(
         outcome="driver done" if driver_done else "driver gave up",
         driver_done=driver_done,
         view=(screen, file_rows("Doc01.docx")),
@@ -438,7 +441,7 @@ def test_the_writer_is_not_asked_again_when_there_is_no_disagreement(driver_done
 
 def test_a_missing_name_that_is_not_on_screen_is_not_asked_again(tmp_path, screen):
     fake = Replies([{"achieved": False, "answer": "'Archive' is not on this screen.", "focus": "Open Archive"}])
-    state = RunState(outcome="done", view=(screen, file_rows("Doc01.docx")))
+    state = Session(outcome="done", view=(screen, file_rows("Doc01.docx")))
     _, log = logged()
 
     hand_off(RunConfig(goal="move the docx files into Archive", out=tmp_path, steps=10, handoffs=3), context(fake), state, 1, log)
@@ -467,7 +470,7 @@ def _ready(tmp_path, driver_steps: int = 10) -> RunConfig:
 
 def test_a_driver_route_ends_the_classifier_and_the_driver_may_take_over(tmp_path, screen):
     fake = FakeWriter({"achieved": False, "answer": "This needs several steps.", "route": "driver"})
-    state = RunState(outcome="nothing helps", view=(screen, []))
+    state = Session(outcome="nothing helps", view=(screen, []))
     cfg = _ready(tmp_path)
     lines, log = logged()
 
@@ -521,7 +524,7 @@ def test_an_end_route_for_something_only_the_user_can_do_stays_end(screen):
 
 def test_an_end_route_short_of_the_goal_does_not_call_the_driver(tmp_path, screen):
     fake = FakeWriter({"achieved": False, "answer": "Only the user can sign in.", "route": "end"})
-    state = RunState(outcome="nothing helps", view=(screen, []))
+    state = Session(outcome="nothing helps", view=(screen, []))
     cfg = _ready(tmp_path)
 
     assert hand_off(cfg, context(fake), state, 1, logged()[1]) is False
@@ -532,7 +535,7 @@ def test_an_end_route_short_of_the_goal_does_not_call_the_driver(tmp_path, scree
 
 def test_a_second_stop_on_the_same_page_goes_to_the_driver(tmp_path, screen):
     fake = FakeWriter({"achieved": False, "answer": "Click New.", "focus": "Click 'New'", "route": "classifier"})
-    state = RunState(outcome="nothing helps", view=(screen, []))
+    state = Session(outcome="nothing helps", view=(screen, []))
     cfg = _ready(tmp_path)
     lines, log = logged()
 
@@ -549,7 +552,7 @@ def test_a_second_stop_on_the_same_page_goes_to_the_driver(tmp_path, screen):
 
 def test_a_second_stop_on_the_same_page_is_handed_back_when_the_driver_is_off(tmp_path, screen):
     fake = FakeWriter({"achieved": False, "answer": "Click New.", "focus": "Click 'New'", "route": "classifier"})
-    state = RunState(outcome="nothing helps", view=(screen, []))
+    state = Session(outcome="nothing helps", view=(screen, []))
     cfg = _ready(tmp_path, driver_steps=0)
     _, log = logged()
 
@@ -562,8 +565,8 @@ def test_a_second_stop_on_the_same_page_is_handed_back_when_the_driver_is_off(tm
 
 
 def test_an_action_makes_the_last_capture_stale(tmp_path, screen, monkeypatch):
-    monkeypatch.setattr(runner, "perform", lambda *a: "scrolled down")
-    state = RunState(view=(screen, []))
+    monkeypatch.setattr("yuanji_computer_use.agents.strategies.perform", lambda *a, **_k: "scrolled down")
+    state = Session(view=(screen, []))
     _, log = logged()
 
     keep_going = resolve(

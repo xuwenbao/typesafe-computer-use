@@ -12,6 +12,7 @@ from PIL import Image
 from scripted_driver import ScriptedModel
 
 from yuanji_computer_use import driver_agent, macos
+from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.config import reset_settings
 from yuanji_computer_use.driver import load_driver_record, take_over
 from yuanji_computer_use.driver_agent import (
@@ -27,7 +28,7 @@ from yuanji_computer_use.driver_agent import (
 )
 from yuanji_computer_use.models import Abort, Item
 from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.runner import RunConfig, RunState
+from yuanji_computer_use.runner import RunConfig
 from yuanji_computer_use.writer import PLACEHOLDER_KEY
 
 _MAC_ELEMENT_TEXT = macos.element_text
@@ -219,7 +220,7 @@ def _drive(monkeypatch, tmp_path, screen, scripts):
     monkeypatch.setattr(runner, "look", look)
     monkeypatch.setattr(driver_agent, "model_for", lambda: ScriptedModel(list(scripts)))
     lines = []
-    state = RunState(outcome="nothing helps")
+    state = Session(outcome="nothing helps")
     take_over(RunConfig(goal="save", out=tmp_path, driver_steps=4), type("W", (), {"writer": object()})(), state, lines.append, 0)
     return state, clicks, lines
 

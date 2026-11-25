@@ -385,7 +385,7 @@ def test_valid_url():
 def test_a_tunable_comes_from_its_variable(clean_env):
     assert settings().steps == 100
     assert settings().delay == 2.0
-    assert settings().min_confidence == 0.4
+    assert settings().min_confidence == 0.3
     assert settings().handoffs == 10
     assert settings().max_options == 255
     assert settings().min_ocr_confidence == 0.3

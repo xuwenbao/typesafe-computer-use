@@ -22,11 +22,30 @@ starts without a window and comes back if it stops. `close_all` cannot close a w
 not have.
 
 ```
+make                                  # list the commands below; starts nothing
+make waa-setup                        # scripts/waa setup
+make waa-image [ISO=path]             # scripts/waa prepare-image
+make waa-snapshot                     # copy the shut-down disk to .waa/snapshot
+make waa-restore                      # copy that snapshot back over .waa/storage
+make waa-run TASKS="domain/id ..."    # restore once, then run those tasks in one VM
+make waa-results                      # scripts/waa results
+
 scripts/waa setup                         # the pinned commit into .waa/, then the jev-winarena image
-scripts/waa prepare-image [--iso PATH]    # the golden image in .waa/storage, from the evaluation ISO
-scripts/waa run DOMAIN/ID...              # those tasks, one after another, in one VM
+scripts/waa prepare-image [--iso PATH]    # the golden image in .waa/storage from the evaluation ISO
+scripts/waa snapshot                      # the same copy as make waa-snapshot
+scripts/waa restore                       # the same copy as make waa-restore
+scripts/waa run DOMAIN/ID...              # those tasks, one after another, in one VM; does not restore
 scripts/waa results [FOLDER]              # each task's score, steps, time and tokens, then the means
 ```
+
+`make waa-snapshot` copies `data.img` and the firmware beside it (`windows.boot`, `windows.base`,
+`windows.mac`, `windows.mode`, `windows.ver`, and whichever of `windows.rom`, `windows.vars`,
+`windows_secure.rom`, `windows_secure.tpm`, `windows_secure.vars` exist). The installer ISO stays
+out. The disk must already be a finished install, with both `data.img` and `windows.boot`, and the
+VM must be stopped: a running `jev-winarena` container, or ports 8006 and 3390 published, is refused.
+The copy is GNU `cp --sparse=always` inside the `jev-winarena` image, because `data.img` is sparse.
+`make waa-run` restores that snapshot once before the container starts. Tasks in that run still share
+the disk. `scripts/waa run` on its own does not restore anything.
 
 `setup` clones the commit pinned in `scripts/waa` into `.waa/WindowsAgentArena`, copies
 `waa_overlay/` over the client, and builds `jev-winarena` on the pinned

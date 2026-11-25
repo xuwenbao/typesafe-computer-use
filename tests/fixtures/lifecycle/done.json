@@ -1,0 +1,110 @@
+{
+  "files": {
+    "step-001-answers.json": {
+      "already_tried_on_this_screen": [],
+      "app": "Google Chrome",
+      "chosen": "done",
+      "confidence": 0.9,
+      "field": null,
+      "idle_actions": 0,
+      "item": "0",
+      "item_confidence": 0.9,
+      "item_probabilities": {
+        "0": 0.9
+      },
+      "items": [
+        {
+          "checked": null,
+          "controls": [],
+          "current": null,
+          "enabled": null,
+          "expanded": null,
+          "high": null,
+          "index": 0,
+          "low": null,
+          "ocr_confidence": 1.0,
+          "role": "",
+          "selected": null,
+          "source": "ocr",
+          "text": "Tickets",
+          "writable": null,
+          "x1": 100.0,
+          "x2": 600.0,
+          "y1": 100.0,
+          "y2": 130.0
+        }
+      ],
+      "key": null,
+      "key_confidence": null,
+      "key_probabilities": null,
+      "kind": "done",
+      "kind_confidence": 0.9,
+      "kind_probabilities": {
+        "done": 0.9
+      },
+      "offscreen": null,
+      "offscreen_controls": [],
+      "offscreen_probabilities": null,
+      "repeated_actions": 0,
+      "site": "none",
+      "site_probabilities": {
+        "none": 0.9
+      },
+      "url": "https://example.com/x"
+    },
+    "step-001-payload.txt": "==============================================================================\nSTATE  (sent as `state`)\n==============================================================================\n{\n  \"goal\": \"finish the task\",\n  \"now\": {\n    \"local_time\": \"2026-11-24 10:00 Tuesday\",\n    \"timezone\": \"UTC\",\n    \"today\": \"2026-11-24\"\n  },\n  \"frontmost_app\": \"Google Chrome\",\n  \"browser_active_tab_url\": \"https://example.com/x\",\n  \"focused_field\": null,\n  \"previous_actions\": [],\n  \"already_tried_on_this_screen\": [],\n  \"screen_items_in_reading_order\": [\n    {\n      \"i\": 0,\n      \"text\": \"Tickets\",\n      \"where\": \"top-left\"\n    }\n  ],\n  \"screen_image\": \"ref\"\n}\n\n==============================================================================\nIMAGE  screen_image=ref  1568x941 PNG, 4860 bytes  (step-001-sent.png)\n==============================================================================\n\n==============================================================================\nQUESTION kind  (Choice criteria)\n==============================================================================\n{\n  \"click_item\": \"Click one of the on-screen text items (chosen in the item question). When more than one file is already selected, do not click a different row: cut or copy the selection, or click one of the selected rows to keep only that one.\",\n  \"use_browser\": \"Work in Google Chrome: bring it to the front, and open a website there if one is needed. The site question says which website, or says that the page already open there is the one to continue with. This is the only way to reach a website: never click the address bar, a URL, or a search box to get there. Works from any app, including this one.\",\n  \"press_enter\": \"Press Return to submit the focused form or field. When a menu item is focused, Return takes that item.\",\n  \"press_escape\": \"Press Escape to dismiss a dialog, menu, or popup.\",\n  \"go_back\": \"Go back to the previous page or screen, as the browser's Back button does. Use when the last click led somewhere that does not help and the page before it did.\",\n  \"scroll_down\": \"Scroll down to reveal more of the page.\",\n  \"scroll_up\": \"Scroll up.\",\n  \"wait\": \"Nothing to do yet; the screen is still loading or changing.\",\n  \"done\": \"The goal is already achieved.\",\n  \"none\": \"Nothing on screen or in this list helps with the goal.\"\n}\n\n==============================================================================\nQUESTION item  (Choice criteria)\n==============================================================================\n{\n  \"0\": \"'Tickets' (top-left)\"\n}\n\n==============================================================================\nQUESTION site  (Choice criteria)\n==============================================================================\n{\n  \"github\": \"https://github.com/\",\n  \"gmail\": \"https://mail.google.com/\",\n  \"google_calendar\": \"https://calendar.google.com/\",\n  \"launchdarkly\": \"https://app.launchdarkly.com/\",\n  \"linear\": \"https://linear.app/\",\n  \"notion\": \"https://www.notion.so/\",\n  \"slack\": \"https://app.slack.com/\",\n  \"typesafe_console\": \"https://console.typesafe.ai/\",\n  \"other\": \"A website is needed to progress the goal, but it is not one of the sites named in this list.\",\n  \"none\": \"No website needs to be opened: the page already open in the browser is the one to continue with.\"\n}\n\n==============================================================================\nITEMS  (1 after merge/filter, 0 from the accessibility tree, 0 detected icons; pixel boxes on the 2000x1200 capture, scale 2)\n==============================================================================\n[  0] src=ocr      role=-        conf=1.00 box=(100,100)-(600,130) click_pt=(175,58) top-left      'Tickets'\n",
+    "step-001-raw.png": {
+      "bytes": 7058,
+      "sha256": "34adfa1d710cced343af78d68363bfbbf84f4774c930db016ce4fe4263464355"
+    },
+    "step-001-review.json": [
+      {
+        "achieved": true,
+        "focus": "",
+        "handed_back": false,
+        "missing": [],
+        "outcome": "done",
+        "question": "",
+        "reply": null,
+        "route": "end",
+        "text": "Tickets"
+      }
+    ],
+    "step-001-sent.png": {
+      "bytes": 4860,
+      "sha256": "ccd7624b3a43a83af1ebe25d7ed7b549d6e191b28cbf933b5c72b8a4abfdda84"
+    },
+    "step-001.png": {
+      "bytes": 7335,
+      "sha256": "23c2e696df7ee89ae96c731689bda826cae5979d95f072065403c9a83e3a1fab"
+    }
+  },
+  "history": [],
+  "outcome": "done",
+  "route": "end",
+  "run_json_keys": [
+    "act",
+    "answer",
+    "calls",
+    "config",
+    "driver_actions",
+    "driver_calls",
+    "driver_error",
+    "driver_tool_calls",
+    "goal",
+    "goal_achieved",
+    "handoffs",
+    "history",
+    "image_refusals",
+    "outcome",
+    "perception",
+    "questions",
+    "seconds",
+    "session_cpu",
+    "startup",
+    "steps_taken",
+    "timing",
+    "usage",
+    "warm_up"
+  ]
+}

@@ -91,7 +91,7 @@ their SHA-256. Without `clicker-models fetch`, the first run downloads them and 
 | `CLICKER_BROWSER` | no | defaults to `Google Chrome` |
 | `CLICKER_STEPS` | no | actions before stopping; defaults to `100`. `--steps` wins |
 | `CLICKER_DELAY` | no | most seconds to wait after each action; defaults to `2`. A screen that changed and then held still for half a second ends the wait early. `--delay` wins |
-| `CLICKER_MIN_CONFIDENCE` | no | stop below this confidence; defaults to `0.4`. `--min-confidence` wins |
+| `CLICKER_MIN_CONFIDENCE` | no | stop below this confidence; defaults to `0.3`. `--min-confidence` wins |
 | `CLICKER_HANDOFFS` | no | times the writer may send a stopped run back; defaults to `10`. `--handoffs` wins |
 | `CLICKER_MAX_OPTIONS` | no | items offered to the classifier, at most `255`; defaults to `255` |
 | `CLICKER_MIN_OCR_CONFIDENCE` | no | OCR lines kept at or above this confidence; defaults to `0.3` |

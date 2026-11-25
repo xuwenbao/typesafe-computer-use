@@ -45,13 +45,39 @@ def _open_window(name: str) -> bool:
     return any(_same_app(name, process) for _, _, process in desktop.list_windows())
 
 
+# 启动名和前台进程经常不是同一个。设置没有 SystemSettings.exe，控制面板寄居在资源管理器里。
+_PROCESS = {"ms-settings:": ("applicationframehost", "systemsettings")}
+_TITLE = {"control": "control panel"}
+
+
+def _present(name: str) -> bool:
+    """这个启动名对应的窗口是否已经在列表里。按进程，控制面板再按标题。"""
+    if _open_window(name) or any(_open_window(alias) for alias in _PROCESS.get(name, ())):
+        return True
+    needle = _TITLE.get(name)
+    return needle is not None and any(needle in title.lower() for _, title, _ in desktop.list_windows())
+
+
+def _bring(name: str) -> bool:
+    """把已经出现的窗口拉到前面。启动名对不上进程时，用实际的进程再试一次。"""
+    if desktop.activate(name):
+        return True
+    for alias in _PROCESS.get(name, ()):
+        if _open_window(alias) and desktop.activate(alias):
+            return True
+    needle = _TITLE.get(name)
+    if needle is None:
+        return False
+    return any(needle in title.lower() and desktop.activate(process) for _, title, process in desktop.list_windows())
+
+
 def _came_forward(name: str) -> bool:
     """Bring `name`'s window to the front once it is open. A matching process name is not success."""
     deadline = time.monotonic() + LAUNCH_WAIT
     while True:
         desktop.check_abort()
-        if _open_window(name) or time.monotonic() >= deadline:
-            return bool(desktop.activate(name))
+        if _present(name) or time.monotonic() >= deadline:
+            return _bring(name)
         desktop.sleep_watching(0.2)
 
 
@@ -101,6 +127,9 @@ def _open(choice: dict, windows: list[tuple[str, str, str]], front: str, state, 
         if name is None:
             _say(state, log, f"host: refused {raw!r}", remember=True)
             return
+        # Windows has no SystemSettings.exe. The settings app opens from this URI.
+        if name.lower().removesuffix(".exe") == "systemsettings":
+            name = "ms-settings:"
         desktop.launch_app(name)
         if _came_forward(name):
             _say(state, log, f"host: launched {name}", remember=True)

@@ -6,9 +6,10 @@ from types import SimpleNamespace
 from world import FakeWriter, Page, World, drive, scripted
 
 from yuanji_computer_use import host
+from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.platform_adapter import desktop
 from yuanji_computer_use.report import Log
-from yuanji_computer_use.runner import RunConfig, RunState
+from yuanji_computer_use.runner import RunConfig
 
 
 def _reply(body: dict):
@@ -53,7 +54,7 @@ def _desktop(monkeypatch, windows, front):
 
 
 def test_an_open_window_is_focused_and_not_launched(monkeypatch, tmp_path):
-    state = RunState()
+    state = Session()
     shown = {"app": "explorer.exe"}
     launched = _desktop(monkeypatch, [("1", "Untitled - Notepad", "notepad.exe")], shown)
     host.prepare(
@@ -68,7 +69,7 @@ def test_an_open_window_is_focused_and_not_launched(monkeypatch, tmp_path):
 
 
 def test_a_missing_app_is_launched_by_name(monkeypatch, tmp_path):
-    state = RunState()
+    state = Session()
     shown = {"app": "explorer.exe"}
     launched = _desktop(monkeypatch, [], shown)
     host.prepare(
@@ -87,7 +88,7 @@ def test_a_name_with_a_path_or_arguments_is_refused(monkeypatch, tmp_path):
     assert host.executable_name("notepad.exe") == "notepad.exe"
     assert host.executable_name(r"C:\Windows\notepad.exe") is None
     assert host.executable_name("notepad /c calc") is None
-    state = RunState()
+    state = Session()
     launched = _desktop(monkeypatch, [], {"app": "explorer.exe"})
     host.prepare(
         RunConfig(goal="open notepad", out=tmp_path, act=True),
@@ -97,6 +98,66 @@ def test_a_name_with_a_path_or_arguments_is_refused(monkeypatch, tmp_path):
     )
     assert launched == []
     assert state.history == ["host: refused 'notepad /c calc'"]
+
+
+def test_settings_counts_as_open_when_the_frame_host_is_in_front(monkeypatch, tmp_path):
+    state = Session()
+    launched = _Launched()
+    windows: list[tuple[str, str, str]] = []
+
+    def launch(name):
+        launched.append(name)
+        windows.append(("1", "Settings", "ApplicationFrameHost.exe"))
+
+    def activate(app, timeout=3.0):
+        launched.activated.append(app)
+        return any(host._same_app(app, process) for _, _, process in windows)
+
+    monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
+    monkeypatch.setattr(desktop, "launch_app", launch)
+    monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: ("explorer.exe", 1))
+    monkeypatch.setattr(desktop, "activate", activate)
+    monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
+    monkeypatch.setattr(desktop, "check_abort", lambda: None)
+    host.prepare(
+        RunConfig(goal="turn notifications off", out=tmp_path, act=True),
+        SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "SystemSettings", "reason": "open settings"})),
+        state,
+        Log(),
+    )
+    assert launched == ["ms-settings:"]
+    assert launched.activated == ["ms-settings:", "applicationframehost"]
+    assert state.history == ["host: launched ms-settings:"]
+
+
+def test_control_panel_counts_when_explorer_shows_that_title(monkeypatch, tmp_path):
+    state = Session()
+    launched = _Launched()
+    windows: list[tuple[str, str, str]] = []
+
+    def launch(name):
+        launched.append(name)
+        windows.append(("1", "Control Panel", "explorer.exe"))
+
+    def activate(app, timeout=3.0):
+        launched.activated.append(app)
+        return any(host._same_app(app, process) for _, _, process in windows)
+
+    monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
+    monkeypatch.setattr(desktop, "launch_app", launch)
+    monkeypatch.setattr(desktop, "frontmost_app_and_pid", lambda: ("explorer.exe", 1))
+    monkeypatch.setattr(desktop, "activate", activate)
+    monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
+    monkeypatch.setattr(desktop, "check_abort", lambda: None)
+    host.prepare(
+        RunConfig(goal="set the time zone", out=tmp_path, act=True),
+        SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "control", "reason": "open it"})),
+        state,
+        Log(),
+    )
+    assert launched == ["control"]
+    assert launched.activated == ["control", "explorer.exe"]
+    assert state.history == ["host: launched control"]
 
 
 def test_the_loop_still_runs_when_the_host_cannot_choose(monkeypatch, tmp_path):

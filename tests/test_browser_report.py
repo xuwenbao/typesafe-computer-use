@@ -207,6 +207,14 @@ def test_credential_guard_allows_ordinary_fields(label):
     assert not looks_credential(label)
 
 
+def test_a_file_name_and_a_word_that_only_contains_a_hint_are_not_credentials():
+    assert not looks_credential("attrib +h secret.txt")
+    assert not looks_credential("secret.txt")
+    assert not looks_credential("spin")
+    assert looks_credential("the secret file")
+    assert looks_credential("enter the pin")
+
+
 def test_credential_hints_cover_the_obvious_cases():
     for must in ("password", "otp", "cvv", "token"):
         assert any(must in hint for hint in CREDENTIAL_HINTS)

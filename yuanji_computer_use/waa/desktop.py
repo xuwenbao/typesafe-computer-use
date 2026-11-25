@@ -324,7 +324,9 @@ class WAADesktop:
         name = (ref.get("name") or "").strip()
         if not name:
             return False
-        self._do(_operate_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""), operation, value))
+        rect = ref.get("rect")
+        box = tuple(float(v) for v in rect) if isinstance(rect, (list, tuple)) and len(rect) == 4 else None
+        self._do(_operate_element(name, ROLE_TO_CONTROL_TYPE_ID.get(ref.get("role") or ""), operation, value, box))
         return True
 
     def element_frame(self, ref) -> tuple[float, float, float, float] | None:
@@ -366,11 +368,18 @@ _PATTERN_INTERFACE = {
 }
 
 
-def _operate_element(name: str, control_type: int | None, operation: str, value: str | None) -> str:
+def _operate_element(
+    name: str,
+    control_type: int | None,
+    operation: str,
+    value: str | None,
+    box: tuple[float, float, float, float] | None = None,
+) -> str:
     """VM code that runs one pattern on the named element. `name` is one Python literal.
 
     The pattern id is the shared table's. A missing element or a refused call is caught, so input
-    queued after this in the same step still runs.
+    queued after this in the same step still runs. `box` is the item's rectangle in screen pixels
+    `(x, y, w, h)`. When several elements share the name, the one nearest that box is used.
     """
     pattern_id = PATTERN_IDS[OPERATION_PATTERN[operation]]
     interface = _PATTERN_INTERFACE[operation]
@@ -404,7 +413,7 @@ def _operate_element(name: str, control_type: int | None, operation: str, value:
         "    from comtypes.gen import UIAutomationClient as api\n"
         "    _auto = comtypes.CoCreateInstance(api.CUIAutomation._reg_clsid_, interface=api.IUIAutomation)\n"
         "    _root = _auto.ElementFromHandle(ctypes.windll.user32.GetForegroundWindow())\n"
-        f"    _item = _root.FindFirst(4, {condition})\n"
+        f"{_find_named(condition, box)}"
         "    if _item is None:\n"
         "        print('operate failed: element not found')\n"
         "    else:\n"
@@ -413,6 +422,28 @@ def _operate_element(name: str, control_type: int | None, operation: str, value:
         f"        {call}\n"
         "except Exception as _err:\n"
         "    print('operate failed:', _err)"
+    )
+
+
+def _find_named(condition: str, box: tuple[float, float, float, float] | None) -> str:
+    """The lines that bind `_item`. Without a box, the first match. With one, the nearest center."""
+    if box is None:
+        return f"    _item = _root.FindFirst(4, {condition})\n"
+    x, y, w, h = box
+    cx, cy = x + w / 2.0, y + h / 2.0
+    return (
+        f"    _found = _root.FindAll(4, {condition})\n"
+        "    _item = None\n"
+        "    _best = None\n"
+        "    for _i in range(_found.Length):\n"
+        "        _cand = _found.GetElement(_i)\n"
+        "        _rect = _cand.CurrentBoundingRectangle\n"
+        f"        _dx = ((_rect.left + _rect.right) / 2.0) - {cx!r}\n"
+        f"        _dy = ((_rect.top + _rect.bottom) / 2.0) - {cy!r}\n"
+        "        _dist = _dx * _dx + _dy * _dy\n"
+        "        if _best is None or _dist < _best:\n"
+        "            _best = _dist\n"
+        "            _item = _cand\n"
     )
 
 

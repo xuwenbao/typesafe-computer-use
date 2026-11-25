@@ -315,6 +315,29 @@ def test_element_text_uses_the_tree_value_and_the_script_reads_text_then_value()
     assert "CurrentValue" in code
 
 
+def test_same_name_elements_are_chosen_by_the_item_box():
+    from yuanji_computer_use.waa.desktop import _operate_element
+
+    nearest = _operate_element("Notifications", 50003, "toggle", None, (100.0, 200.0, 40.0, 20.0))
+    assert "FindAll" in nearest
+    assert "CurrentBoundingRectangle" in nearest
+    assert "120.0" in nearest and "210.0" in nearest
+    first = _operate_element("Sound", None, "toggle", None)
+    assert "FindFirst" in first and "FindAll" not in first
+
+    handed: list = []
+    desktop = over(handed, observation(), raw("edge-address.json"))
+    ref = {
+        "name": "Notifications",
+        "role": "AXCheckBox",
+        "patterns": [PATTERN_IDS["toggle"]],
+        "rect": [10, 20, 30, 16],
+    }
+    assert desktop.ax_operate(ref, "toggle") is True
+    assert "FindAll" in desktop.actions[0]
+    assert "25.0" in desktop.actions[0] and "28.0" in desktop.actions[0]
+
+
 def test_an_observation_without_a_screenshot_says_so():
     desktop = WAADesktop({"screenshot": None}, lambda actions: {})
     with pytest.raises(RuntimeError, match="no screenshot"):

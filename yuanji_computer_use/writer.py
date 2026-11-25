@@ -163,7 +163,7 @@ def checked(data: dict, properties: dict, defaults: dict | None = None) -> dict:
             out[name] = defaults[name]
         elif spec["type"] == "string" and name not in out:
             out[name] = ""
-        kind = {"boolean": bool, "string": str, "array": list, "number": (int, float)}[spec["type"]]
+        kind = {"boolean": bool, "string": str, "array": list, "number": (int, float), "object": dict}[spec["type"]]
         if not isinstance(out.get(name), kind):
             raise WriterError(f"the writer's reply has no {spec['type']} {name!r}: {json.dumps(data)[:400]}")
     return out
@@ -277,9 +277,14 @@ CREDENTIAL_HINTS = (
 )
 
 
+# A file name such as secret.txt is not a credential, even though the stem is one of the hints.
+_FILENAME = re.compile(r"\b[\w-]+\.[a-z0-9]{1,8}\b", re.IGNORECASE)
+
+
 def looks_credential(label: str) -> bool:
-    lowered = (label or "").lower()
-    return any(hint in lowered for hint in CREDENTIAL_HINTS)
+    """True when a hint is a whole word. A file name with an extension is not a credential."""
+    lowered = _FILENAME.sub(" ", (label or "").lower())
+    return any(re.search(rf"(?<!\w){re.escape(hint)}(?!\w)", lowered) for hint in CREDENTIAL_HINTS)
 
 
 def compose_browser_text(

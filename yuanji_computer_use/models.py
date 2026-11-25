@@ -89,8 +89,8 @@ class Guidance:
 
 
 Signature = tuple[
-    str, str | None, str | None, tuple[tuple[str, int], ...]
-]  # app, URL, focused field, (text, row) in reading order
+    str, str | None, str | None, tuple[tuple[str, int], ...], tuple[tuple, ...]
+]  # app, URL, focused field, (text, row), control state for checkbox/switch/popup/slider
 LINES_PER_DIFFERENCE = 10  # a screen is the same when at most one line in ten differs...
 MAX_DIFFERING_LINES = 1  # ...and at most one line at all: a clock, a ticker, or an OCR slip
 ROW_PT = 20.0  # the row a line sits in, in screen points: coarse enough to survive OCR jitter, fine enough to see a scroll
@@ -98,6 +98,24 @@ ROW_PT = 20.0  # the row a line sits in, in screen points: coarse enough to surv
 # "Settings - Memory usage - 56.0 MB", or "High memory usage". The figure drifts between two
 # captures of one screen, and with the clock it makes two changed lines, so it is left out.
 TAB_MEMORY = re.compile(r" - (?:high )?memory usage - [\d.,]+ ?[kmgt]?b$", re.IGNORECASE)
+# 这些控件带着文字里没有的状态。开关翻转、菜单展开、滑块移动，文字可以一字不变，画面却已经换了。
+# 进度条和文本框不在这里：它们的值会自己变，写进指纹会把同一步误判成换了屏。
+# These controls carry a state the text does not. A toggle that flips, a menu that opens, or a
+# slider that moves is a different screen even when every line of text is the same. A progress
+# bar and a text field are not in this set: their value moves on its own.
+STATEFUL_ROLES = frozenset({"checkbox", "switch", "popup", "slider"})
+
+
+def _control_state(items: list[Item], row: float) -> tuple[tuple, ...]:
+    """Checked, expanded, and current value for stateful accessibility controls, in reading order."""
+    found = []
+    for it in items:
+        if not it.from_ax:
+            continue
+        if it.role not in STATEFUL_ROLES and "toggle" not in it.controls:
+            continue
+        found.append((TAB_MEMORY.sub("", it.text), round(it.center[1] / row), it.checked, it.expanded, it.current))
+    return tuple(found)
 
 
 def signature(screen: Screen, items: list[Item]) -> Signature:
@@ -107,11 +125,14 @@ def signature(screen: Screen, items: list[Item]) -> Signature:
     A click that only moves the focus changes no text, but it changes what the next action can do,
     so it counts. A scroll on a dense page keeps nine tenths of the text and moves all of it, so the
     row counts too: the same line lower down is a different line. A tab's memory figure is no part
-    of the screen (see TAB_MEMORY).
+    of the screen (see TAB_MEMORY). A checkbox, switch, popup, or slider also contributes its
+    checked, expanded, and current value, so flipping one counts even when the label does not change.
     """
     focused = f"{screen.field.role}:{screen.field.label}" if screen.field else None
     row = ROW_PT * screen.scale
-    return (screen.app, screen.url, focused, tuple((TAB_MEMORY.sub("", it.text), round(it.center[1] / row)) for it in items))
+    lines = tuple((TAB_MEMORY.sub("", it.text), round(it.center[1] / row)) for it in items)
+    # 第五段是有状态控件的勾选、展开和当前值。和文字分开比，不吃“差一行仍算同一屏”的容差。
+    return (screen.app, screen.url, focused, lines, _control_state(items, row))
 
 
 def same_screen(a: Signature, b: Signature) -> bool:
@@ -120,9 +141,13 @@ def same_screen(a: Signature, b: Signature) -> bool:
     One line may differ, and only when it is one in ten or less. On a dense page a two-line modal
     is a change; on a five-line page any change is one. Measured as lines that appeared or
     vanished, whichever is more, so a page that gained a section counts as changed and one that
-    lost a line under the bar counts as the same.
+    lost a line under the bar counts as the same. Control state is not given that slack: a flipped
+    switch is a different screen. A signature from before control state was recorded has none.
     """
     if a[:3] != b[:3]:
+        return False
+    # 控件状态必须完全相同。开关一翻转就是另一屏。旧指纹没有这一段时，当作没有状态。
+    if (a[4] if len(a) > 4 else ()) != (b[4] if len(b) > 4 else ()):
         return False
     lines_a, lines_b = set(a[3]), set(b[3])
     differing = max(len(lines_a - lines_b), len(lines_b - lines_a))

@@ -8,9 +8,10 @@ import pytest
 from PIL import Image
 
 from yuanji_computer_use import perception, runner, windows_session
+from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.perception import SETTLE_POLL, SETTLE_QUIET, settle
 from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.runner import RunConfig, RunState
+from yuanji_computer_use.runner import RunConfig
 
 BEFORE = Image.new("RGB", (512, 512), "white")
 
@@ -118,7 +119,7 @@ def test_reading_a_screen_waits_for_a_warm_up_still_loading(fake_models, monkeyp
 
 
 def test_the_driver_reads_with_the_runs_parse_cache(monkeypatch, tmp_path, screen):
-    state = RunState()
+    state = Session()
     seen = []
     monkeypatch.setattr(runner, "capture", lambda *args, **kwargs: screen)
     monkeypatch.setattr(runner, "perceive", lambda *args, **kwargs: seen.append(kwargs.get("cache")) or [])
@@ -127,7 +128,7 @@ def test_the_driver_reads_with_the_runs_parse_cache(monkeypatch, tmp_path, scree
 
 
 def test_the_answer_reads_with_the_runs_parse_cache(monkeypatch, tmp_path, screen):
-    state = RunState()
+    state = Session()
     seen = []
     monkeypatch.setattr(desktop, "check_abort", lambda: None)
     monkeypatch.setattr(runner, "capture", lambda *args, **kwargs: screen)

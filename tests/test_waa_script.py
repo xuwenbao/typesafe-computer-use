@@ -203,6 +203,7 @@ def test_a_run_archives_the_earlier_result_and_does_not_print_the_key(script):
         OPENAI_API_KEY=secret,
         CLICKER_WRITER_MODEL="luna",
         WAA_MAX_STEPS="30",
+        JEV_WAA_SAVE_TREE="1",
     )
     assert result.returncode == 0, result.stderr
     text = result.stdout + result.stderr + commands(script)
@@ -211,6 +212,7 @@ def test_a_run_archives_the_earlier_result_and_does_not_print_the_key(script):
     assert "-e OPENAI_API_KEY" in result.stdout
     assert "-e CLICKER_WRITER_MODEL" in result.stdout
     assert "-e WAA_MAX_STEPS" in result.stdout
+    assert "-e JEV_WAA_SAVE_TREE" in result.stdout
     assert "host.docker.internal" not in result.stdout
     assert "RAM_SIZE=8G" in result.stdout and "CPU_CORES=8" in result.stdout
     assert "--device=/dev/kvm" in result.stdout
@@ -285,3 +287,126 @@ def test_results_invokes_the_reader(script):
     result = script("results", "results")
     assert result.returncode == 0, result.stderr
     assert "yuanji_computer_use.waa.results" in result.stdout
+
+
+def _finished_disk(script) -> Path:
+    checkout(script)
+    storage = script.repo / ".waa" / "storage"
+    (storage / "data.img").write_text("disk-v1", encoding="utf-8")
+    (storage / "windows.boot").write_text("boot", encoding="utf-8")
+    (storage / "windows.base").write_text("base", encoding="utf-8")
+    (storage / "windows.8225.iso").write_text("installer", encoding="utf-8")
+    (storage / "windows.rom").write_text("live-rom", encoding="utf-8")
+    return storage
+
+
+def _docker_that_copies_the_disk(script, ps_line: str = "") -> None:
+    """A docker that applies cp and rm to the mounted folders. It never starts a VM."""
+    path = script.repo / "bin" / "docker"
+    path.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            printf 'docker' >> "$COMMAND_LOG"
+            for arg in "$@"; do printf ' %q' "$arg" >> "$COMMAND_LOG"; done
+            printf '\\n' >> "$COMMAND_LOG"
+            if [[ "${{1:-}}" == ps ]]; then
+              printf '%s\\n' {ps_line!r}
+              exit 0
+            fi
+            declare -A mounts
+            prev=
+            entrypoint=
+            for arg in "$@"; do
+              if [[ "$prev" == -v ]]; then
+                host="${{arg%%:*}}"
+                rest="${{arg#*:}}"
+                mounts["${{rest%%:*}}"]="$host"
+              fi
+              if [[ "$prev" == --entrypoint ]]; then entrypoint=$arg; fi
+              prev=$arg
+            done
+            if [[ "$entrypoint" == cp ]]; then
+              copying=0
+              dest=
+              srcs=()
+              for arg in "$@"; do
+                if [[ "$arg" == --sparse=always ]]; then copying=1; continue; fi
+                [[ "$copying" -eq 0 ]] && continue
+                if [[ "$arg" == */ ]]; then dest="${{arg%/}}"; else srcs+=("$arg"); fi
+              done
+              for src in "${{srcs[@]}}"; do
+                cp --sparse=always "${{mounts[${{src%/*}}]}}/${{src##*/}}" "${{mounts[$dest]}}/${{src##*/}}"
+              done
+            fi
+            if [[ "$entrypoint" == rm ]]; then
+              seen=0
+              for arg in "$@"; do
+                if [[ "$arg" == -f ]]; then seen=1; continue; fi
+                [[ "$seen" -eq 0 ]] && continue
+                rm -f "${{mounts[${{arg%/*}}]}}/${{arg##*/}}"
+              done
+            fi
+            exit 0
+            """
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def test_a_snapshot_refuses_an_unfinished_disk(script):
+    checkout(script)
+    (script.repo / ".waa" / "storage" / "data.img").write_text("partial", encoding="utf-8")
+    result = script("snapshot")
+    assert result.returncode == 2
+    assert "not a finished install" in result.stderr
+    assert "docker" not in commands(script)
+
+
+def test_a_snapshot_and_a_restore_refuse_a_running_vm(script):
+    storage = _finished_disk(script)
+    _docker_that_copies_the_disk(script, "jev-winarena:latest 0.0.0.0:8006->8006/tcp")
+    saved = script("snapshot")
+    assert saved.returncode == 2
+    assert "the VM is running" in saved.stderr
+    assert "--sparse=always" not in commands(script)
+
+    snap = script.repo / ".waa" / "snapshot"
+    snap.mkdir()
+    (snap / "data.img").write_text("disk-v1", encoding="utf-8")
+    (snap / "windows.boot").write_text("boot", encoding="utf-8")
+    restored = script("restore")
+    assert restored.returncode == 2
+    assert "the VM is running" in restored.stderr
+    assert (storage / "data.img").read_text(encoding="utf-8") == "disk-v1"
+
+
+def test_a_snapshot_round_trip_keeps_the_disk_and_leaves_the_iso(script):
+    storage = _finished_disk(script)
+    _docker_that_copies_the_disk(script)
+    saved = script("snapshot")
+    assert saved.returncode == 0, saved.stderr
+    snap = script.repo / ".waa" / "snapshot"
+    assert (snap / "data.img").read_text(encoding="utf-8") == "disk-v1"
+    assert (snap / "windows.boot").read_text(encoding="utf-8") == "boot"
+    assert (snap / "windows.base").read_text(encoding="utf-8") == "base"
+    assert not (snap / "windows.8225.iso").exists()
+    assert "windows.8225.iso" not in commands(script)
+
+    (snap / "windows.rom").unlink()
+    (storage / "data.img").write_text("changed", encoding="utf-8")
+    (storage / "windows.rom").write_text("still-live", encoding="utf-8")
+    restored = script("restore")
+    assert restored.returncode == 0, restored.stderr
+    assert (storage / "data.img").read_text(encoding="utf-8") == "disk-v1"
+    assert (storage / "windows.8225.iso").read_text(encoding="utf-8") == "installer"
+    assert not (storage / "windows.rom").exists()
+
+
+def test_a_restore_without_a_snapshot_stops(script):
+    checkout(script)
+    result = script("restore")
+    assert result.returncode == 2
+    assert "no snapshot" in result.stderr
+    assert "docker" not in commands(script)

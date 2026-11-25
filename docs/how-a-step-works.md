@@ -217,7 +217,7 @@ the OCR can read.
 
 Ctrl-C when the terminal has focus. A key or mouse button goes back up even when Ctrl-C
 lands between its down and its up. The loop also stops itself on `done` or `none`, on confidence under
-`--min-confidence` (0.4), when it stalls, or at `--steps`. Each of those stops goes to the
+`--min-confidence` (0.3), when it stalls, or at `--steps`. Each of those stops goes to the
 writer, which answers and may hand the run back (below).
 
 ## Stalls
@@ -256,9 +256,9 @@ goal does not say which of two good moves comes first ("cheapest, and here in un
 week": open the cheapest listing, or filter by delivery?), and a classifier split
 between them reads as low confidence. So the writer's answer may carry a **focus**,
 one move in terms of the screen ("Click the 'Arrives in 2-4 days' filter"), and the
-classifier goes back to work with the goal and the focus both in its state. On the
-capture that stopped such a run at 0.39, the same classifier picks the filter at
-0.92 under that focus. It may instead carry a **question**, put to you in the terminal
+classifier goes back to work with the goal and the focus both in its state. On a
+capture that stopped such a run below the floor, the same classifier picks the filter
+at 0.92 under that focus. It may instead carry a **question**, put to you in the terminal
 when there is something only you can say ("13 or 15 inch?"); your reply joins the
 state for the rest of the run, the writer reads the screen again with it, and the app
 you were in comes back to the front. An empty reply declines, and the answer stands.
@@ -340,6 +340,39 @@ result, and the `tools` called on that screen in order (name, arguments, and a t
 `read_text`, `count`, and `calculate` do not spend `CLICKER_DRIVER_STEPS`. `run.json` records
 the action count, the call count, and `driver_tool_calls`. An older file with
 no call index is read as one call and one action.
+
+## Agents and status
+
+`runner.run` is a loop over a status, not a nest of branches. `agents/status.py`
+names the statuses and the only edges between them:
+
+| from | to |
+| --- | --- |
+| `HOST` | `POLICY` |
+| `POLICY` | `POLICY`, `WRITER`, `FINISH` |
+| `WRITER` | `POLICY`, `DRIVER`, `FINISH` |
+| `DRIVER` | `FINAL_ANSWER`, `FINISH` |
+| `FINAL_ANSWER` | `FINISH` |
+
+`HOST` is `agents/host.py`: it only brings the goal's app forward. `POLICY` is
+`agents/policy.py`: one classifier step, or `WRITER` when that step stops or
+`steps` is used up. A step that used up the budget is not handed back to the
+classifier. `WRITER` is `agents/writer.py`: the hand-off above. `DRIVER` is
+`agents/driver.py`: the takeover. It loads the model SDK only when a takeover
+actually starts. `FINAL_ANSWER` asks the writer once more, then `FINISH`.
+Abort stays outside the table.
+
+One classifier step is four stages in `agents/strategies.py`, in order:
+`PerceiveStrategy` (capture, perceive, unchanged screen), `DecideStrategy`
+(the classifier, including a stop for `done`, `none`, or low confidence),
+`ActStrategy` (perform, or a dry run), `MemoryStrategy` (history and the
+repeat check). `agents/middleware.py` wraps that pipeline. `Timing` records
+the step even when a stage raises. `StepFiles` writes `step-NNN-raw.png`,
+`step-NNN-sent.png`, and `step-NNN-payload.txt` before the decision, and
+`step-NNN.png` plus `step-NNN-answers.json` after it. `SessionReport` tells
+the session window what was done. `StepLog` writes the file line and the
+timing line. The session itself is `agents/session.py`. `runner.py` keeps
+`RunConfig`, `run`, and `run.json`.
 
 ## Who did the work
 

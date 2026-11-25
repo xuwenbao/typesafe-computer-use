@@ -8,10 +8,12 @@ from PIL import Image
 
 from yuanji_computer_use import perception
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.agents.strategies import run_step
 from yuanji_computer_use.bound import CaptureLines, CaptureTimeout, SilentEvent, assemble_capture, await_capture, call_within
 from yuanji_computer_use.platform_adapter import desktop
 from yuanji_computer_use.report import Log
-from yuanji_computer_use.runner import RunConfig, RunState, run_step
+from yuanji_computer_use.runner import RunConfig
 
 
 def test_call_within_returns_a_value_that_arrives_in_time():
@@ -104,7 +106,7 @@ def test_a_stuck_screenshot_ends_the_step(monkeypatch, tmp_path):
 
     monkeypatch.setattr(desktop, "screenshot", stuck)
     cfg = RunConfig(goal="open notepad", out=tmp_path)
-    state = RunState()
+    state = Session()
     ctx = Context(goal="open notepad", browser="", email=None, typesafe=None, writer=None, history=[])
     assert run_step(cfg, ctx, state, 1, Log(tmp_path / "run.log")) is False
     assert state.outcome == "capture timed out"

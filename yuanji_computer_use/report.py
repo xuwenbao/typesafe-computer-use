@@ -52,10 +52,11 @@ def render_payload(
     guidance: Guidance | None = None,
     picture: Marked | None = None,
     sent_png: str = "",
+    subgoal: dict | None = None,
 ) -> str:
     """Exactly what goes to TypeSafe for this screen, plus a table of every item. The picture is
     named by its reference and size; its bytes are in the run folder, never in this text."""
-    state = base_state(goal, screen, items, history, tried, guidance)
+    state = base_state(goal, screen, items, history, tried, guidance, subgoal)
     if picture is not None:
         state[SCREEN_IMAGE] = picture.ref
     parts = [

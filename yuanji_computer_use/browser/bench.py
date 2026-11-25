@@ -310,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--fixture", action="store_true")
     q.add_argument("--goal", default=None)
     q.add_argument("--steps", type=int, default=10)
-    q.add_argument("--min-confidence", type=float, default=0.4)
+    q.add_argument("--min-confidence", type=float, default=0.3)
     q.add_argument("--model", default=None)
     q.add_argument("--headed", action="store_true")
     q.add_argument("--out", default=None)
