@@ -458,7 +458,7 @@ def test_l17_low_confidence_stops_the_run(monkeypatch, tmp_path):
         ]
     )
 
-    state = drive(world, scripted(("click_item", "Tickets", 0.3)), goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path)
+    state = drive(world, scripted(("click_item", "Tickets", 0.2)), goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path)
 
     assert state.outcome == "low confidence"
     assert state.history == []
@@ -1480,7 +1480,7 @@ def torn_until_focused(state: dict, questions: dict) -> tuple:
         return ("done", None)
     focus = state.get("current_focus")
     if focus is None:
-        return ("click_item", "MacBook 2010", 0.38)
+        return ("click_item", "MacBook 2010", 0.25)
     return ("click_item", next(it["text"] for it in state["screen_items_in_reading_order"] if it["text"] in focus))
 
 
@@ -1506,7 +1506,7 @@ def test_l42_a_stop_between_two_good_moves_is_settled_by_the_writer_and_the_run_
     assert writer.packets[1]["earlier_stops"] == [
         {
             "after_action": 0,
-            "why": "the classifier was not confident enough in any next action",
+            "why": STOPPED["low confidence"],
             "focus_given": state.handoffs[0].focus,
         }
     ]
@@ -1517,7 +1517,7 @@ def test_l42_a_stop_between_two_good_moves_is_settled_by_the_writer_and_the_run_
 def test_l43_a_focus_the_classifier_cannot_act_on_leaves_the_answer_standing(monkeypatch, tmp_path):
     world = shop()
     writer = FakeWriter(reviews=[{"focus": "Open the listing", "answer": "Not confirmed yet."}])
-    unsure = scripted(("click_item", "MacBook 2010", 0.38), ("click_item", "MacBook 2010", 0.38))
+    unsure = scripted(("click_item", "MacBook 2010", 0.25), ("click_item", "MacBook 2010", 0.25))
 
     state = drive(world, unsure, goal=SHOP_GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path, writer=writer)
 

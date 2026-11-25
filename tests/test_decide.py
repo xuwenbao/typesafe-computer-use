@@ -237,10 +237,10 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
         assert "led straight back here" in questions[key].instructions
 
 
-def _stopped(tmp_path, screen, decision) -> str:
+def _stopped(tmp_path, screen, decision, floor: float = 0.4) -> str:
     state = Session()
     resolve(
-        RunConfig(goal="open the chat", out=tmp_path),
+        RunConfig(goal="open the chat", out=tmp_path, min_confidence=floor),
         None,
         state,
         screen,
@@ -330,6 +330,11 @@ def test_a_stop_names_the_layer_that_missed_the_floor(tmp_path, screen):
     )
     resolve(RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], no_lead, {}, lines.append)
     assert any("kind 0.50, item 0.34" in line and "the target layer has no clear lead" in line for line in lines)
+
+
+def test_the_default_floor_lets_a_click_at_0_32_through(tmp_path, screen):
+    decision = Decision(kind=answer("click_item", 0.9), item=answer("0", 0.32), site=answer("none", 1.0))
+    assert _stopped(tmp_path, screen, decision, floor=0.3) == "dry run"
 
 
 OFFERED = {"click_item", "none"}

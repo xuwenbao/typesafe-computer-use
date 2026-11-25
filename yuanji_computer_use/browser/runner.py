@@ -144,7 +144,7 @@ def run_goal(
     *,
     start_url: str | None = None,
     max_steps: int = 12,
-    min_confidence: float = 0.4,
+    min_confidence: float = 0.3,
     allow_type: bool = True,
     change_timeout_ms: int = 300,
     verbose: bool = True,

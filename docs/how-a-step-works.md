@@ -217,7 +217,7 @@ the OCR can read.
 
 Ctrl-C when the terminal has focus. A key or mouse button goes back up even when Ctrl-C
 lands between its down and its up. The loop also stops itself on `done` or `none`, on confidence under
-`--min-confidence` (0.4), when it stalls, or at `--steps`. Each of those stops goes to the
+`--min-confidence` (0.3), when it stalls, or at `--steps`. Each of those stops goes to the
 writer, which answers and may hand the run back (below).
 
 ## Stalls
@@ -256,9 +256,9 @@ goal does not say which of two good moves comes first ("cheapest, and here in un
 week": open the cheapest listing, or filter by delivery?), and a classifier split
 between them reads as low confidence. So the writer's answer may carry a **focus**,
 one move in terms of the screen ("Click the 'Arrives in 2-4 days' filter"), and the
-classifier goes back to work with the goal and the focus both in its state. On the
-capture that stopped such a run at 0.39, the same classifier picks the filter at
-0.92 under that focus. It may instead carry a **question**, put to you in the terminal
+classifier goes back to work with the goal and the focus both in its state. On a
+capture that stopped such a run below the floor, the same classifier picks the filter
+at 0.92 under that focus. It may instead carry a **question**, put to you in the terminal
 when there is something only you can say ("13 or 15 inch?"); your reply joins the
 state for the rest of the run, the writer reads the screen again with it, and the app
 you were in comes back to the front. An empty reply declines, and the answer stands.
