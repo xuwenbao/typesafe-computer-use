@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from ..actions import perform
 from ..bound import CaptureTimeout
 from ..config import settings
-from ..decide import Decision, decide, offscreen_records
+from ..decide import Decision, MalformedAnswer, decide, offscreen_records
 from ..models import Item, Screen, same_screen, signature
 from ..platform_adapter import desktop
 from ..report import Log, ax_count, top
@@ -74,6 +74,11 @@ class DecideStrategy:
         if _take_alt(state, sc, log):
             return
         decision = _ask(cfg, ctx, state, sc)
+        if decision is None:
+            log(f"  malformed answer: {sc.malformed}; no action")
+            state.outcome = "malformed answer"
+            sc.keep_going = False
+            return
         _record_decision(state, sc, decision, log)
         if _refuses(cfg, state, decision, log):
             sc.keep_going = False
@@ -133,11 +138,46 @@ def _lead_covers(decision: Decision, floor: float) -> bool:
 
 
 def _leads(answer, floor: float) -> bool:
-    """第一名的概率 ≥ 门槛 * FLOOR_FRACTION，并且 ≥ 第二名 * LEAD。"""
-    ranked = sorted((getattr(answer, "probabilities", None) or {}).values(), reverse=True)
-    if len(ranked) < 2 or ranked[1] <= 0:
-        return False
-    return ranked[0] >= floor * FLOOR_FRACTION and ranked[0] >= ranked[1] * LEAD
+    """所选项自己的概率 ≥ 门槛 * FLOOR_FRACTION，并且 ≥ 其余选项里最高的 * LEAD。
+
+    读的是所选项的概率，不是分布里随便一个最高值。所选项不是最高时不能放行。
+    """
+    probabilities = getattr(answer, "probabilities", None) or {}
+    choice = getattr(answer, "choice", None)
+    top = probabilities.get(choice, 0.0)
+    rest = [p for key, p in probabilities.items() if key != choice]
+    second = max(rest, default=0.0)
+    return second > 0 and top >= second and top >= floor * FLOOR_FRACTION and top >= second * LEAD
+
+
+def _target_layer(decision: Decision) -> tuple[str, float] | None:
+    """点击、屏外控件、快捷键才有第二层。名字和这一层自己的置信度。"""
+    if decision.clicking and decision.item is not None:
+        return "item", decision.item.confidence
+    if decision.pressing_offscreen and decision.offscreen is not None:
+        return "offscreen", decision.offscreen.confidence
+    if decision.shortcutting and decision.key is not None:
+        return "key", decision.key.confidence
+    return None
+
+
+def _confidence_detail(decision: Decision) -> str:
+    layer = _target_layer(decision)
+    kind_confidence = getattr(decision.kind, "confidence", decision.confidence)
+    kind = f"kind {kind_confidence:.2f}"
+    if layer is None:
+        return kind
+    name, confidence = layer
+    return f"{kind}, {name} {confidence:.2f}"
+
+
+def _low_confidence_reason(decision: Decision, floor: float) -> str:
+    layer = _target_layer(decision)
+    if layer is not None and decision.kind.confidence < floor:
+        return "the kind layer is below the floor"
+    if layer is not None:
+        return "the target layer has no clear lead"
+    return "the kind layer is below the floor"
 
 
 def _refuses(cfg, state: Session, decision: Decision, log: Log) -> bool:
@@ -149,11 +189,13 @@ def _refuses(cfg, state: Session, decision: Decision, log: Log) -> bool:
     if decision.confidence < cfg.min_confidence:
         # 屏幕元素很多时，概率会分散到上百个选项上，即使目标很明确，第一名也可能略低于门槛。
         # 所以第一名明显领先时放行；如果前两名差不多（两个都像对的），照样停下——这正是门槛要拦的情况。
+        detail = _confidence_detail(decision)
         if not _lead_covers(decision, cfg.min_confidence):
-            log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}; stopping")
+            reason = _low_confidence_reason(decision, cfg.min_confidence)
+            log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence} ({detail}); {reason}; stopping")
             state.outcome = "low confidence"
             return True
-        log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence}, but it leads the next option; continuing")
+        log(f"  confidence {decision.confidence:.2f} below {cfg.min_confidence} ({detail}); it leads the next option; continuing")
     return False
 
 
@@ -201,6 +243,7 @@ def screen_moved(state: Session, screen: Screen, items: list[Item], log: Log) ->
         unchanged = same_screen(now, state.last)
         if not unchanged:
             state.swapped.clear()
+            state.withdrawn.clear()
             state.alt = None
             state.last_press = None
         if not (unchanged and state.quiet):
@@ -275,21 +318,31 @@ def answers(
     }
 
 
-def _ask(cfg, ctx, state: Session, sc: StepContext) -> Decision:
-    """问一次分类器。"""
-    with phase(sc.timing, "decide"):
-        return decide(
-            ctx.typesafe,
-            cfg.goal,
-            sc.screen,
-            sc.items,
-            state.history,
-            ctx.browser,
-            ctx.email,
-            sc.tried,
-            ctx.guidance,
-            sc.picture,
-        )
+def _ask(cfg, ctx, state: Session, sc: StepContext) -> Decision | None:
+    """问一次分类器。同一屏上点过、画面没变的条目不再给它选；撤完一个不剩就仍给全部。
+
+    回答对不上给出的选项时返回 None，原因记在 sc.malformed。这一步不执行。
+    """
+    shown = [item for item in sc.items if item.index not in state.withdrawn]
+    candidates = shown if shown and len(shown) < len(sc.items) else None
+    try:
+        with phase(sc.timing, "decide"):
+            return decide(
+                ctx.typesafe,
+                cfg.goal,
+                sc.screen,
+                sc.items,
+                state.history,
+                ctx.browser,
+                ctx.email,
+                sc.tried,
+                ctx.guidance,
+                sc.picture,
+                candidates=candidates,
+            )
+    except MalformedAnswer as error:
+        sc.malformed = str(error)
+        return None
 
 
 def _record_decision(state: Session, sc: StepContext, decision: Decision, log: Log) -> None:
@@ -343,10 +396,13 @@ def _offer_other_press(state: Session, items: list[Item], log: Log) -> None:
         return
     if index in state.swapped:
         _extend_tried(state, items[index])
+        state.withdrawn.add(index)
         state.alt = None
         return
     via_accessibility = "via accessibility" in press["what"]
     if not via_accessibility:
+        # 普通点击不会再换一种按法。画面没变，下一问就不再把这一条交给分类器。
+        state.withdrawn.add(index)
         return
     state.swapped.add(index)
     state.alt = {"index": index, "method": _other_method(press["what"]), "text": press["text"]}

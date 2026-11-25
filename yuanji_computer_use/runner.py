@@ -77,6 +77,7 @@ STOPPED = {
     "done": "the classifier judged the goal already achieved on this screen",
     "nothing helps": "the classifier found nothing on this screen that helps with the goal",
     "low confidence": "the classifier was not confident enough in any next action",
+    "malformed answer": "the classifier's answer did not match the options it was offered, so nothing was done",
     "stalled": "the last actions changed nothing",
     "stuck": (
         "the agent is stuck: its last actions changed nothing, as they did twice before on these same pages, "

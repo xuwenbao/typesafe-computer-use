@@ -66,6 +66,7 @@ class Session:
     step: int = 0  # 刚跑过的分类器步号。0 表示还没跑
     alt: dict | None = None  # 下一步对同一条目换按法：index、method、text。不问分类器
     swapped: set = field(default_factory=set)  # 这一屏已经换过按法的条目编号
+    withdrawn: set = field(default_factory=set)  # 这一屏点过、画面没变、不再交给分类器的条目编号
     press_tried: list = field(default_factory=list)  # 换过仍无效时，两种按法都算已尝试
     last_press: dict | None = None  # 刚点过的条目。下一屏没变、而且走的是辅助功能时，换成鼠标点击
 
@@ -87,3 +88,4 @@ class StepContext:
     started: float = 0.0
     method: str = "auto"  # click_item 的按法。换按法时是 pointer 或 accessibility
     skip_decide: bool = False  # 换按法不再问分类器
+    malformed: str = ""  # 分类器回答对不上给出的选项时的原因。空表示回答合格

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass
 
@@ -15,6 +16,11 @@ from .models import AxNode, Field, Guidance, Item, Screen
 from .parse.marks import Marked
 
 log = logging.getLogger(__name__)
+
+
+class MalformedAnswer(Exception):
+    """分类器交回的选择对不上这次给出的选项，这一步不能执行。"""
+
 
 STOP_KINDS = ("done", "none")
 SCREEN_IMAGE = "screen_image"  # the state key that refers to the picture in the request's assets
@@ -381,6 +387,9 @@ def decide(
             if shown:
                 questions["item"] = item_question(screen, items, pictured=False, only=shown)
             answers = client.system_one(state=state, questions=questions).answers
+    for name, question in questions.items():
+        if name in answers:
+            check_answer(name, answers[name], set(question.criteria))
     return Decision(
         kind=answers["kind"],
         item=answers.get("item"),
@@ -389,6 +398,36 @@ def decide(
         key=answers.get("key"),
         image_refused=refused,
     )
+
+
+def check_answer(name: str, answer, offered: set[str]) -> None:
+    """所选项必须在给出的选项里，并且是概率最高的。概率可以只覆盖一部分选项。
+
+    测试里的假回答常常只有 `{所选项: 置信度}`，所以不要求键齐全，也不要求总和接近 1。
+    总和超过 1.02、出现给出的选项以外的键、或所选项不是最高，都算不合格。
+    """
+    probabilities = getattr(answer, "probabilities", None)
+    choice = getattr(answer, "choice", None)
+    confidence = getattr(answer, "confidence", None)
+    if not isinstance(probabilities, dict):
+        raise MalformedAnswer(f"{name}: probabilities is not a map of the offered options")
+    try:
+        numbers = [confidence, *probabilities.values()]
+        finite = all(type(number) in (int, float) and math.isfinite(number) and 0 <= number <= 1 for number in numbers)
+        top = max(probabilities.values(), default=0.0)
+        chosen = probabilities.get(choice)
+        legal = (
+            finite
+            and choice in offered
+            and set(probabilities).issubset(offered)
+            and sum(probabilities.values()) <= 1.02
+            and chosen is not None
+            and chosen >= top - 1e-6
+        )
+    except (TypeError, ValueError):
+        legal = False
+    if not legal:
+        raise MalformedAnswer(f"{name}: the choice is not a legal distribution over the offered options")
 
 
 def item_question(screen: Screen, items: list[Item], pictured: bool, only: list[Item] | None = None) -> Choice:

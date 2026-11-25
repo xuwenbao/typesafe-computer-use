@@ -1,12 +1,16 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.agents.strategies import resolve
 from yuanji_computer_use.config import SITES
 from yuanji_computer_use.decide import (
     Decision,
+    MalformedAnswer,
     base_state,
+    check_answer,
     decide,
     item_criteria,
     key_criteria,
@@ -296,6 +300,71 @@ def test_a_shortcut_key_under_the_floor_needs_a_lead(tmp_path, screen):
         key=answer("x", 0.35, {"x": 0.35, "v": 0.3}),
     )
     assert _stopped(tmp_path, screen, split) == "low confidence"
+
+
+def test_a_choice_that_is_not_the_highest_probability_cannot_lead(tmp_path, screen):
+    """领先看的是所选项自己的概率。旁边有一项更高时，不能靠那一项放行。"""
+    decision = Decision(
+        kind=answer("click_item", 0.9, {"click_item": 0.9, "none": 0.1}),
+        item=answer("23", 0.2, {"23": 0.2, "20": 0.5}),
+        site=answer("none", 1.0),
+    )
+    assert _stopped(tmp_path, screen, decision) == "low confidence"
+
+
+def test_a_stop_names_the_layer_that_missed_the_floor(tmp_path, screen):
+    lines = []
+    kind_low = Decision(
+        kind=answer("click_item", 0.30, {"click_item": 0.35, "none": 0.25}),
+        item=answer("25", 0.41, {"25": 0.43, "5": 0.15}),
+        site=answer("none", 1.0),
+    )
+    resolve(RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], kind_low, {}, lines.append)
+    assert any("kind 0.30, item 0.41" in line and "the kind layer is below the floor" in line for line in lines)
+
+    lines.clear()
+    no_lead = Decision(
+        kind=answer("click_item", 0.5, {"click_item": 0.5, "none": 0.2}),
+        item=answer("23", 0.34, {"23": 0.35, "20": 0.28}),
+        site=answer("none", 1.0),
+    )
+    resolve(RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], no_lead, {}, lines.append)
+    assert any("kind 0.50, item 0.34" in line and "the target layer has no clear lead" in line for line in lines)
+
+
+OFFERED = {"click_item", "none"}
+
+
+def test_a_partial_distribution_that_names_its_choice_is_legal():
+    check_answer("kind", answer("click_item", 0.4), OFFERED)
+    check_answer("kind", answer("click_item", 0.6, {"click_item": 0.6, "none": 0.4}), OFFERED)
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        answer("scroll", 0.9),
+        answer("click_item", 0.2, {"click_item": 0.2, "none": 0.5}),
+        answer("click_item", 0.9, {"click_item": 0.9, "extra": 0.1}),
+        answer("click_item", 2.0),
+        SimpleNamespace(choice="click_item", confidence=0.9, probabilities=["click_item"]),
+        answer("click_item", 0.9, {"click_item": 0.9, "none": 0.9}),
+    ],
+    ids=["not-offered", "not-the-highest", "unknown-key", "confidence-out-of-range", "probabilities-not-a-map", "sum-above-one"],
+)
+def test_an_inconsistent_answer_is_refused(given):
+    with pytest.raises(MalformedAnswer):
+        check_answer("kind", given, OFFERED)
+
+
+def test_decide_refuses_a_choice_that_was_not_offered(screen, make_item):
+    items = [make_item(0, "Stay")]
+
+    def system_one(state, questions, **_extra):
+        return SimpleNamespace(answers={"kind": answer("not_a_kind", 0.9), "site": answer("none", 1.0), "item": answer("0", 0.9)})
+
+    with pytest.raises(MalformedAnswer):
+        decide(SimpleNamespace(system_one=system_one), "look", screen, items, [], "Google Chrome", None)
 
 
 def test_a_candidate_subset_keeps_the_original_numbers(screen, make_item):

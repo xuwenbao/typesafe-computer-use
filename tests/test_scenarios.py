@@ -14,7 +14,7 @@ import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
 from yuanji_computer_use import driver, runner
-from yuanji_computer_use.agents.strategies import MAX_REPEATS, UNCHANGED
+from yuanji_computer_use.agents.strategies import UNCHANGED
 from yuanji_computer_use.driver import BANNED, DONE_BEFORE
 from yuanji_computer_use.runner import MAX_STALLS, STOPPED
 
@@ -294,14 +294,24 @@ def test_l11_a_ticking_clock_does_not_hide_a_stall(monkeypatch, tmp_path):
             "Gate G",
         ]
 
-    world = World([Page(name="board", items=rows, url="https://example.com/board")])  # "Refresh" has no transition
+    world = World([Page(name="board", items=rows, url="https://example.com/board")])  # nothing on this page has a transition
 
-    state = drive(world, scripted(*[("click_item", "Refresh")] * 8), goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path)
+    def policy(state, questions):
+        """Keep clicking Refresh while it is still offered. A click that changes nothing is withdrawn,
+        so the later clicks land on whatever row is still offered."""
+        criteria = questions["item"].criteria
+        for key, line in criteria.items():
+            if "'Refresh'" in line:
+                return ("click_item", int(key))
+        return ("click_item", int(next(iter(criteria))))
+
+    state = drive(world, policy, goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path)
 
     assert state.outcome == "stalled"
     assert len(state.history) <= 4
-    # Every click but the last was followed by a capture that showed the board as it was.
-    assert state.history == [f"clicked 'Refresh'{UNCHANGED}"] * (len(state.history) - 1) + ["clicked 'Refresh'"]
+    assert state.history[0] == f"clicked 'Refresh'{UNCHANGED}"
+    assert all(line.startswith("clicked ") for line in state.history)
+    assert not any("Refresh" in line for line in state.history[1:])
     clock = [state["screen_items_in_reading_order"][0]["text"] for state in world.fake.states]
     assert len(set(clock)) == len(clock)  # the clock really did tick between the captures
 
@@ -749,14 +759,18 @@ def test_l26_a_refused_action_then_a_good_one_does_not_stall(monkeypatch, tmp_pa
             Page(name="tickets", items=["Buy", "Terms"], url="https://example.com/tickets"),
         ]
     )
+    # type_text is not offered without a focused field, so the answer stops the step. The writer
+    # sends the run on, and the click that was offered still happens.
+    writer = FakeWriter(reviews=[{"focus": "Click 'Tickets'"}])
     policy = scripted(("type_text", None), ("click_item", "Tickets"), ("done", None))
 
-    state = drive(world, policy, goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path)
+    state = drive(world, policy, goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path, writer=writer)
 
     assert state.outcome == "done"
-    assert state.history == ["type_text refused: no text field is focused", "clicked 'Tickets'"]
+    assert [h.outcome for h in state.handoffs] == ["malformed answer"]
+    assert state.history == ["clicked 'Tickets'"]
     assert world.page.name == "tickets"
-    assert world.log == ["click:Tickets"]  # the refusal never reached the machine
+    assert world.log == ["click:Tickets"]  # the unoffered answer never reached the machine
 
 
 def test_l27_scrolling_past_the_end_stops_as_a_repeated_action(monkeypatch, tmp_path):
@@ -926,14 +940,24 @@ def test_l32_a_feed_that_grows_every_step_is_not_mistaken_for_a_stall(monkeypatc
 
 def test_l32b_a_feed_that_never_grows_is_a_stall(monkeypatch, tmp_path):
     world = World([Page(name="feed", items=["Post 1", "Post 2", "Post 3", "Load more"], url="https://example.com/feed")])
-    policy = scripted(*[("click_item", "Load more")] * 8)
+
+    def policy(state, questions):
+        """Click Load more while it is offered. It changes nothing, so it is withdrawn and the next
+        clicks are other rows that also change nothing."""
+        criteria = questions["item"].criteria
+        for key, line in criteria.items():
+            if "'Load more'" in line:
+                return ("click_item", int(key))
+        return ("click_item", int(next(iter(criteria))))
 
     state = drive(world, policy, goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path)
 
     assert state.outcome == "stalled"
-    # Three clicks either way: the repeat rule fires on the third, and with it gone the idle rule
-    # would stop step 4 before it acted. The two rules agree here; L10 and L16 tell them apart.
-    assert state.history == [f"clicked 'Load more'{UNCHANGED}"] * 2 + ["clicked 'Load more'"]
+    # Load more is withdrawn after the click that did nothing. The idle rule still stops the run
+    # on the third click; the repeat rule is what stops a single row that stays offered.
+    assert state.history[0] == f"clicked 'Load more'{UNCHANGED}"
+    assert len(state.history) == 3
+    assert sum("Load more" in line for line in state.history) == 1
 
 
 def coldplay_policy(state: dict, questions: dict) -> tuple:
@@ -1620,10 +1644,12 @@ def test_l49_a_stall_handed_back_starts_the_new_focus_with_clean_counts(monkeypa
 
     state = drive(world, policy, goal=GOAL, monkeypatch=monkeypatch, tmp_path=tmp_path, writer=writer)
 
-    assert [h.outcome for h in state.handoffs] == ["stalled"]
+    assert [h.outcome for h in state.handoffs] == ["malformed answer"]
     assert state.outcome == "done" and world.page.name == "tickets"
-    assert world.log == ["click:Dead link"] * 3 + ["click:Tickets"]
-    resumed = json.loads((tmp_path / "run" / "step-004-answers.json").read_text())
+    # Dead link changed nothing, so it was withdrawn. Naming it again is not an offered choice.
+    # The focus then takes Tickets, which was still offered.
+    assert world.log == ["click:Dead link", "click:Tickets"]
+    resumed = json.loads((tmp_path / "run" / "step-003-answers.json").read_text())
     assert (resumed["idle_actions"], resumed["repeated_actions"]) == (
         1,
         0,
@@ -1759,8 +1785,9 @@ def test_l54_a_run_stuck_three_times_on_the_same_page_ends_with_the_writers_answ
     forms = "https://example.com/forms"
     world = World(
         [
-            Page(name="forms", items=["Agency", "-Any-", "Apply Filters"], url=forms, on={"click:-Any-": "open"}),
-            Page(name="open", items=["Civil Division", "Tax Division"], url=forms),
+            # Agency is the only control, so a click that does nothing leaves it offered. With another
+            # row beside it, that click would be withdrawn and the repeat could not reach three stalls.
+            Page(name="forms", items=["Agency"], url=forms),
         ]
     )
     writer = FakeWriter(reviews=[{"focus": "Open the '-Any-' dropdown"}] * 9)
@@ -1784,21 +1811,28 @@ def test_l55_a_new_page_starts_the_count_of_stalls_again(monkeypatch, tmp_path):
     world = World(
         [
             *[
-                Page(name=f"step {n}", items=[f"Step {n} of 3", "Help", "Next"], url=f"{wizard}{n}", on={"click:Next": nxt})
+                Page(
+                    name=f"step {n}",
+                    items=[f"Step {n} of 3", "Help", "Wait", "Next"],
+                    url=f"{wizard}{n}",
+                    on={"click:Next": nxt},
+                )
                 for n, nxt in ((1, "step 2"), (2, "step 3"), (3, "welcome"))
             ],
             Page(name="welcome", items=["Welcome aboard"], url=f"{wizard}done"),
         ]
     )
-    helped: dict[str, int] = {}
 
     def policy(state: dict, questions: dict) -> tuple:
-        """Try Help until the run stalls on it, then take Next, as the writer's focus says."""
+        """Click a row that is not Next. Each one changes nothing and is withdrawn, and three of
+        those stall the page. After the focus, Next is what remains."""
         url = state["browser_active_tab_url"]
         if url.endswith("done"):
             return ("done", None)
-        helped[url] = helped.get(url, 0) + 1
-        return ("click_item", "Help" if helped[url] <= MAX_REPEATS + 1 else "Next")
+        for key, line in questions["item"].criteria.items():
+            if "'Next'" not in line:
+                return ("click_item", int(key))
+        return ("click_item", "Next")
 
     writer = FakeWriter(reviews=[{"focus": "Click 'Next'"}] * MAX_STALLS)
 
@@ -1807,7 +1841,11 @@ def test_l55_a_new_page_starts_the_count_of_stalls_again(monkeypatch, tmp_path):
     assert state.outcome == "done" and state.answer.achieved
     assert world.page.name == "welcome"
     assert [h.outcome for h in state.handoffs] == ["stalled"] * MAX_STALLS  # enough to be stuck, were they on one page
-    assert world.log == (["click:Help"] * (MAX_REPEATS + 1) + ["click:Next"]) * 3
+    assert world.log == [
+        *["click:Step 1 of 3", "click:Help", "click:Wait", "click:Next"],
+        *["click:Step 2 of 3", "click:Help", "click:Wait", "click:Next"],
+        *["click:Step 3 of 3", "click:Help", "click:Wait", "click:Next"],
+    ]
 
 
 def test_l56_a_name_the_writer_submits_is_typed_and_saved_in_one_step(monkeypatch, tmp_path):
@@ -2418,6 +2456,62 @@ def _switch(pages):
     world = World(pages)
     world.toggles = {"TUN": True}
     return world
+
+
+def test_a_malformed_answer_stops_without_an_action(monkeypatch, tmp_path):
+    world = World([Page(name="home", items=["Stay"])])
+    writer = FakeWriter()
+
+    state = drive(world, scripted(("not_a_kind", None, 0.9)), monkeypatch=monkeypatch, tmp_path=tmp_path, writer=writer)
+
+    assert state.history == []
+    assert state.outcome == "malformed answer"
+    assert writer.packets[0]["why_the_run_stopped"] == STOPPED["malformed answer"]
+    assert "no action" in (tmp_path / "run" / "run.log").read_text()
+
+
+def _item_texts(question) -> list[str]:
+    return list(question.criteria.values())
+
+
+def test_an_unchanged_click_is_withdrawn_until_the_screen_changes(monkeypatch, tmp_path):
+    home = Page(name="home", items=["Stay", "Go"], on={"click:Go": "away"})
+    away = Page(name="away", items=["Stay", "Go"])
+    world = World([home, away])
+    asked = {"n": 0}
+
+    def policy(state, questions):
+        asked["n"] += 1
+        if asked["n"] == 1:
+            return ("click_item", "Stay", 0.9)
+        if asked["n"] == 2:
+            return ("click_item", "Go", 0.9)
+        return ("done", None)
+
+    state = drive(world, policy, goal="leave Stay alone", monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    questions = world.fake.asked
+    assert "Stay" in _item_texts(questions[0]["item"])[0]
+    assert all("Stay" not in line for line in _item_texts(questions[1]["item"]))
+    assert "Go" in _item_texts(questions[1]["item"])[0]
+    assert any("Stay" in line for line in _item_texts(questions[2]["item"]))
+    assert state.outcome == "done"
+    assert world.page.name == "away"
+
+
+def test_the_only_item_stays_offered_after_an_unchanged_click(monkeypatch, tmp_path):
+    world = World([Page(name="home", items=["Only"])])
+    asked = {"n": 0}
+
+    def policy(state, questions):
+        asked["n"] += 1
+        return ("click_item", "Only", 0.9)
+
+    state = drive(world, policy, goal="press Only", monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert all("Only" in _item_texts(step["item"])[0] for step in world.fake.asked)
+    assert len(world.fake.asked) >= 2
+    assert state.outcome == "stalled"
 
 
 def test_an_unchanged_press_is_retried_as_a_click_without_a_plan(monkeypatch, tmp_path):

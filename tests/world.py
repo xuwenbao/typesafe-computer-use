@@ -468,14 +468,24 @@ class FakeTypeSafe:
     def _answers(self, state: dict, questions: dict, kind: str, target, confidence: float) -> dict:
         answers = {"kind": _answer(kind, confidence), "site": _answer(target if kind == "use_browser" else "none", confidence)}
         if "item" in questions:
-            answers["item"] = _answer(
-                self._item_key(state, target) if kind in ("click_item", "open_item", "add_item") else "0", confidence
+            # A click names its target. Any other kind still answers the item question, and the key
+            # has to be one this question offered: a target withdrawn after a click that did nothing
+            # is no longer "0".
+            # A click names its target. Any other kind still answers the item question, and that
+            # key has to be one this question offered: "0" may have been withdrawn.
+            key = (
+                self._item_key(state, target)
+                if kind in ("click_item", "open_item", "add_item")
+                else next(iter(questions["item"].criteria))
             )
+            answers["item"] = _answer(key, confidence)
         if "offscreen" in questions:
-            key = self._offscreen_key(state, target) if kind == "press_offscreen" else "0"
+            key = self._offscreen_key(state, target) if kind == "press_offscreen" else next(iter(questions["offscreen"].criteria))
             answers["offscreen"] = _answer(key, confidence)
         if "key" in questions:
-            answers["key"] = _answer(target if kind == "shortcut" else "x", confidence)
+            offered = questions["key"].criteria
+            key = target if kind == "shortcut" and target in offered else next(iter(offered))
+            answers["key"] = _answer(key, confidence)
         return answers
 
     @staticmethod
