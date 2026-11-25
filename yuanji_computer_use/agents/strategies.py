@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from ..actions import perform
 from ..bound import CaptureTimeout
 from ..config import settings
-from ..decide import Decision, decide, merged_margin, offscreen_records
+from ..decide import Decision, decide, offscreen_records
 from ..models import Item, Screen, same_screen, signature
 from ..platform_adapter import desktop
 from ..report import Log, ax_count, top
@@ -43,24 +43,19 @@ class PerceiveStrategy:
     def run(self, cfg, ctx, state: Session, sc: StepContext, log: Log) -> None:
         desktop.check_abort()
         cache = None if cfg.replay else state.parse_cache
-        if state.reuse_view and state.view is not None:
-            # 上一步的断言已经看过动作之后的画面。这里直接用，避免连拍两张。
-            state.reuse_view = False
-            screen, items = state.view
-        else:
-            try:
-                with phase(sc.timing, "capture"):
-                    screen = _runner().capture(
-                        cfg.image, cfg.app, cfg.url, ctx.browser, sc.timing, ahead=cache if cfg.read_ahead else None
-                    )
-            except CaptureTimeout:
-                # 截屏没有在时限内返回。这一步没有画面，不交给写手或接管；收尾仍会写 run.json。
-                log("capture timed out")
-                state.outcome = "capture timed out"
-                sc.keep_going = False
-                return
-            items = _runner().perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
-            state.view = (screen, items)
+        try:
+            with phase(sc.timing, "capture"):
+                screen = _runner().capture(
+                    cfg.image, cfg.app, cfg.url, ctx.browser, sc.timing, ahead=cache if cfg.read_ahead else None
+                )
+        except CaptureTimeout:
+            # 截屏没有在时限内返回。这一步没有画面，不交给写手或接管；收尾仍会写 run.json。
+            log("capture timed out")
+            state.outcome = "capture timed out"
+            sc.keep_going = False
+            return
+        items = _runner().perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
+        state.view = (screen, items)
         sc.screen = screen
         sc.items = items
         if not screen_moved(state, screen, items, log):
@@ -75,20 +70,13 @@ class DecideStrategy:
     """问分类器选一个动作。它说完成、没办法，或置信度不够时，这一步不再执行。"""
 
     def run(self, cfg, ctx, state: Session, sc: StepContext, log: Log) -> None:
-        # 没有计划时，上一屏没变化的那一次点击也在这里换按法，不再问分类器。
+        # 上一屏没变化的那一次辅助功能点击，改用鼠标点，不再问分类器。
         if _take_alt(state, sc, log):
             return
-        decision = _ask(cfg, ctx, state, sc, None)
+        decision = _ask(cfg, ctx, state, sc)
         _record_decision(state, sc, decision, log)
         if _refuses(cfg, state, decision, log):
             sc.keep_going = False
-            return
-        margin = _margin(decision, sc.items)
-        # 只拦第一次、还没有计划的那一步。分差不够就先规划，这一下不执行。
-        if _defer_first_step(state, margin):
-            sc.keep_going = False
-            state.followup = "plan"
-            log(f"  merged margin {margin:.2f} below {settings().plan_skip_margin}; planning instead of acting")
 
 
 class ActStrategy:
@@ -116,34 +104,16 @@ class MemoryStrategy:
     def run(self, state: Session, sc: StepContext, log: Log) -> None:
         state.history.append(sc.what)
         _remember_press(state, sc)
-        _remember_refused(state, sc)
         log(f"  did: {sc.what}")
         if repeating(state, sc.what, sc.decision.kind.choice == "wait", log):
             sc.keep_going = False
 
 
 def run_step(cfg, ctx, state: Session, step: int, log: Log) -> bool:
-    """分类器的一步。没有计划时仍是感知 → 决策 → 执行 → 记忆。
-
-    有计划时，决策换成候选空间，执行之后再感知一次并断言。`ensure` 只感知和断言。
-    写文件、计时和上报在中间件里。
-    """
+    """分类器的一步：感知 → 决策 → 执行 → 记忆。写文件、计时和上报在中间件里。"""
     from .middleware import StepPipeline
 
-    sub = _current(state)
-    if state.plan is None:
-        # 没有计划：感知、问分类器、执行、记历史。
-        pipeline = StepPipeline(PerceiveStrategy(), DecideStrategy(), ActStrategy(), MemoryStrategy())
-    elif sub is not None and sub.do == "ensure":
-        # ensure 只核对状态。决策和执行仍挂在流水线上，Gate 会在问分类器之前把这一步停掉。
-        pipeline = StepPipeline(
-            PerceiveStrategy(), DecideStrategy(), ActStrategy(), MemoryStrategy(), gate=GateStrategy(), verify=VerifyStrategy()
-        )
-    else:
-        # 有子目标：决策换成候选空间，动作之后再断言。子目标用完时，Gate 看到空位就去重规划。
-        pipeline = StepPipeline(
-            PerceiveStrategy(), SpaceDecide(), ActStrategy(), MemoryStrategy(), gate=GateStrategy(), verify=VerifyStrategy()
-        )
+    pipeline = StepPipeline(PerceiveStrategy(), DecideStrategy(), ActStrategy(), MemoryStrategy())
     return pipeline.run(cfg, ctx, state, StepContext(step=step), log)
 
 
@@ -233,14 +203,12 @@ def screen_moved(state: Session, screen: Screen, items: list[Item], log: Log) ->
             state.swapped.clear()
             state.alt = None
             state.last_press = None
-            # 屏外控件的拒绝只对动作那一屏有效。画面换了，旧的屏蔽不再适用。
-            state.refused_offscreen.clear()
         if not (unchanged and state.quiet):
             state.idle = state.idle + 1 if unchanged else 0
         if unchanged and acted and state.markable:
             state.history[-1] += UNCHANGED
         if unchanged and acted:
-            # 有没有计划都一样：同一条目在这一屏只换一次按法。
+            # 同一条目在这一屏只换一次按法。
             _offer_other_press(state, items, log)
     state.last = now
     if state.idle >= MAX_IDLE:
@@ -307,21 +275,8 @@ def answers(
     }
 
 
-def classifier_subgoal(state: Session) -> dict | None:
-    """当前子目标交给分类器的那一份。没有计划时是 None，状态包里就不出现这一项。"""
-    from .planner import subgoal_packet
-
-    sub = _current(state)
-    if sub is None:
-        return None
-    return subgoal_packet(sub)
-
-
-def _ask(cfg, ctx, state: Session, sc: StepContext, candidates: list[Item] | None) -> Decision:
-    """问一次分类器。candidates 是子目标的空间留下的条目，编号仍是全列表里的原编号。
-
-    有计划时把当前子目标的文字一并送去。没有计划时不传，状态包与原来一样。
-    """
+def _ask(cfg, ctx, state: Session, sc: StepContext) -> Decision:
+    """问一次分类器。"""
     with phase(sc.timing, "decide"):
         return decide(
             ctx.typesafe,
@@ -334,14 +289,11 @@ def _ask(cfg, ctx, state: Session, sc: StepContext, candidates: list[Item] | Non
             sc.tried,
             ctx.guidance,
             sc.picture,
-            candidates=candidates,
-            subgoal=classifier_subgoal(state),
-            banned_offscreen=banned_offscreen(state) or None,
         )
 
 
 def _record_decision(state: Session, sc: StepContext, decision: Decision, log: Log) -> None:
-    """把分类器的选择写进日志。有计划时和没有计划时用同一段，方便对照。"""
+    """把分类器的选择写进日志。"""
     screen, items = sc.screen, sc.items
     sc.decision = decision
     if decision.image_refused is not None:
@@ -368,308 +320,6 @@ def _record_decision(state: Session, sc: StepContext, decision: Decision, log: L
         log(f"  key ({decision.key.confidence:.2f}): {decision.key.choice}")
 
 
-def _margin(decision: Decision, items: list[Item]) -> float:
-    """合并同义候选之后的分差。只有真正要点的那一层才看条目分差。
-
-    按 Escape、回车、等待并不落到某个条目上。条目题分差再小，也不该因此放弃一个已经明确的按键。
-    """
-    if decision.clicking and decision.item is not None:
-        return merged_margin(decision.item, items)
-    if decision.pressing_offscreen and decision.offscreen is not None:
-        return _spread(decision.offscreen.probabilities)
-    if decision.shortcutting and decision.key is not None:
-        return _spread(decision.key.probabilities)
-    return _spread(decision.kind.probabilities)
-
-
-def _spread(probabilities: dict) -> float:
-    ranked = sorted(probabilities.values(), reverse=True)
-    second = ranked[1] if len(ranked) > 1 else 0.0
-    return (ranked[0] if ranked else 0.0) - second
-
-
-def _defer_first_step(state: Session, margin: float) -> bool:
-    """首步分差不够时，只跳过这一下，先规划。之后的步不再用这条。"""
-    return (
-        settings().planner
-        and state.plan is None
-        and state.step == 1
-        and state.planner_calls == 0
-        and margin < settings().plan_skip_margin
-    )
-
-
-def _current(state: Session):
-    """当前还没执行的子目标。计划用完或没有计划时是 None。"""
-    plan = state.plan
-    if plan is None or state.subgoal >= len(plan.subgoals):
-        return None
-    return plan.subgoals[state.subgoal]
-
-
-def _levels(space) -> list:
-    """候选空间的放宽：角色或控件加标签，然后只按标签。
-
-    有标签就停在这里，不再放到整屏。没有标签时才有整屏那一级。
-    """
-    from .planner import Space
-
-    out: list = []
-    narrowed = bool(space.role or space.controls or space.label)
-    if narrowed:
-        out.append(space)
-    if space.label and (space.role or space.controls):
-        out.append(Space(label=space.label))
-    if not space.label:
-        out.append(None)
-    return out
-
-
-def banned_offscreen(state: Session) -> set[str]:
-    """这一屏上被拒绝过的屏外控件。画面换了，screen_moved 会把记录清掉。"""
-    if state.last is None:
-        return set()
-    found: set[str] = set()
-    for sig, labels in state.refused_offscreen.items():
-        if same_screen(sig, state.last):
-            found |= set(labels)
-    return found
-
-
-class SpaceDecide:
-    """有计划时的决策。先按子目标的空间收窄候选，分差不够或一个都没有，就逐级放宽。
-
-    有标签时最多放到「只按标签」。这一屏一个都对不上，就丢掉计划去重规划，不再问整屏。
-    """
-
-    def run(self, cfg, ctx, state: Session, sc: StepContext, log: Log) -> None:
-        from .planner import Space, matching, offscreen_matching
-
-        sub = _current(state)
-        space = sub.space if sub is not None else None
-        # 屏外点击对的是屏外控件，不在屏上条目里。对不上就重规划；对得上就问这一次。
-        if sub is not None and sub.do == "press_offscreen" and space is not None and space.label:
-            nodes = sc.screen.offscreen if sc.screen is not None else []
-            if not offscreen_matching(space.label, nodes):
-                _label_missed(state, sc, log)
-                return
-            decision = _ask(cfg, ctx, state, sc, None)
-            _record_decision(state, sc, decision, log)
-            if _refuses(cfg, state, decision, log):
-                sc.keep_going = False
-            return
-        if space is not None and space.label and not matching(Space(label=space.label), sc.items):
-            _label_missed(state, sc, log)
-            return
-        decision = None
-        # 从窄到宽问。有标签时没有整屏那一级。某一级没有条目，或分差低于 decide_margin，就放宽再问。
-        for narrowed in _levels(space) if space is not None else [None]:
-            candidates = None if narrowed is None else matching(narrowed, sc.items)
-            if narrowed is not None and not candidates:
-                # 这一级一个控件都对不上，问了也没有选项。放宽，这次还没调用分类器。
-                state.widened += 1
-                log("  space matched nothing; widening")
-                continue
-            decision = _ask(cfg, ctx, state, sc, candidates)
-            if narrowed is None:
-                break
-            margin = _margin(decision, sc.items)
-            if margin >= settings().decide_margin:
-                break
-            state.widened += 1
-            log(f"  merged margin {margin:.2f} below {settings().decide_margin}; widening")
-        if decision is None:
-            # 有标签却仍然没有决策，不能退到整屏。没有标签的子目标才问全部候选。
-            if space is not None and space.label:
-                _label_missed(state, sc, log)
-                return
-            decision = _ask(cfg, ctx, state, sc, None)
-        _record_decision(state, sc, decision, log)
-        if _refuses(cfg, state, decision, log):
-            sc.keep_going = False
-
-
-def _label_missed(state: Session, sc: StepContext, log: Log) -> None:
-    """标签在这一屏对不上。记下未知，丢掉计划，交给重规划。"""
-    _note(state, "unknown")
-    state.plan = None
-    state.followup = "plan"
-    sc.keep_going = False
-    log("  label matched nothing on this screen; replanning")
-
-
-class GateStrategy:
-    """动作之前核对新画面。目标已成立就结束；只有 ensure 在动作前求值；换按法不再问分类器。"""
-
-    def run(self, cfg, ctx, state: Session, sc: StepContext, log: Log) -> None:
-        sub = _current(state)
-        if _goal_true(state, sc):
-            # 目标状态已经在这张画面上成立。不再动作，交给写手收尾。
-            _finish_goal(state, sc, log)
-            return
-        if sub is None:
-            # 计划还在、子目标已经走完。去重规划，不在没有子目标时继续问分类器。
-            if state.plan is not None:
-                state.followup = "plan"
-                sc.keep_going = False
-            return
-        if sub.do == "ensure":
-            # 点击类子目标不在这里求值。目标控件往往一开始就在画面上，提前判成立会把点击跳掉。
-            verdict = _subgoal_verdict(state, sc)
-            if verdict == "true":
-                # 还没动作，条件已经成立。跳过，下一步仍看这张画面。
-                _advance(state, "true", log, skipped=True)
-                state.followup = "policy"
-            elif verdict == "false":
-                # ensure 只负责检查。为假就没有按法可换，丢掉计划重来。
-                state.followup = "plan"
-            else:
-                # 未知不当成失败。ensure 没有别的动作可做，进入下一个子目标。
-                _advance(state, "unknown", log, skipped=True)
-                state.followup = "policy"
-            sc.keep_going = False
-            return
-        # 上一步没改画面，这一步换按法。条目还在就直接按，不再问分类器；条目没了就照常决策。
-        _take_alt(state, sc, log)
-
-
-class VerifyStrategy:
-    """动作之后再感知一次，对着新画面断言。这次画面留给下一步复用。"""
-
-    def run(self, cfg, ctx, state: Session, sc: StepContext, log: Log) -> None:
-        if not sc.what:
-            return
-        # 屏外点击被拒之后，不要把它当成「点了没变化、换一种按法」。规划开着就马上重规划。
-        if sc.what.startswith("press_offscreen refused") and settings().planner:
-            _note(state, "unknown")
-            state.plan = None
-            state.last_press = None
-            state.followup = "plan"
-            log("  off-screen press refused; replanning")
-            return
-        _recapture(cfg, ctx, state, sc)
-        if _goal_true(state, sc):
-            _finish_goal(state, sc, log)
-            return
-        sub = _current(state)
-        if sub is None:
-            return
-        verdict = _subgoal_verdict(state, sc)
-        if verdict == "true":
-            # 断言成立，进入下一个子目标。
-            _advance(state, "true", log, skipped=False)
-            state.followup = "policy"
-            return
-        # fresh 是动作之后的指纹，last 是动作之前的。文字容差在 same_screen 里，控件状态不容差。
-        changed = state.fresh is not None and state.last is not None and not same_screen(state.fresh, state.last)
-        item = _acted_item(sc)
-        if verdict == "unknown" and changed:
-            # 画面变了，新状态却读不出来。不当失败，也不当成功，下一个子目标对着新画面继续。
-            _advance(state, "unknown", log, skipped=False)
-            state.followup = "policy"
-            return
-        if item is not None and item.index not in state.swapped and verdict in {"false", "unknown"} and not changed:
-            # 换按法在下一步的 screen_moved 里做，有没有计划走同一条。这里先不重规划。
-            state.followup = "policy"
-            return
-        if item is not None and item.index in state.swapped:
-            # 两种按法都试过了。记进已尝试，下一次分类器不要再选它们。
-            _extend_tried(state, item)
-            state.alt = None
-            state.last_press = None
-        # 画面变了条件仍不成立，或换过按法仍不成立：剩下的子目标是按旧画面写的，丢掉并重规划。
-        _note(state, verdict)
-        state.plan = None
-        state.last_press = None
-        state.followup = "plan"
-        log(f"  subgoal did not hold ({verdict}); replanning")
-
-
-def _recapture(cfg, ctx, state: Session, sc: StepContext) -> None:
-    """再截一次。last 保持动作前的指纹，下一步的 screen_moved 才能看出这一下改没改画面。"""
-    cache = None if cfg.replay else state.parse_cache
-    screen = _runner().capture(cfg.image, cfg.app, cfg.url, ctx.browser, sc.timing)
-    items = _runner().perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
-    state.view = (screen, items)
-    state.reuse_view = True
-    state.fresh = signature(screen, items)
-    sc.screen = screen
-    sc.items = items
-
-
-def _goal_true(state: Session, sc: StepContext) -> bool:
-    """目标状态在当前画面上成立。未知不算成立，macOS 读不到开关时就是未知。"""
-    plan = state.plan
-    if plan is None:
-        return False
-    from .planner import evaluate
-
-    return evaluate(plan.goal_state.require, plan.goal_state.space, sc.items) == "true"
-
-
-def _finish_goal(state: Session, sc: StepContext, log: Log) -> None:
-    state.goal_state_held = True
-    state.outcome = "done"
-    state.last_press = None
-    state.followup = "writer"
-    sc.keep_going = False
-    log("  goal state holds")
-
-
-def _subgoal_verdict(state: Session, sc: StepContext) -> str:
-    sub = _current(state)
-    if sub is None:
-        return "unknown"
-    from .planner import evaluate
-
-    return evaluate(sub.verify, sub.space, sc.items)
-
-
-def _advance(state: Session, verdict: str, log: Log, *, skipped: bool) -> None:
-    sub = _current(state)
-    state.verdicts.append({"do": sub.do, "verdict": verdict})
-    state.executed_subgoals += 1
-    state.subgoal += 1
-    state.last_press = None
-    if skipped:
-        # 跳过没有动作。下一步看同一张画面时，不要把它算成一次没效果的操作。
-        state.quiet = True
-        log(f"  subgoal already {verdict}; skipping")
-
-
-def _note(state: Session, verdict: str) -> None:
-    """重规划要带上这一步的结果。子目标作废，下标留给下一份计划从 0 开始。"""
-    sub = _current(state)
-    if sub is None:
-        return
-    state.verdicts.append({"do": sub.do, "verdict": verdict})
-    state.executed_subgoals += 1
-
-
-def _remember_refused(state: Session, sc: StepContext) -> None:
-    """屏外点击被拒一次，这一屏就不再把这个控件交给分类器或规划器。
-
-    规划开着时马上重规划。没开规划，就只屏蔽，其余和原来一样。
-    """
-    if not sc.what.startswith("press_offscreen refused"):
-        return
-    label = _refused_offscreen_label(sc)
-    if label and state.last is not None:
-        state.refused_offscreen.setdefault(state.last, set()).add(label)
-    if settings().planner:
-        state.followup = "plan"
-
-
-def _refused_offscreen_label(sc: StepContext) -> str | None:
-    """被拒的是分类器选中的那个屏外控件。序号对不上时没有标签可记。"""
-    decision = sc.decision
-    choice = getattr(getattr(decision, "offscreen", None), "choice", None)
-    nodes = sc.screen.offscreen if sc.screen is not None else []
-    if isinstance(choice, str) and choice.isdigit() and int(choice) < len(nodes):
-        return nodes[int(choice)].label
-    return None
-
-
 def _remember_press(state: Session, sc: StepContext) -> None:
     """点过的条目先记着。下一屏没变时，screen_moved 换成另一种按法。不是点击就清掉。"""
     item = _acted_item(sc)
@@ -682,8 +332,7 @@ def _remember_press(state: Session, sc: StepContext) -> None:
 def _offer_other_press(state: Session, items: list[Item], log: Log) -> None:
     """同一屏同一条目只换一次按法。两种都试过就记进已尝试，交给分类器另选。
 
-    没有计划时，只把「选中了、画面却没变」换成鼠标点击。普通点击没变化仍按原来的停顿规则，
-    不再自动改走无障碍，否则每一次没效果的点击都会多出一步。
+    只把「辅助功能选中了、画面却没变」换成鼠标点击。普通点击没变化仍按原来的停顿规则。
     """
     press = state.last_press
     state.last_press = None
@@ -697,7 +346,7 @@ def _offer_other_press(state: Session, items: list[Item], log: Log) -> None:
         state.alt = None
         return
     via_accessibility = "via accessibility" in press["what"]
-    if not via_accessibility and state.plan is None:
+    if not via_accessibility:
         return
     state.swapped.add(index)
     state.alt = {"index": index, "method": _other_method(press["what"]), "text": press["text"]}

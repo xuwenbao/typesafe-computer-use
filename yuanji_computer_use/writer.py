@@ -587,74 +587,6 @@ HOST_PROPERTIES = {
 }
 
 
-PLAN_SYSTEM = (
-    "Turn the user's goal into a checkable state and at most three subgoals for the screen in front "
-    "of you. You do not click. Each subgoal names an action the classifier already has, plus the "
-    "control to find and the state that shows it worked. do is one of click, open, press_offscreen, "
-    "scroll, press_enter, press_escape, go_back, wait, shortcut, or ensure. shortcut also sets key "
-    "to one of x, c, v, or a (cut, copy, paste, select all). ensure only checks. space.role is "
-    "a short role such as button or checkbox. space.controls is a UI Automation pattern such as "
-    "toggle. space.label is a case-insensitive regular expression matched against the control and "
-    "the rest of its row. verify and require use checked, expanded, current, and exists. Either may "
-    "also set label, read the same way as space.label, to assert a different control. "
-    "goal_state.require must be a state that can be read on a control: checked, expanded, or current, "
-    "or exists together with a label. A click, open, or press_offscreen subgoal must set space.label. "
-    "Its verify must be something that changes because of the action: a state such as checked, exists "
-    "set to false, or exists on a different control named by verify.label. Do not verify only that the "
-    "control you are about to use already exists. The first subgoal's label has to match a control on "
-    "the screen in front of you; a press_offscreen label matches an off-screen control. When rejected "
-    "is in the packet, the previous plan was sent back for those reasons. Write a new plan that fixes "
-    "every one of them."
-)
-
-PLAN_PROPERTIES = {
-    "goal_state": {"type": "object"},
-    "subgoals": {"type": "array"},
-}
-
-
-def compose_plan(
-    writer: Writer,
-    goal: str,
-    screen,
-    items: list,
-    history: list[str],
-    guidance,
-    previous: list | None = None,
-    rejected: list[str] | None = None,
-    banned_offscreen: set[str] | None = None,
-):
-    """一份计划。读不成、动作不在名单里、正则编译不了，或子目标超过 3 个，就返回空计划。
-
-    `rejected` 是上一份没通过检查的原因，原样放进状态包。`banned_offscreen` 是这一屏被拒过的屏外控件，
-    不再交给规划器。
-    """
-    from .agents.planner import plan_from
-    from .decide import base_state
-
-    packet = base_state(goal, screen, items, history, None, guidance, banned_offscreen=banned_offscreen)
-    # 分类器的状态包再加上每条的角色和控件状态。previous_subgoals 让下一次规划看见已经断言过的结果。
-    packet["items"] = [
-        {
-            "i": it.index,
-            "text": it.text,
-            "role": it.role,
-            **({"checked": it.checked} if it.checked is not None else {}),
-            **({"expanded": it.expanded} if it.expanded is not None else {}),
-            **({"current": it.current} if it.current is not None else {}),
-        }
-        for it in items
-    ]
-    packet["previous_subgoals"] = list(previous or [])
-    if rejected:
-        packet["rejected"] = list(rejected)
-    try:
-        data = _structured(writer, PLAN_SYSTEM, packet, PLAN_PROPERTIES, 800)
-    except WriterError:
-        return plan_from({})
-    return plan_from(data)
-
-
 def compose_host(writer: Writer, goal: str, windows: list[tuple[str, str, str]], frontmost: str) -> dict:
     """Which application to put in front before the classifier runs. One of ready, focus, or launch."""
     packet = {
@@ -754,7 +686,6 @@ def compose_answer(
     picture: bool = True,
     denied: list[str] | None = None,
     driver_said_done: str = "",
-    goal_state_held: bool = False,
 ) -> Answer:
     """What to tell the user now that the classifier has stopped, and how the run could go on.
 
@@ -784,7 +715,6 @@ def compose_answer(
         ],
         **({"earlier_screens": earlier} if earlier else {}),
         **({"driver_said_done": driver_said_done} if driver_said_done else {}),
-        **({"goal_state_held": True} if goal_state_held else {}),
     }
     data = _structured(
         writer,

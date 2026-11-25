@@ -92,8 +92,8 @@ def _scrub(value):
     return value
 
 
-# Planning records an empty plan and zero counts even when the planner never ran. The recorded
-# runs predate those keys, so the comparison ignores exactly these and still requires them.
+# Older runs recorded these keys. A replay drops them before comparing, and does not
+# require them: the planner that wrote them is gone, and the fixtures stay as recorded.
 _PLAN_KEYS = {"plan", "verdicts", "widened", "replans", "planner_calls", "planner_seconds"}
 
 
@@ -110,7 +110,6 @@ def _snapshot(out: Path, state) -> dict:
         else:
             files[path.name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
     summary = json.loads((out / "run.json").read_text())
-    assert set(summary) >= _PLAN_KEYS
     return {
         "outcome": state.outcome,
         "route": state.route,

@@ -19,7 +19,7 @@ def test_building_the_agents_does_not_load_the_model_sdk():
     four constructions do not change whether it is loaded.
     """
     loaded = "agents" in sys.modules
-    for name in ("host", "policy", "plan", "writer", "driver"):
+    for name in ("host", "policy", "writer", "driver"):
         agent = AgentFactory.create(name)
         assert agent.name == name
     assert ("agents" in sys.modules) is loaded

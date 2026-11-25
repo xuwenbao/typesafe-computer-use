@@ -349,8 +349,7 @@ names the statuses and the only edges between them:
 | from | to |
 | --- | --- |
 | `HOST` | `POLICY` |
-| `POLICY` | `POLICY`, `PLAN`, `WRITER`, `FINISH` |
-| `PLAN` | `POLICY`, `WRITER` |
+| `POLICY` | `POLICY`, `WRITER`, `FINISH` |
 | `WRITER` | `POLICY`, `DRIVER`, `FINISH` |
 | `DRIVER` | `FINAL_ANSWER`, `FINISH` |
 | `FINAL_ANSWER` | `FINISH` |
@@ -358,8 +357,7 @@ names the statuses and the only edges between them:
 `HOST` is `agents/host.py`: it only brings the goal's app forward. `POLICY` is
 `agents/policy.py`: one classifier step, or `WRITER` when that step stops or
 `steps` is used up. A step that used up the budget is not handed back to the
-classifier. `PLAN` is `agents/plan.py`: one plan, then back to the classifier.
-`WRITER` is `agents/writer.py`: the hand-off above. `DRIVER` is
+classifier. `WRITER` is `agents/writer.py`: the hand-off above. `DRIVER` is
 `agents/driver.py`: the takeover. It loads the model SDK only when a takeover
 actually starts. `FINAL_ANSWER` asks the writer once more, then `FINISH`.
 Abort stays outside the table.
@@ -375,53 +373,6 @@ the step even when a stage raises. `StepFiles` writes `step-NNN-raw.png`,
 the session window what was done. `StepLog` writes the file line and the
 timing line. The session itself is `agents/session.py`. `runner.py` keeps
 `RunConfig`, `run`, and `run.json`.
-
-## Planning
-
-`CLICKER_PLANNER` defaults to on. `0` leaves every step as the four stages
-above. A plan is a goal state plus at most three subgoals
-(`agents/planner.py`). The whole run executes at most `CLICKER_MAX_SUBGOALS`
-(5). A new plan is cut to whatever room is left.
-
-The first action skips planning when the merged margin is at least
-`CLICKER_PLAN_SKIP_MARGIN` (0.3). That skip is only for that action. A later
-stop for low confidence, nothing that helps, or a stall still plans while
-replans remain. `done` and the step limit always go to the writer.
-
-`PLAN` calls `compose_plan` and writes `step-NNN-plan.json`. A reply that is
-not a plan (bad JSON, an unknown action, a bad label pattern, or more than
-three subgoals) is not retried. The history gains `planner: unusable plan`
-and the writer answers. The first plan is not a replan. `CLICKER_MAX_REPLANS`
-(2) later plans are allowed, so a run plans at most three times. After that
-the writer answers. `run.json` records the last plan, each subgoal's verdict,
-how often the candidate space was widened, the replan count, and the planner's
-calls and seconds. With the planner off those are null or zero.
-
-On a plan, the step reads the new screen before it acts. The goal state is
-checked there. True ends the run (`outcome` `done`) and the writer's packet
-carries `goal_state_held: true`. Unknown does not count as true, and on macOS
-a switch's checked state is always unknown. A subgoal whose condition already
-holds is skipped, including `ensure`, which only checks. A false `ensure`
-discards the rest of the plan and plans again.
-
-Otherwise the subgoal's space narrows the candidates, then the classifier
-decides. The space is a preference. It widens from role or controls plus the
-label, to the label alone, to every candidate. A level that matches nothing,
-or whose merged margin is below `CLICKER_DECIDE_MARGIN` (0.15), widens. The
-last level uses the same confidence threshold as a step with no plan. The
-classifier is not told which of its actions to pick. `do` only chooses how a
-failed press is retried.
-
-The action is judged on a second capture, not on the list from before the
-click. That capture is reused for the next step. The subgoal is true: advance.
-It is false and the fingerprint is unchanged, and this item has not already
-been pressed the other way on this screen: the next step presses the same item
-by the other method (pointer or accessibility) and does not ask the classifier.
-One swap per item per screen. The swap failed, or the fingerprint changed and
-the condition is still false: the rest of the plan was written for the old
-screen and is dropped, and the run plans again with each verdict so far.
-Unknown after a fingerprint change is not a failure and not success. The next
-subgoal matches the new screen.
 
 ## Who did the work
 

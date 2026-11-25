@@ -2,8 +2,7 @@
 
 几个角色按状态表交接，主循环本身不再决定下一步交给谁：
 - 宿主（host）：真操作开始前，只负责把目标应用打开或调到前台，然后把同一条目标交给分类器。
-- 分类器（policy）：TypeSafe 模型，每一步从固定选项里挑一个动作。有计划时只在当前子目标的候选里选。
-- 规划（plan）：分类器分差太小，或低置信、没有可用动作、卡住时，把目标拆成带验收条件的子目标，再交回分类器。
+- 分类器（policy）：TypeSafe 模型，每一步从固定选项里挑一个动作。
 - 写手（writer）：大语言模型，分类器停下时读屏幕、回答用户，必要时给分类器一个“焦点”让它继续。
 - 接管（driver）：分类器彻底做不下去时，由更强的模型一步一步接着操作。
 """
@@ -19,7 +18,6 @@ from typesafe_sdk import TypeSafeClient
 
 from .actions import Context, forget_clipboard
 from .agents.base import AgentFactory
-from .agents.plan import dump_plan
 from .agents.session import Handoff, Session
 from .agents.status import Status, allows
 from .agents.strategies import (
@@ -85,7 +83,6 @@ STOPPED = {
         "and the focus given each time did not help, so the run ends with this answer"
     ),
     "step limit": "the run used every step it was allowed",
-    "replanned": "the planner used its replans without the goal state holding",
 }
 
 
@@ -179,13 +176,6 @@ def run(cfg: RunConfig, ctx_factory) -> RunState:
             "driver_calls": state.driver_calls,
             "driver_tool_calls": state.driver_tool_calls,
             "history": state.history,
-            # 规划层的记录。规划关掉时 plan 是 null，次数和耗时是 0。last_plan 在计划被清掉后仍留着。
-            "plan": dump_plan(state.last_plan),
-            "verdicts": state.verdicts,  # 已执行子目标的断言：true、false、unknown
-            "widened": state.widened,  # 候选空间放宽的次数
-            "replans": state.replans,  # 第一次规划不算
-            "planner_calls": state.planner_calls,
-            "planner_seconds": round(state.planner_seconds, 3),
             "config": {k: str(v) for k, v in asdict(cfg).items()},
         }
         (cfg.out / "run.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -428,7 +418,6 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
         state.guidance,
         earlier_stops,
         can_ask,
-        goal_state_held=state.goal_state_held,
     )
     # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准。
     denied = denied_listed_names(f"{answer.text}\n{answer.focus}", answer.achieved, items)
@@ -450,7 +439,6 @@ def review(cfg: RunConfig, ctx: Context, state: RunState, stopped: str, can_ask:
         can_ask,
         picture=False,
         denied=denied,
-        goal_state_held=state.goal_state_held,
     )
 
 

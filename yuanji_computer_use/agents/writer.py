@@ -19,9 +19,6 @@ class WriterAgent:
 
         cfg, ctx, log = session.cfg, session.ctx, session.log
         if hand_off(cfg, ctx, session, session.step, log):
-            # 写手看过画面，说目标还没完成。留下的断言不能把下一步再判成完成，否则这个提示做不出动作。
-            session.plan = None
-            session.goal_state_held = False
             session.ctx = replace(ctx, guidance=session.guidance)
             return Status.POLICY
         if wants_driver(cfg, ctx, session, log):

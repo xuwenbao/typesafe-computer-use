@@ -16,7 +16,7 @@ from ..report import annotate, render_payload
 from ..timing import format_timing
 from ..windows_session import report_action
 from .session import Session, StepContext
-from .strategies import answers, classifier_subgoal
+from .strategies import answers
 
 
 class StepMiddleware(Protocol):
@@ -83,7 +83,6 @@ class StepFiles:
                 ctx.guidance,
                 sc.picture,
                 sent.name,
-                classifier_subgoal(session),
             ),
             encoding="utf-8",
         )
@@ -129,27 +128,22 @@ class StepLog:
 class StepPipeline:
     """按固定顺序跑四个阶段，中间件包在外面。"""
 
-    def __init__(self, perceive, decide, act, memory, middleware=None, gate=None, verify=None):
+    def __init__(self, perceive, decide, act, memory, middleware=None):
         self.perceive = perceive
         self.decide = decide
         self.act = act
         self.memory = memory
-        self.gate = gate
-        self.verify = verify
         self.middleware = middleware if middleware is not None else [Timing(), StepFiles(), SessionReport(), StepLog()]
 
     def run(self, cfg, ctx, session: Session, sc: StepContext, log) -> bool:
         for mw in self.middleware:
             mw.before(session, sc)
         try:
-            # 感知之后才有画面。有计划时，gate 在问分类器之前核对目标并处理换按法；
-            # verify 在动作之后再读一次。换按法把 skip_decide 置上，这一步不再问分类器。
+            # 感知之后才有画面。换按法把决策停在「直接再按一次」，不再问分类器。
             self.perceive.run(cfg, ctx, session, sc, log)
             opened = sc.prefix is not None
             if opened:
                 self._files().open_request(cfg, ctx, session, sc)
-                if self.gate is not None:
-                    self.gate.run(cfg, ctx, session, sc, log)
                 if sc.keep_going and not sc.skip_decide:
                     self.decide.run(cfg, ctx, session, sc, log)
                 if sc.decision is not None:
@@ -158,11 +152,6 @@ class StepPipeline:
                     self.act.run(cfg, ctx, session, sc, log)
                 if sc.what:
                     self.memory.run(session, sc, log)
-                if self.verify is not None and sc.what:
-                    # 执行把画面清掉了。先等画面稳住，再断言，这样读到的是动作之后的状态。
-                    if session.view is None:
-                        loop.settle(sc.screen.image, cfg.delay)
-                    self.verify.run(cfg, ctx, session, sc, log)
         except Exception as exc:
             for mw in self.middleware:
                 mw.on_error(session, sc, exc)

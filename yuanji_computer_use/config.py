@@ -55,11 +55,6 @@ class Settings(BaseSettings):
     steps: int = Field(100, ge=1)  # 一轮最多走多少步。--steps 优先
     delay: float = Field(2.0, ge=0)  # 每一步做完后等待的秒数。--delay 优先
     handoffs: int = Field(10, ge=0)  # 写手把停住的运行交回分类器的次数。0 表示每次停下都是终点。--handoffs 优先
-    planner: bool = True  # 独立规划。CLICKER_PLANNER=0 关掉，分类器按原来的方式一步一步走
-    plan_skip_margin: float = Field(0.3, ge=0, le=1)  # 首步合并分差达到这个就不再为这一步规划
-    decide_margin: float = Field(0.15, ge=0, le=1)  # 合并分差低于这个就放宽候选再问一次
-    max_replans: int = Field(2, ge=0)  # 第一次规划不算。停下之后最多再规划这么多次
-    max_subgoals: int = Field(5, ge=1)  # 一次运行里子目标的累计上限。多出来的截掉
 
     browser: str = "Google Chrome"  # 用来干活的浏览器
     email: str | None = None  # 有值才提供 type_email。把这个地址填进聚焦的文本框

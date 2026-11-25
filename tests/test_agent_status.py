@@ -7,11 +7,8 @@ from yuanji_computer_use.agents.status import TRANSITIONS, Status, allows
 LEGAL = (
     (Status.HOST, Status.POLICY),
     (Status.POLICY, Status.POLICY),
-    (Status.POLICY, Status.PLAN),
     (Status.POLICY, Status.WRITER),
     (Status.POLICY, Status.FINISH),
-    (Status.PLAN, Status.POLICY),
-    (Status.PLAN, Status.WRITER),
     (Status.WRITER, Status.POLICY),
     (Status.WRITER, Status.DRIVER),
     (Status.WRITER, Status.FINISH),
@@ -21,8 +18,8 @@ LEGAL = (
 )
 
 
-def test_the_table_has_thirteen_edges():
-    assert sum(len(targets) for targets in TRANSITIONS.values()) == 13
+def test_the_table_has_ten_edges():
+    assert sum(len(targets) for targets in TRANSITIONS.values()) == 10
     assert all(allows(source, target) for source, target in LEGAL)
 
 

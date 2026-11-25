@@ -542,7 +542,6 @@ class FakeWriter:
         submit: bool = False,
         drives: list | None = None,
         host_fails: bool = False,
-        plans: list | None = None,
     ):
         self.requests: list[dict] = []
         self.text = text
@@ -551,9 +550,7 @@ class FakeWriter:
         self.reviews = list(reviews or [])
         self.drives = list(drives or [])
         self.host_fails = host_fails
-        self.plans = list(plans or [])
         self.packets: list[dict] = []  # the packet of every answer asked for, in order
-        self.plan_packets: list[dict] = []  # the packet of every plan asked for, in order
         self.drive_packets: list[dict] = []  # the packet of every driver action asked for, in order
         self.messages = SimpleNamespace(create=self._create)
 
@@ -578,10 +575,6 @@ class FakeWriter:
                 "missing": [],
                 **scripted,
             }
-        elif asked == {"goal_state", "subgoals"}:
-            self.plan_packets.append(packet)
-            scripted = self.plans.pop(0) if self.plans else {"goal_state": {}, "subgoals": []}
-            reply = scripted(packet) if callable(scripted) else scripted
         elif asked == {"action", "executable", "id", "reason"}:
             if self.host_fails:
                 raise WriterError("the host could not be asked")
@@ -606,16 +599,12 @@ def drive(
     driver_steps: int = 0,
     act: bool = True,
     capture: Callable | None = None,
-    planner: bool = False,
 ) -> Session:
     """Run the real loop against the world until it stops itself. `world.fake` holds the classifier.
 
     `replies` are what the user types when the writer asks, in order; with none, nobody is at the
     terminal and the writer is told so. `world.asked` collects the questions that were put.
     """
-    # The planner is off unless a scenario turns it on. A stop would otherwise ask for a plan,
-    # and the stand-in writer rejects a schema it was not given.
-    monkeypatch.setenv("CLICKER_PLANNER", "1" if planner else "0")
     world.install(monkeypatch)
     if capture is not None:
         monkeypatch.setattr(runner, "capture", capture)
