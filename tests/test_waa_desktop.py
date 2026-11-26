@@ -303,26 +303,26 @@ def test_nothing_can_be_pressed_through_the_tree(tmp_path, monkeypatch):
 
 
 def test_element_text_uses_the_tree_value_and_the_script_reads_text_then_value():
-    from yuanji_computer_use.waa.desktop import read_text_code
+    from yuanji_computer_use.waa.desktop import WAADesktop
 
     desktop = over()
     assert desktop.element_text({"name": "Editor", "role": "AXTextArea", "value": "hello"}) == "hello"
     assert desktop.element_text({"name": "Editor"}) is None
     assert desktop.element_text(object()) is None
     assert desktop.actions == []
-    code = read_text_code("Editor", 50020)
+    code = WAADesktop.read_text_code("Editor", 50020)
     assert "IUIAutomationTextPattern" in code
     assert "CurrentValue" in code
 
 
 def test_same_name_elements_are_chosen_by_the_item_box():
-    from yuanji_computer_use.waa.desktop import _operate_element
+    from yuanji_computer_use.waa.desktop import WAADesktop
 
-    nearest = _operate_element("Notifications", 50003, "toggle", None, (100.0, 200.0, 40.0, 20.0))
+    nearest = WAADesktop._operate_element("Notifications", 50003, "toggle", None, (100.0, 200.0, 40.0, 20.0))
     assert "FindAll" in nearest
     assert "CurrentBoundingRectangle" in nearest
     assert "120.0" in nearest and "210.0" in nearest
-    first = _operate_element("Sound", None, "toggle", None)
+    first = WAADesktop._operate_element("Sound", None, "toggle", None)
     assert "FindFirst" in first and "FindAll" not in first
 
     handed: list = []

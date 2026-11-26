@@ -71,7 +71,7 @@ def test_the_agent_module_reexports_jev():
     imports = [node for node in ast.walk(module) if isinstance(node, ast.ImportFrom)]
     assert {node.module for node in imports} == {"yuanji_computer_use.waa.agent"}
     names = sorted(alias.name for node in imports for alias in node.names)
-    assert names == ["JevAgent", "browser_for"]
+    assert names == ["JevAgent", "WaaRun"]
 
 
 def test_a_request_with_no_timeout_waits_ten_seconds_to_connect_and_three_minutes_to_read():

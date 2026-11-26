@@ -9,7 +9,7 @@ from fastmcp import Client
 from helper_fakes import FakeDesktop
 
 from yuanji_computer_use.helper import desk_lock, front
-from yuanji_computer_use.helper.approvals import Gate, host_apps
+from yuanji_computer_use.helper.approvals import Gate
 from yuanji_computer_use.helper.service import Caller, Service
 from yuanji_computer_use.models import Abort
 from yuanji_computer_use.platforms.adapter import desktop, using
@@ -75,7 +75,7 @@ def local_with(service) -> front.Local:
 
 def test_the_server_lists_every_tool(jev_home):
     async def go():
-        async with Client(front.build_server(local_with(Service(desk_lock=OpenLock())))) as client:
+        async with Client(front.Front.build_server(local_with(Service(desk_lock=OpenLock())))) as client:
             return {tool.name for tool in await client.list_tools()}
 
     assert run(go()) == TOOLS
@@ -84,7 +84,7 @@ def test_the_server_lists_every_tool(jev_home):
 
 def test_an_ordinary_app_is_driven_with_no_question(jev_home, fake_desk):
     async def go():
-        server = front.build_server(local_with(Service(desk_lock=OpenLock())))
+        server = front.Front.build_server(local_with(Service(desk_lock=OpenLock())))
         async with Client(server) as client:
             return await client.call_tool("press_key", {"key": "return"})
 
@@ -97,7 +97,7 @@ def test_a_never_driven_app_is_a_tool_error_and_gets_no_input(jev_home, fake_des
     fake_desk.front = "cmd.exe"
 
     async def go():
-        server = front.build_server(local_with(Service(desk_lock=OpenLock())))
+        server = front.Front.build_server(local_with(Service(desk_lock=OpenLock())))
         async with Client(server) as client:
             return await client.call_tool("press_key", {"key": "return"}, raise_on_error=False)
 
@@ -109,10 +109,10 @@ def test_a_never_driven_app_is_a_tool_error_and_gets_no_input(jev_home, fake_des
 
 def test_the_host_agent_is_never_driven(jev_home, fake_desk):
     fake_desk.front = "claude.exe"
-    caller = Caller(Gate(host_apps(["claude.exe"])))
+    caller = Caller(Gate(Gate.host_apps(["claude.exe"])))
 
     async def go():
-        server = front.build_server(front.Local(service=Service(desk_lock=OpenLock()), caller=caller))
+        server = front.Front.build_server(front.Local(service=Service(desk_lock=OpenLock()), caller=caller))
         async with Client(server) as client:
             return await client.call_tool("click", {"x": 1.0, "y": 2.0}, raise_on_error=False)
 
@@ -138,7 +138,7 @@ def test_cancelling_a_call_stops_it_at_the_next_input(jev_home, fake_desk, monke
     monkeypatch.setattr(service, "_frontmost_app", long_call)
 
     async def go():
-        server = front.build_server(local_with(service))
+        server = front.Front.build_server(local_with(service))
         async with Client(server) as client:
             task = asyncio.create_task(client.call_tool("frontmost_app", {}))
             while not started.is_set():
@@ -158,7 +158,7 @@ def test_cancelling_a_call_stops_it_at_the_next_input(jev_home, fake_desk, monke
 
 def test_a_taken_desktop_lock_is_busy_and_sends_no_input(jev_home, fake_desk):
     async def go():
-        server = front.build_server(local_with(Service(desk_lock=ClosedLock())))
+        server = front.Front.build_server(local_with(Service(desk_lock=ClosedLock())))
         async with Client(server) as client:
             return await client.call_tool("frontmost_app", {}, raise_on_error=False)
 
@@ -177,7 +177,7 @@ def test_a_print_during_a_call_goes_to_the_log_and_not_the_reply(jev_home, fake_
     monkeypatch.setattr(service, "_frontmost_app", printing)
 
     async def go():
-        server = front.build_server(local_with(service))
+        server = front.Front.build_server(local_with(service))
         async with Client(server) as client:
             return await client.call_tool("frontmost_app", {})
 
@@ -202,13 +202,13 @@ def test_the_service_is_created_on_the_first_call(jev_home, fake_desk, monkeypat
             return None
 
     monkeypatch.setattr(desk_lock, "DeskLock", Marker)
-    monkeypatch.setattr(front, "ancestors", lambda: ["python.exe"])
+    monkeypatch.setattr(front.Front, "ancestors", staticmethod(lambda: ["python.exe"]))
     local = front.Local()
     assert local._service is None
     assert made == []
 
     async def go():
-        async with Client(front.build_server(local)) as client:
+        async with Client(front.Front.build_server(local)) as client:
             return await client.call_tool("frontmost_app", {})
 
     result = run(go())

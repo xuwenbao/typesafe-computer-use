@@ -89,18 +89,18 @@ from yuanji_computer_use.platforms import macos, windows, windows_session  # noq
 def fresh_settings(monkeypatch):
     """Each test starts from a fresh settings singleton. Changing the environment through
     monkeypatch drops it, so the next `settings()` reads the new value. Tests that change
-    `os.environ` directly call `config.reset_settings()` themselves."""
-    config.reset_settings()
+    `os.environ` directly call `config.Config.reset_settings()` themselves."""
+    config.Config.reset_settings()
     for name in ("setenv", "delenv"):
         original = getattr(monkeypatch, name)
 
         def changed(*args, _original=original, **kwargs):
             _original(*args, **kwargs)
-            config.reset_settings()
+            config.Config.reset_settings()
 
         setattr(monkeypatch, name, changed)
     yield
-    config.reset_settings()
+    config.Config.reset_settings()
 
 
 @pytest.fixture(autouse=True)
@@ -185,7 +185,7 @@ def no_real_machine(monkeypatch):
 
     # The desktop mutex: a test that needs one passes its own lock. Creating the real one is
     # the only call here that would touch Windows.
-    monkeypatch.setattr(helper_desk, "open_mutex", refuse("helper.desk_lock.open_mutex"))
+    monkeypatch.setattr(helper_desk.DeskLock, "open_mutex", staticmethod(refuse("helper.desk_lock.open_mutex")))
 
     # The perception's models: hundreds of MB each, and no PyTorch at all on an Intel Mac. A test
     # that reads a capture patches the step that would load one, as `fake_models` does.

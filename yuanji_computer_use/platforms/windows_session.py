@@ -993,10 +993,10 @@ def _session_logon() -> tuple[str, str] | None:
 
     from .. import config
 
-    options = config.settings()
+    options = config.Config.settings()
     if not options.session_password:
-        config.load_dotenv(Path.cwd() / ".env")
-        options = config.settings()
+        config.Config.load_dotenv(Path.cwd() / ".env")
+        options = config.Config.settings()
     password = options.session_password
     if not password:
         return None

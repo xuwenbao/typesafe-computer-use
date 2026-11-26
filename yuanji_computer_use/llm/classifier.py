@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typesafe_sdk import Choice, ChoiceAnswer, Noul, TypeSafeAPIError, TypeSafeClient
 
 from ..config import SITES
-from ..dates import date_hints, now_context
+from ..dates import Dates
 from ..models import AxNode, Field, Guidance, Item, Screen
 from ..parse.marks import Marked
 
@@ -219,7 +219,7 @@ class Classifier:
         `only` lists a subset. The numbers stay the indexes they have in `items`.
         """
         shown = items if only is None else only
-        hints = date_hints(items, screen)
+        hints = Dates.date_hints(items, screen)
         mates = Classifier.row_mates(items)
         return {
             str(it.index): (
@@ -284,14 +284,14 @@ class Classifier:
         `guidance` is what the writer and the user added to the goal when the classifier last stopped.
         `subgoal` is the plan's current step. With no plan it is omitted, and the packet is unchanged.
         `banned_offscreen` drops labels refused on this screen from `offscreen_controls`."""
-        hints = date_hints(items, screen)
+        hints = Dates.date_hints(items, screen)
         mates = Classifier.row_mates(items)
         offscreen = Classifier.offscreen_records(screen.offscreen, banned_offscreen)
         return {
             "goal": goal,
             **(guidance.state() if guidance else {}),
             **({"current_subgoal": subgoal} if subgoal else {}),
-            "now": now_context(),
+            "now": Dates.now_context(),
             "frontmost_app": screen.app,
             "browser_active_tab_url": screen.url,
             "focused_field": screen.field.summary() if screen.field else None,

@@ -29,8 +29,9 @@ from yuanji_computer_use.platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, wa
 from yuanji_computer_use.platforms.uia_patterns import PATTERN_IDS
 from yuanji_computer_use.runner import RunConfig
 from yuanji_computer_use.waa import tree
-from yuanji_computer_use.waa.desktop import WAADesktop, _operate_element
-from yuanji_computer_use.waa.walk_vm import LiveElement, walk
+from yuanji_computer_use.waa.desktop import WAADesktop
+from yuanji_computer_use.waa.walk_vm import LiveElement
+from yuanji_computer_use.waa.walk_vm import Walker as TreeWalk
 
 PACKAGE = Path(__file__).resolve().parent.parent / "yuanji_computer_use"
 # Captured before the machine guard replaces it, so the test can drive the real function
@@ -185,7 +186,7 @@ def test_adding_a_file_uses_add_to_selection_and_not_invoke(screen, monkeypatch)
     monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or False)
     assert ActionPerformer().add_item(item, live) == "clicked 'Doc02.docx' with add"
     assert calls == ["add_select", ("click", "add")]
-    assert "AddToSelection" in _operate_element("Doc02.docx", None, "add_select", None)
+    assert "AddToSelection" in WAADesktop._operate_element("Doc02.docx", None, "add_select", None)
 
 
 def test_a_cut_does_not_count_as_an_unchanged_screen(screen, monkeypatch, tmp_path):
@@ -572,7 +573,7 @@ def test_the_vm_reports_a_checkbox_a_disabled_control_and_a_missing_bit():
     window = Raw("Edge", 50032, enabled=True)
     box_raw = Raw("Sound", 50002, enabled=False, patterns={PATTERN_IDS["toggle"]: box})
     missing = Raw("Gone", 50000, enabled=None)
-    got = walk(LiveElement(window, Walker({id(window): [box_raw, missing]})), clock=lambda: 0)
+    got = TreeWalk.walk(LiveElement(window, Walker({id(window): [box_raw, missing]})), clock=lambda: 0)
     by_name = {node["name"]: node for node in got["nodes"]}
     assert by_name["Sound"]["enabled"] is False
     assert PATTERN_IDS["toggle"] in by_name["Sound"]["patterns"]
@@ -584,7 +585,7 @@ def test_a_fixture_tree_keeps_enabled_and_patterns():
     body = json.loads((Path(__file__).parent / "fixtures" / "waa" / "edge-address.json").read_text())
     body["nodes"][0]["enabled"] = False
     body["nodes"][0]["patterns"] = [PATTERN_IDS["toggle"]]
-    reading = tree.read(body, 1440, 900)
+    reading = tree.Tree.read(body, 1440, 900)
     save = next(node for node in reading.found if node.label == "保存")
     assert save.enabled is False
     assert "toggle" in save.patterns
@@ -615,7 +616,7 @@ def test_vm_operate_waits_for_the_tree_and_quotes_the_shared_pattern_id():
     assert order == ["tree"]
     assert str(PATTERN_IDS["toggle"]) in desk.actions[0]
     assert "pip " not in desk.actions[0]
-    code = _operate_element("Sound", None, "toggle", None)
+    code = WAADesktop._operate_element("Sound", None, "toggle", None)
     assert str(PATTERN_IDS["toggle"]) in code
 
     desk.click_at((1, 1))
@@ -864,7 +865,7 @@ def test_the_run_covers_the_window_while_the_agent_works():
 
 def test_the_child_session_is_launched_acting():
     assert "--act" in windows_session.child_command(r"C:\Python\python.exe")
-    assert cli.child_argv("save it", ["--act"]) == ["save it", "--act"]
+    assert cli.Clicker.child_argv("save it", ["--act"]) == ["save it", "--act"]
 
 
 def test_the_child_binds_the_input_desktop_before_it_starts():

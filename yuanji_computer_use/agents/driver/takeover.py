@@ -12,7 +12,7 @@ import time
 from dataclasses import asdict
 
 from ...actions import WAIT_SECONDS, ActionPerformer
-from ...config import settings
+from ...config import Config
 from ...llm.calls import DRIVER
 from ...llm.writer import DriveStep, Writer
 from ...models import AxNode, Item, Missed, Screen, same_screen, signature
@@ -102,7 +102,7 @@ class Takeover(BaseAgent):
         self.unusable = 0
         self.cursor = first
         self.calls = 0
-        self.reasoning = [settings().answer_reasoning]
+        self.reasoning = [Config.settings().answer_reasoning]
         self.same_streak = 0
         self.same_sig: str | None = None
         self.last_sig = ""
@@ -128,7 +128,7 @@ class Takeover(BaseAgent):
         self.unusable = 0
         self.cursor = self.first
         self.calls = 0
-        self.reasoning = [settings().answer_reasoning]
+        self.reasoning = [Config.settings().answer_reasoning]
         state.driver_talk = []
         self.same_streak = 0
         self.same_sig = None
@@ -401,7 +401,7 @@ class Takeover(BaseAgent):
     def _tally(self, segment) -> None:
         """把这一段的请求、token 和工具调用记到运行状态上。"""
         state = self.state
-        model = settings().resolved_driver_model
+        model = Config.settings().resolved_driver_model
         for usage in segment.usages:
             cached = int(getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", 0) or 0)
             incoming = int(getattr(usage, "input_tokens", 0) or 0)

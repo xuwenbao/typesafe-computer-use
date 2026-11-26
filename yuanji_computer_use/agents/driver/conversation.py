@@ -31,8 +31,8 @@ from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.run_config import CallModelData, ModelInputData
 from PIL import Image
 
-from ...config import settings
-from ...dates import now_context
+from ...config import Config
+from ...dates import Dates
 from ...llm.writer import DriveStep, Writer
 from ...models import Item, Screen
 from ...platforms.adapter import desktop
@@ -502,7 +502,7 @@ class DriverConversation:
         client = DriverConversation.driver_client()
         if client is None:
             return None
-        return OpenAIChatCompletionsModel(model=settings().resolved_driver_model, openai_client=client)
+        return OpenAIChatCompletionsModel(model=Config.settings().resolved_driver_model, openai_client=client)
 
     @staticmethod
     def make_agent(model, reasoning: str | None) -> Agent:
@@ -538,7 +538,7 @@ class DriverConversation:
             "kind": "screen",
             "goal": goal,
             **(guidance.state() if guidance else {}),
-            "now": now_context(),
+            "now": Dates.now_context(),
             "actions_taken": history,
             **({"earlier_stops": earlier_stops} if earlier_stops else {}),
             "why_the_classifier_stopped": stopped,
@@ -591,7 +591,7 @@ class DriverConversation:
     @staticmethod
     def screen_message(packet: dict, image: Image.Image | None) -> dict:
         """One screen as a user message. `image` is the numbered capture, omitted when vision is off."""
-        return DriverConversation._user(json.dumps(packet), image if settings().writer_vision else None)
+        return DriverConversation._user(json.dumps(packet), image if Config.settings().writer_vision else None)
 
     @staticmethod
     def _user(text: str, image: Image.Image | None = None) -> dict:

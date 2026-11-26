@@ -220,7 +220,7 @@ def test_run_goal_acts_and_returns_what_the_run_recorded(jev_home, fake_desk, tm
         (cfg.out / "run.json").write_text(json.dumps(record))
         return SimpleNamespace(view=None)
 
-    monkeypatch.setattr(service_module, "run", fake_run)
+    monkeypatch.setattr(service_module.Runner, "run", staticmethod(fake_run))
     out = call(new_service(), approving(), "run_goal", goal="save the file", steps=7)
     assert seen["cfg"].act is True and seen["cfg"].steps == 7
     assert seen["cfg"].out.parent == jev_home / "runs"

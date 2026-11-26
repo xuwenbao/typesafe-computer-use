@@ -13,8 +13,8 @@ from ...parse.marks import Marker
 from ...perception import pipeline as perception
 from ...perception.pipeline import Perceiver
 from ...platforms.windows_session import report_action
-from ...report import annotate, render_payload
-from ...timing import format_timing
+from ...report import ScreenReport
+from ...timing import Timing as Phases
 from ..session import Session, StepContext
 from .stages import DecideStrategy
 
@@ -72,7 +72,7 @@ class StepFiles:
         sent = sc.prefix.with_name(sc.prefix.name + "-sent.png")
         sent.write_bytes(sc.picture.png)
         sc.prefix.with_name(sc.prefix.name + "-payload.txt").write_text(
-            render_payload(
+            ScreenReport.render_payload(
                 cfg.goal,
                 screen,
                 sc.items,
@@ -88,7 +88,7 @@ class StepFiles:
         )
 
     def after_decide(self, session: Session, sc: StepContext) -> None:
-        annotate(sc.screen, sc.items, sc.decision.chosen, sc.prefix.with_suffix(".png"))
+        ScreenReport.annotate(sc.screen, sc.items, sc.decision.chosen, sc.prefix.with_suffix(".png"))
 
 
 class SessionReport:
@@ -119,7 +119,7 @@ class StepLog:
             log(f"  files: {name}-raw.png, {name}-sent.png, {name}-payload.txt")
         else:
             log(f"  files: {name}-raw.png, {name}.png, {name}-sent.png, {name}-payload.txt, {name}-answers.json")
-        log(format_timing(sc.timing))
+        log(Phases.format_timing(sc.timing))
 
     def on_error(self, session: Session, sc: StepContext, error: BaseException) -> None:
         return None

@@ -199,15 +199,15 @@ class Evaluator:
     @staticmethod
     def current_pipeline(image: Image.Image) -> tuple[list[Item], dict[str, float]]:
         """The desktop perception's text and icons on one capture, without an accessibility tree."""
-        from ..config import settings
+        from ..config import Config
         from ..models import Screen
-        from ..timing import EXTRAS, phase
+        from ..timing import EXTRAS, Timing
         from .pipeline import Perceiver
 
         timing: dict[str, float] = {}
         screen = Screen(image=image, scale=1.0, app="", field=None, url=None)
-        with phase(timing, "total"):
-            items = Perceiver.ocr(screen, settings().max_options, "", None, timing)
+        with Timing.phase(timing, "total"):
+            items = Perceiver.ocr(screen, Config.settings().max_options, "", None, timing)
         return items, {name: seconds for name, seconds in timing.items() if name not in EXTRAS}
 
     @staticmethod

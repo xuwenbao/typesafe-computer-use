@@ -43,40 +43,12 @@ RESET_JOIN_SECONDS = 5.0
 DONE = "DONE"
 
 
-def browser_for(domain: str) -> str:
-    """The browser a task domain opens. Edge tasks use Edge; every other domain uses Chrome."""
-    return "Microsoft Edge" if domain == "msedge" else "Google Chrome"
-
-
 class _FromEnv:
     def __repr__(self) -> str:
         return "FROM_ENV"
 
 
 FROM_ENV = _FromEnv()
-
-
-def run_on(controller) -> tree.Run:
-    """Post a script to the VM's `/execute` as `python -c`, with no pyautogui prefix.
-
-    The prefix would land in front of the script, and the script's `__future__` import has to be
-    its first line. The return is the process's exit code and its stdout.
-    """
-
-    def run(script: str, timeout: float) -> tuple[int, str]:
-        response = requests.post(
-            controller.http_server + "/execute",
-            json={"command": ["python", "-c", script], "shell": False},
-            timeout=timeout,
-        )
-        try:
-            body = response.json()
-        except ValueError:
-            return response.status_code, response.text
-        code = body.get("returncode", 0 if response.ok else response.status_code)
-        return int(code), body.get("output") or body.get("message") or body.get("error") or ""
-
-    return run
 
 
 class JevAgent:
@@ -105,7 +77,7 @@ class JevAgent:
         self.max_steps = max_steps
         self.out_root = Path(out_root) if out_root is not None else Path("jev-runs")
         self.browser = browser
-        options = config.settings()
+        options = config.Config.settings()
         if isinstance(writer, _FromEnv):
             writer = Writer.open()
         self.writer = writer
@@ -161,7 +133,7 @@ class _Run:
             goal=instruction,
             out=Path(agent.out_root) / RUN_FOLDER,
             act=True,
-            steps=config.settings().steps,
+            steps=config.Config.settings().steps,
             delay=0,
             driver_steps=agent.driver_steps,
             read_ahead=True,
@@ -216,11 +188,11 @@ class _Run:
                 controller = self.agent.controller
 
                 def start() -> tree.Pending:
-                    return tree.Pending(run_on(controller()))
+                    return tree.Pending(WaaRun.run_on(controller()))
 
             adapter = self.adapter = WAADesktop(obs, self._next_obs, start_tree=start, save_tree=self.cfg.out)
             with using(adapter):
-                state = runner.run(self.cfg, self._context)
+                state = runner.Runner.run(self.cfg, self._context)
             answer = f"; answer: {state.answer.text}" if state.answer is not None else ""
             ended = f"jev ended: {state.outcome}{answer}"
             final = [*self.final, *adapter.actions]
@@ -270,11 +242,11 @@ class _Run:
         summary = json.loads(path.read_text(encoding="utf-8"))
         fetches = list(self.adapter.fetches) if self.adapter is not None else []
         summary["waa"] = {
-            "commit": config.settings().waa_commit,
-            "image_digest": config.settings().waa_image_digest,
+            "commit": config.Config.settings().waa_commit,
+            "image_digest": config.Config.settings().waa_image_digest,
             "browser": self.agent.browser,
             "tree": "jev-uia",
-            **tree.summary(fetches),
+            **tree.Tree.summary(fetches),
         }
         path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
@@ -293,20 +265,52 @@ class _Watching:
             decision = Decision(
                 kind=answers["kind"], item=answers.get("item"), site=answers.get("site"), offscreen=answers.get("offscreen")
             )
-            self._decided(describe(decision, request.get("state") or {}))
+            self._decided(WaaRun.describe(decision, request.get("state") or {}))
         return reply
 
 
-def describe(decision: Decision, state: dict) -> str:
-    """A decision as one line: the action, what it acts on, and its confidence."""
-    kind = decision.kind.choice
-    target = ""
-    if decision.clicking:
-        items = {str(it.get("i")): it.get("text") for it in state.get("screen_items_in_reading_order", [])}
-        target = f" {items.get(decision.item.choice, decision.item.choice)!r}"
-    elif decision.pressing_offscreen:
-        controls = {str(c.get("k")): c.get("label") for c in state.get("offscreen_controls", [])}
-        target = f" {controls.get(decision.offscreen.choice, decision.offscreen.choice)!r}"
-    elif kind == "use_browser" and decision.site is not None:
-        target = f" {decision.site.choice}"
-    return f"{kind}{target} ({decision.confidence:.2f})"
+class WaaRun:
+    """Run one WAA task on the VM and describe the decision."""
+
+    @staticmethod
+    def browser_for(domain: str) -> str:
+        """The browser a task domain opens. Edge tasks use Edge; every other domain uses Chrome."""
+        return "Microsoft Edge" if domain == "msedge" else "Google Chrome"
+
+    @staticmethod
+    def run_on(controller) -> tree.Run:
+        """Post a script to the VM's `/execute` as `python -c`, with no pyautogui prefix.
+
+        The prefix would land in front of the script, and the script's `__future__` import has to be
+        its first line. The return is the process's exit code and its stdout.
+        """
+
+        def run(script: str, timeout: float) -> tuple[int, str]:
+            response = requests.post(
+                controller.http_server + "/execute",
+                json={"command": ["python", "-c", script], "shell": False},
+                timeout=timeout,
+            )
+            try:
+                body = response.json()
+            except ValueError:
+                return response.status_code, response.text
+            code = body.get("returncode", 0 if response.ok else response.status_code)
+            return int(code), body.get("output") or body.get("message") or body.get("error") or ""
+
+        return run
+
+    @staticmethod
+    def describe(decision: Decision, state: dict) -> str:
+        """A decision as one line: the action, what it acts on, and its confidence."""
+        kind = decision.kind.choice
+        target = ""
+        if decision.clicking:
+            items = {str(it.get("i")): it.get("text") for it in state.get("screen_items_in_reading_order", [])}
+            target = f" {items.get(decision.item.choice, decision.item.choice)!r}"
+        elif decision.pressing_offscreen:
+            controls = {str(c.get("k")): c.get("label") for c in state.get("offscreen_controls", [])}
+            target = f" {controls.get(decision.offscreen.choice, decision.offscreen.choice)!r}"
+        elif kind == "use_browser" and decision.site is not None:
+            target = f" {decision.site.choice}"
+        return f"{kind}{target} ({decision.confidence:.2f})"

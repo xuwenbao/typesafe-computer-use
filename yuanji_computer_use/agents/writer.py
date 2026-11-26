@@ -9,7 +9,7 @@ import json
 import time
 from dataclasses import asdict, replace
 
-from ..config import settings
+from ..config import Config
 from ..llm.writer import Answer, Writer, WriterError
 from ..models import Signature, same_screen, signature
 from ..perception import pipeline as perception
@@ -190,7 +190,7 @@ class WriterAgent(BaseAgent):
             state.view = (
                 screen,
                 perception.Perceiver.perceive(
-                    screen, settings().max_options, cfg.goal, cache=None if cfg.replay else state.parse_cache
+                    screen, Config.settings().max_options, cfg.goal, cache=None if cfg.replay else state.parse_cache
                 ),
             )
         screen, items = state.view

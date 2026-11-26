@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...config import settings
+from ...config import Config
 from ...perception import pipeline as perception
 from ..base import BaseAgent, register
 from ..outcomes import CLASSIFIER_STOPPED
@@ -16,7 +16,11 @@ class DriverAgent(BaseAgent):
     def ready(cfg, ctx) -> bool:
         """接管开着、是真操作、写手可用，而且写手走的是 OpenAI 接口。演练和重放不接管。"""
         return (
-            cfg.driver_steps > 0 and cfg.act and not cfg.replay and ctx.writer is not None and settings().writer_api == "openai"
+            cfg.driver_steps > 0
+            and cfg.act
+            and not cfg.replay
+            and ctx.writer is not None
+            and Config.settings().writer_api == "openai"
         )
 
     @staticmethod
@@ -40,7 +44,7 @@ class DriverAgent(BaseAgent):
             and session.route != "end"
             and session.outcome in CLASSIFIER_STOPPED
         )
-        if would and settings().writer_api != "openai":
+        if would and Config.settings().writer_api != "openai":
             if log is not None:
                 log("the driver needs CLICKER_WRITER_API=openai; stopping at the classifier")
             return False
@@ -56,7 +60,7 @@ class DriverAgent(BaseAgent):
         cfg, ctx, log = session.cfg, session.ctx, session.log
         screen = perception.Capture.capture(cfg.image, cfg.app, cfg.url, ctx.browser)
         items = perception.Perceiver.perceive(
-            screen, settings().max_options, cfg.goal, cache=None if cfg.replay else session.parse_cache
+            screen, Config.settings().max_options, cfg.goal, cache=None if cfg.replay else session.parse_cache
         )
         session.view = (screen, items)
         return (screen, items) if PerceiveStrategy().screen_moved(session, screen, items, log) else None

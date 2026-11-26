@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from yuanji_computer_use.waa.results import read, summarize
+from yuanji_computer_use.waa.results import Results
 
 RUN = {
     "outcome": "done",
@@ -50,7 +50,7 @@ def test_scores_split_solved_from_failed_and_a_missing_score_is_only_listed(tmp_
     old.mkdir(parents=True)
     (old / "result.txt").write_text("0\n", encoding="utf-8")
 
-    found = read(tmp_path)
+    found = Results.read(tmp_path)
     by_id = {item.task_id: item for item in found}
     assert set(by_id) == {"one", "two", "three"}
     assert by_id["one"].seconds == 30
@@ -59,7 +59,7 @@ def test_scores_split_solved_from_failed_and_a_missing_score_is_only_listed(tmp_
     assert by_id["one"].jev is not None and by_id["one"].jev.browser == "Google Chrome"
     assert by_id["three"].score is None
 
-    text = "\n".join(summarize(found))
+    text = "\n".join(Results.summarize(found))
     assert "1 solved, 1 failed, 1 not scored" in text
     assert "notepad/three" in text
     assert "9999" not in text
@@ -67,5 +67,5 @@ def test_scores_split_solved_from_failed_and_a_missing_score_is_only_listed(tmp_
 
 def test_a_timestamp_with_microseconds_is_not_a_waa_stamp(tmp_path: Path):
     task(tmp_path, "chrome", "one", "1", ("20261112@100000123456", "20261112@100030123456"))
-    (found,) = read(tmp_path)
+    (found,) = Results.read(tmp_path)
     assert found.seconds is None

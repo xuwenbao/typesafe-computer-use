@@ -13,8 +13,8 @@ import anthropic
 import openai
 from PIL import Image
 
-from ..config import OPENAI_HOST, settings
-from ..dates import now_context
+from ..config import OPENAI_HOST, Config
+from ..dates import Dates
 from ..models import Guidance, Item, Screen
 from .openai_writer import OpenAIWriter
 
@@ -271,7 +271,7 @@ class Writer:
         CLICKER_WRITER_API_KEY only, or with a placeholder when that is unset. Returns base URL, key, and
         the timeout in seconds.
         """
-        cfg = settings()
+        cfg = Config.settings()
         if cfg.writer_api != "openai" or not cfg.writer_base_url:
             return None
         official = urlparse(cfg.writer_base_url).hostname == OPENAI_HOST
@@ -290,7 +290,7 @@ class Writer:
         base URL as it always does. Every client gives up after `writer_timeout` seconds and retries once.
         The OpenAI endpoint and its key come from `openai_credentials`.
         """
-        cfg = settings()
+        cfg = Config.settings()
         if cfg.writer_api == "openai":
             chosen = cls.openai_credentials()
             if chosen is None:
@@ -314,7 +314,7 @@ class Writer:
         url = self.client.base_url
         port = f":{url.port}" if url.port else ""
         where = f"{url.scheme}://{url.host}{port}{url.path.rstrip('/')}"
-        cfg = settings()
+        cfg = Config.settings()
         return f"{where} ({cfg.writer_api} API)  models: {cfg.writer_model} (writing), {cfg.answer_model} (answering)"
 
     def _structured(
@@ -333,7 +333,7 @@ class Writer:
 
         `defaults` fills a field the reply left out. A flag still has to be present unless it is named
         here: one missing decides the next step on a guess."""
-        cfg = settings()
+        cfg = Config.settings()
         schema = {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
         content: list[dict] = [{"type": "text", "text": json.dumps(packet)}]
         if image is not None:
@@ -426,7 +426,7 @@ class Writer:
         packet = {
             "goal": goal,
             **(guidance.state() if guidance else {}),
-            "now": now_context(),
+            "now": Dates.now_context(),
             "frontmost_app": screen.app,
             "previous_actions": history[-8:],
             "focused_field": screen.field.summary() if screen.field else None,
@@ -484,7 +484,7 @@ class Writer:
             return ""
         packet = {
             "goal": goal,
-            "now": now_context(),
+            "now": Dates.now_context(),
             "page": {"title": page_title, "url": url},
             "focused_field": field_label,
             "text_near_field": nearby_text,
@@ -519,7 +519,7 @@ class Writer:
             packet={
                 "goal": goal,
                 **(guidance.state() if guidance else {}),
-                "now": now_context(),
+                "now": Dates.now_context(),
                 "previous_actions": history[-8:],
             },
             properties={"ok": {"type": "boolean"}, "url": {"type": "string"}, "reason": {"type": "string"}},
@@ -713,7 +713,7 @@ class Writer:
         packet = {
             "goal": goal,
             **(guidance.state() if guidance else {}),
-            "now": now_context(),
+            "now": Dates.now_context(),
             "why_the_run_stopped": stopped,
             "actions_taken": history,
             **({"earlier_stops": earlier_stops} if earlier_stops else {}),
@@ -755,7 +755,7 @@ class Writer:
             },
             max_tokens=2048,
             answering=True,
-            image=screen.image if picture and settings().writer_vision else None,
+            image=screen.image if picture and Config.settings().writer_vision else None,
             defaults={"missing": []},
         )
         focus = data["focus"].strip()

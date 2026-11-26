@@ -21,7 +21,7 @@ from yuanji_computer_use.agents.driver.conversation import (
 )
 from yuanji_computer_use.agents.driver.takeover import Takeover
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.config import reset_settings
+from yuanji_computer_use.config import Config
 from yuanji_computer_use.llm.writer import PLACEHOLDER_KEY
 from yuanji_computer_use.models import Abort, Item
 from yuanji_computer_use.platforms import macos
@@ -47,7 +47,7 @@ def test_a_custom_endpoint_does_not_receive_the_openai_key(clean_env):
     clean_env.setenv("CLICKER_WRITER_BASE_URL", "http://127.0.0.1:9/v1")
     clean_env.setenv("OPENAI_API_KEY", "sk-official")
     clean_env.delenv("CLICKER_WRITER_API_KEY", raising=False)
-    reset_settings()
+    Config.reset_settings()
 
     client = DriverConversation.driver_client()
 
@@ -167,18 +167,18 @@ def test_a_screen_message_carries_the_picture_only_when_vision_is_on(screen, cle
     packet = DriverConversation.screen_packet("save", screen, [], [], "stuck", [], [], None, 3)
     assert packet["kind"] == "screen"
     clean_env.setenv("CLICKER_WRITER_VISION", "true")
-    reset_settings()
+    Config.reset_settings()
     seen = DriverConversation.screen_message(packet, Image.new("RGB", (4, 4), "white"))
     assert any(part["type"] == "input_image" for part in seen["content"])
     clean_env.setenv("CLICKER_WRITER_VISION", "false")
-    reset_settings()
+    Config.reset_settings()
     bare = DriverConversation.screen_message(packet, Image.new("RGB", (4, 4), "white"))
     assert [part["type"] for part in bare["content"]] == ["input_text"]
 
 
 def test_only_the_last_two_screens_keep_their_picture(clean_env):
     clean_env.setenv("CLICKER_WRITER_VISION", "true")
-    reset_settings()
+    Config.reset_settings()
     messages = []
     for index in range(5):
         packet = {
@@ -240,7 +240,7 @@ def test_an_api_error_fails_the_takeover(monkeypatch, tmp_path, screen):
 
 def test_a_reasoning_rejection_is_retried_without_it(monkeypatch, tmp_path, screen, clean_env):
     clean_env.setenv("CLICKER_ANSWER_REASONING", "low")
-    reset_settings()
+    Config.reset_settings()
     response = httpx.Response(400, request=_request(), content=b"reasoning")
     error = openai.BadRequestError("unsupported reasoning_effort", response=response, body=None)
     state, _, lines = _drive(monkeypatch, tmp_path, screen, [error, {"action": "give_up", "reason": "nowhere"}])
@@ -292,7 +292,7 @@ def test_an_anthropic_writer_answers_without_the_driver(monkeypatch, tmp_path):
     from world import FakeWriter, Page, World, drive
 
     monkeypatch.setenv("CLICKER_WRITER_API", "anthropic")
-    reset_settings()
+    Config.reset_settings()
     writer = FakeWriter(
         reviews=[{"achieved": False, "answer": "the file is still closed", "route": "driver"}],
         drives=[{"action": "click", "item": "Go"}],

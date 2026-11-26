@@ -7,7 +7,7 @@ from yuanji_computer_use.helper import cli, front, setup
 
 def test_setup_is_a_command(monkeypatch):
     called = []
-    monkeypatch.setattr(setup, "main", lambda argv: called.append(argv) or 0)
+    monkeypatch.setattr(setup.Guide, "main", staticmethod(lambda argv: called.append(argv) or 0))
     with pytest.raises(SystemExit) as caught:
         cli.main(["setup", "--host", "cursor"])
     assert caught.value.code == 0
@@ -27,7 +27,7 @@ def test_clicker_sends_helper_commands_to_the_helper(monkeypatch):
 
 def test_mcp_is_the_front(monkeypatch):
     called = []
-    monkeypatch.setattr(front, "serve", lambda: called.append("mcp"))
+    monkeypatch.setattr(front.Front, "serve", staticmethod(lambda: called.append("mcp")))
     cli.main(["mcp"])
     assert called == ["mcp"]
 
@@ -44,7 +44,7 @@ def test_status_names_this_program_and_its_models(capsys, monkeypatch, tmp_path)
     models.mkdir()
     exe = tmp_path / "clicker.exe"
     exe.write_bytes(b"MZ")
-    monkeypatch.setattr(front, "helper_version", lambda: "9.9.9")
+    monkeypatch.setattr(front.Front, "helper_version", staticmethod(lambda: "9.9.9"))
     monkeypatch.setattr(front.sys, "executable", str(exe))
     monkeypatch.setenv("JEV_HOME", str(tmp_path / "home"))
     with pytest.raises(SystemExit) as caught:

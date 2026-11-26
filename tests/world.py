@@ -30,7 +30,7 @@ from yuanji_computer_use.llm.writer import WriterError
 from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
 from yuanji_computer_use.perception import pipeline as perception
 from yuanji_computer_use.platforms.adapter import desktop
-from yuanji_computer_use.runner import RunConfig, run
+from yuanji_computer_use.runner import RunConfig, Runner
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -642,7 +642,7 @@ def drive(
         world.asked.append(question)
         return left.pop(0) if left else ""
 
-    return run(
+    return Runner.run(
         cfg,
         lambda typesafe, history: Context(
             goal=goal,

@@ -6,7 +6,7 @@ import pytest
 from helper_fakes import FakeDesktop
 
 from yuanji_computer_use.helper import approvals
-from yuanji_computer_use.helper.approvals import Denied, Gate, app_key, host_apps
+from yuanji_computer_use.helper.approvals import Denied, Gate
 from yuanji_computer_use.helper.guard import CANCELLED, GuardedDesktop
 from yuanji_computer_use.models import Abort
 from yuanji_computer_use.platforms import windows
@@ -27,11 +27,11 @@ def test_the_browser_names_are_the_windows_adapters():
     ],
 )
 def test_an_app_has_one_name(app, key):
-    assert app_key(app) == key
+    assert Gate.app_key(app) == key
 
 
 def test_the_agent_and_its_launchers_are_host_apps_but_the_desktop_is_not():
-    assert host_apps(["python.exe", "uv.exe", "Cursor.exe", "explorer.exe", "svchost.exe"]) == {"python", "uv", "cursor"}
+    assert Gate.host_apps(["python.exe", "uv.exe", "Cursor.exe", "explorer.exe", "svchost.exe"]) == {"python", "uv", "cursor"}
 
 
 @pytest.mark.parametrize(

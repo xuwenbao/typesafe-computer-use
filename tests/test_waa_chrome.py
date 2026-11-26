@@ -8,10 +8,7 @@ from pathlib import Path
 
 from yuanji_computer_use.waa.chrome import (
     CHROME_USER_DATA,
-    _bookmarks,
-    _open_chrome_tabs,
-    bookmarks_file_script,
-    chrome_cdp_config,
+    ChromeSetup,
 )
 
 EXAMPLES = (
@@ -26,7 +23,7 @@ def task(name: str) -> list:
 
 def test_a_cdp_task_kills_chrome_and_uses_a_private_profile():
     original = task("7a5a7856-f1b6-42a4-ade9-1ca81ca0f263-wos.json")
-    rewritten = chrome_cdp_config(original)
+    rewritten = ChromeSetup.chrome_cdp_config(original)
     assert rewritten[0]["parameters"]["command"] == ["taskkill", "/F", "/IM", "chrome.exe"]
     assert rewritten[1] == {"type": "sleep", "parameters": {"seconds": 1}}
     command = rewritten[2]["parameters"]["command"]
@@ -37,7 +34,7 @@ def test_a_cdp_task_kills_chrome_and_uses_a_private_profile():
 
 
 def test_opening_tabs_leaves_the_first_one_which_deadlocks_the_connection():
-    source = inspect.getsource(_open_chrome_tabs)
+    source = inspect.getsource(ChromeSetup._open_chrome_tabs)
     assert "connect_over_cdp" in source
     assert "bring_to_front" in source
     assert ".close(" not in source
@@ -62,9 +59,9 @@ def test_the_bookmarks_script_reads_the_private_profile_when_that_file_exists(tm
     (root / "Default").mkdir(parents=True)
     mark = root / "Default" / "Bookmarks"
     mark.write_text("{}", encoding="utf-8")
-    assert _run_probe(bookmarks_file_script(str(root)), str(tmp_path / "absent")) == str(mark)
+    assert _run_probe(ChromeSetup.bookmarks_file_script(str(root)), str(tmp_path / "absent")) == str(mark)
     fallback = tmp_path / "local" / "Google" / "Chrome" / "User Data" / "Default" / "Bookmarks"
-    assert _run_probe(bookmarks_file_script(str(tmp_path / "missing")), str(tmp_path / "local")) == str(fallback)
+    assert _run_probe(ChromeSetup.bookmarks_file_script(str(tmp_path / "missing")), str(tmp_path / "local")) == str(fallback)
 
 
 def test_windows_bookmarks_come_from_the_probe_and_other_platforms_stay_upstream():
@@ -80,18 +77,18 @@ def test_windows_bookmarks_come_from_the_probe_and_other_platforms_stay_upstream
             return '{"roots": {"bookmark_bar": {"children": []}}}'
 
     env = type("Env", (), {"vm_platform": "Windows", "controller": Controller()})()
-    assert _bookmarks(env, {})["bookmark_bar"]["children"] == []
+    assert ChromeSetup._bookmarks(env, {})["bookmark_bar"]["children"] == []
     assert "jev-chrome-cdp" in seen["command"]
     assert seen["path"].endswith("Bookmarks")
 
-    _bookmarks.original = lambda env, config: {"kept": True}
+    ChromeSetup._bookmarks.original = lambda env, config: {"kept": True}
     other = type("Env", (), {"vm_platform": "Linux"})()
-    assert _bookmarks(other, {}) == {"kept": True}
+    assert ChromeSetup._bookmarks(other, {}) == {"kept": True}
 
 
 def test_a_profile_task_keeps_the_default_chrome_profile():
     original = task("2ae9ba84-3a0d-4d4c-8338-3a1478dc5fe3-wos.json")
-    assert chrome_cdp_config(original) == original
-    assert chrome_cdp_config([{"type": "launch", "parameters": {"command": ["notepad"]}}]) == [
+    assert ChromeSetup.chrome_cdp_config(original) == original
+    assert ChromeSetup.chrome_cdp_config([{"type": "launch", "parameters": {"command": ["notepad"]}}]) == [
         {"type": "launch", "parameters": {"command": ["notepad"]}}
     ]

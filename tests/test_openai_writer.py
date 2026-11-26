@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from yuanji_computer_use.config import settings
+from yuanji_computer_use.config import Config
 from yuanji_computer_use.llm.calls import Calls, MeteredWriter
 from yuanji_computer_use.llm.writer import Writer, WriterError
 
@@ -168,7 +168,7 @@ def test_a_text_only_model_gets_the_screen_text_and_no_capture(openai_env, endpo
 def test_the_openai_endpoint_keeps_its_v1(clean_env, given, expected):
     clean_env.setenv("CLICKER_WRITER_API", "openai")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", given)
-    assert settings().writer_base_url == expected
+    assert Config.settings().writer_base_url == expected
 
 
 def test_the_official_openai_endpoint_uses_its_own_key(clean_env):
@@ -184,7 +184,7 @@ def test_the_official_openai_endpoint_uses_its_own_key(clean_env):
 def test_an_unknown_api_is_named_in_the_error(clean_env):
     clean_env.setenv("CLICKER_WRITER_API", "openai-compatible")
     with pytest.raises(ValueError, match="anthropic, openai"):
-        settings()
+        Config.settings()
 
 
 @pytest.mark.parametrize(

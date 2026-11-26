@@ -280,7 +280,7 @@ class Bench:
     @staticmethod
     def _require_key() -> None:
         """The TypeSafe key, resolved the way `clicker` resolves it: the environment, then ./.env."""
-        if not config.settings().typesafe_api_key:
+        if not config.Config.settings().typesafe_api_key:
             sys.exit("TYPESAFE_API_KEY is not set (export it or put it in .env)")
 
     @staticmethod
@@ -330,7 +330,7 @@ class Bench:
         r.add_argument("--model", default=None)
         r.set_defaults(func=Bench.cmd_replay)
 
-        config.load_dotenv(DOTENV)
+        config.Config.load_dotenv(DOTENV)
         args = ap.parse_args(argv)
         return int(args.func(args))
 

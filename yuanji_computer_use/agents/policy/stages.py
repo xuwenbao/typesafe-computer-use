@@ -9,14 +9,14 @@ from dataclasses import asdict
 from types import SimpleNamespace
 
 from ...actions import ActionPerformer
-from ...config import settings
+from ...config import Config
 from ...llm.classifier import Classifier, Decision, MalformedAnswer
 from ...models import Item, Screen, same_screen, signature
 from ...perception import pipeline as perception
 from ...platforms.adapter import desktop
 from ...platforms.bound import CaptureTimeout
-from ...report import Log, ax_count, top
-from ...timing import phase
+from ...report import Log, ScreenReport
+from ...timing import Timing
 from ..session import Session, StepContext
 
 MAX_IDLE = 3  # 连续 3 次动作后屏幕都没变化，就判定卡住
@@ -37,7 +37,7 @@ class PerceiveStrategy:
         desktop.check_abort()
         cache = None if cfg.replay else state.parse_cache
         try:
-            with phase(sc.timing, "capture"):
+            with Timing.phase(sc.timing, "capture"):
                 screen = perception.Capture.capture(
                     cfg.image, cfg.app, cfg.url, ctx.browser, sc.timing, ahead=cache if cfg.read_ahead else None
                 )
@@ -47,7 +47,7 @@ class PerceiveStrategy:
             state.outcome = "capture timed out"
             sc.keep_going = False
             return
-        items = perception.Perceiver.perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
+        items = perception.Perceiver.perceive(screen, Config.settings().max_options, cfg.goal, sc.timing, cache)
         state.view = (screen, items)
         sc.screen = screen
         sc.items = items
@@ -299,7 +299,7 @@ class DecideStrategy:
         shown = [item for item in sc.items if item.index not in state.withdrawn]
         candidates = shown if shown and len(shown) < len(sc.items) else None
         try:
-            with phase(sc.timing, "decide"):
+            with Timing.phase(sc.timing, "decide"):
                 return Classifier(ctx.typesafe).decide(
                     cfg.goal,
                     sc.screen,
@@ -326,19 +326,19 @@ class DecideStrategy:
         by_index = {str(it.index): it for it in items}
         field_desc = f" field={screen.field.role}:{screen.field.label!r}" if screen.field else ""
         log(
-            f"\nstep {sc.step}: app={screen.app!r}{field_desc} url={screen.url!r} items={len(items)} ax={ax_count(items)} "
+            f"\nstep {sc.step}: app={screen.app!r}{field_desc} url={screen.url!r} items={len(items)} ax={ScreenReport.ax_count(items)} "
             f"offscreen={len(screen.offscreen)} kind={decision.kind.choice} ({decision.kind.confidence:.2f}) "
             f"site={decision.site.choice}"
         )
-        for key, p in top(decision.kind, 4):
+        for key, p in ScreenReport.top(decision.kind, 4):
             log(f"  {p:5.2f}  {key}")
         if decision.item is not None:
             log(f"  item ({decision.item.confidence:.2f}):")
-            for key, p in top(decision.item, 4):
+            for key, p in ScreenReport.top(decision.item, 4):
                 log(f"  {p:5.2f}  [{key}] {by_index[key].text!r}")
         if decision.offscreen is not None:
             log(f"  offscreen ({decision.offscreen.confidence:.2f}):")
-            for key, p in top(decision.offscreen, 3):
+            for key, p in ScreenReport.top(decision.offscreen, 3):
                 log(f"  {p:5.2f}  [{key}] {screen.offscreen[int(key)].label!r}")
         if decision.shortcutting:
             log(f"  key ({decision.key.confidence:.2f}): {decision.key.choice}")
@@ -378,7 +378,7 @@ class ActStrategy:
             sc.keep_going = False
             return
         state.quiet = False
-        with phase(sc.timing, "act"):
+        with Timing.phase(sc.timing, "act"):
             sc.what = ActionPerformer().perform(decision, sc.screen, sc.items, ctx, method=sc.method)
         clipboard = "to the clipboard" in sc.what
         state.quiet = clipboard

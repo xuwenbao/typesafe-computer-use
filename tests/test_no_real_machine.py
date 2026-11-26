@@ -67,7 +67,7 @@ def test_an_unpatched_windows_call_refuses_instead_of_reaching_the_machine(touch
 @pytest.mark.parametrize(
     "touch",
     [
-        lambda: helper_desk.open_mutex(),
+        lambda: helper_desk.DeskLock.open_mutex(),
     ],
 )
 def test_the_desktop_mutex_is_not_created_during_tests(touch):

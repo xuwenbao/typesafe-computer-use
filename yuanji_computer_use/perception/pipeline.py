@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
-from ..config import settings
+from ..config import Config
 from ..models import MENU_BAR_PT, AxNode, Box, Item, Screen
 from ..parse import caption as parse_caption
 from ..parse import detect as parse_detect
@@ -28,7 +28,15 @@ from ..parse import weights as parse_weights
 from ..parse.fuse import Fuser
 from ..platforms.adapter import desktop
 from ..platforms.bound import CaptureTimeout, call_within
-from ..timing import FIELD_TIMEOUT, OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, SCREENSHOT_TIMEOUT, URL_TIMEOUT, phase
+from ..timing import (
+    FIELD_TIMEOUT,
+    OCR_AHEAD,
+    OCR_RECTS,
+    OCR_REGION_PCT,
+    SCREENSHOT_TIMEOUT,
+    URL_TIMEOUT,
+    Timing,
+)
 
 # A control that does not answer is treated as absent. A screenshot that does not return ends the step.
 FIELD_WAIT = 2.0
@@ -226,7 +234,7 @@ class Capture:
         """
         replay = image_path is not None and app is not None
         brought = None
-        with phase(timing, "screenshot"):
+        with Timing.phase(timing, "screenshot"):
             if image_path:
                 image = Image.open(image_path).convert("RGB")
             else:
@@ -249,21 +257,21 @@ class Capture:
         scale = desktop.display_scale(image)
         if ahead is not None:
             ahead.read_ahead(image, scale)
-        with phase(timing, "app"):
+        with Timing.phase(timing, "app"):
             if replay:
                 frontmost, pid = app, None
             else:
                 frontmost, pid = desktop.frontmost_app_and_pid()
                 frontmost = app or frontmost
-        with phase(timing, "window"):
+        with Timing.phase(timing, "window"):
             window = None if replay else desktop.frontmost_window_bounds(pid)
             popups = () if replay else desktop.owned_popup_bounds(pid)
-        with phase(timing, "field"):
+        with Timing.phase(timing, "field"):
             if replay or brought is not None:
                 field = None if brought is None else brought[1]
             else:
                 field = Capture._bounded(timing, "field", FIELD_WAIT, desktop.focused_field, absent=None)
-        with phase(timing, "url"):
+        with Timing.phase(timing, "url"):
             if url is not None:
                 page_url = url
             elif replay or brought is not None:
@@ -464,7 +472,7 @@ class Capture:
         """Let a warm-up still loading finish first: two threads loading one model would load it twice."""
         pending = [thread for thread in _warming if thread.is_alive()]
         if pending:
-            with phase(timing, "warm_up"):
+            with Timing.phase(timing, "warm_up"):
                 for thread in pending:
                     thread.join()
 
@@ -720,7 +728,7 @@ class Perceiver:
         Pass None to read the whole region every time, which is what a replay and an inspection do.
         """
         found = Perceiver.ocr(screen, budget, goal, cache, timing)
-        with phase(timing, "ax"):
+        with Timing.phase(timing, "ax"):
             nodes, hidden = Perceiver.ax_nodes(screen, budget)
             gray = screen.image.convert("L")
             blank = [node for node in nodes if not Perceiver.drawn(gray, node, screen.scale)]
@@ -761,7 +769,7 @@ class Perceiver:
         wait for it, and the seconds it took go under "ocr_ahead".
         """
         if cache is not None:
-            with phase(timing, "ocr"):
+            with Timing.phase(timing, "ocr"):
                 ahead = cache.take_ahead(screen)
         else:
             ahead = None
@@ -772,7 +780,7 @@ class Perceiver:
             if ahead is not None:
                 timing[OCR_AHEAD] = round(ahead.seconds, 3)
         echoes = Perceiver.goal_echoes(goal)
-        floor = settings().min_ocr_confidence
+        floor = Config.settings().min_ocr_confidence
         kept: list[Line] = [
             (t.strip(), c, b)
             for t, c, b in reading.lines
@@ -787,7 +795,7 @@ class Perceiver:
         gray = screen.image.convert("L")
         bare = [i for i in icons if i.text is None and Perceiver.contrast(gray, i.box) >= ICON_MIN_CONTRAST]
         if bare:
-            with phase(timing, "caption"):
+            with Timing.phase(timing, "caption"):
                 captions = parse_caption.Captioner.caption(
                     screen.image, [i.box for i in bare], cache.captions if cache is not None else None
                 )
@@ -816,11 +824,11 @@ class Perceiver:
         on a crop than on the whole, so stitching crops together would trade accuracy for little time.
         """
         Capture._await_warm_up(timing)
-        with phase(timing, "ocr"):
+        with Timing.phase(timing, "ocr"):
             lines, read_pct, rects = Perceiver.ocr_lines(screen, cache)
         if cache is not None and cache.unchanged and cache.icons is not None:
             return Reading(lines, list(cache.icons), read_pct, rects, detected=False)
-        with phase(timing, "detect"):
+        with Timing.phase(timing, "detect"):
             icons = Perceiver.detect_region(screen.image, Perceiver.ocr_region(screen))
         if cache is not None:
             cache.icons = list(icons)
@@ -1104,7 +1112,7 @@ class ItemFilter:
         final item to the accessibility element behind it.
         """
         if budget is None:
-            budget = settings().max_options
+            budget = Config.settings().max_options
         taken: set[int] = set()
         merged: list[tuple[Item, int | None]] = []
         for origin, control in enumerate(ax_items):
