@@ -93,149 +93,153 @@ class RunFolder:
         return self.root / name
 
 
-def render_payload(
-    *,
-    goal: str,
-    page: Page,
-    history: list[str],
-    state: dict,
-    actions: dict[str, str],
-    elements: dict[str, str],
-) -> str:
-    """Exactly what goes to TypeSafe this step, plus the element list it was built from."""
-    parts = [
-        RULE,
-        "STATE  (sent as `state`)",
-        RULE,
-        json.dumps(state, indent=2, default=str),
-        "",
-        RULE,
-        "QUESTION kind  (Choice criteria)",
-        RULE,
-        json.dumps(actions, indent=2),
-        "",
-    ]
-    if elements:
-        parts += [
-            RULE,
-            "QUESTION element  (Choice criteria)",
-            RULE,
-            json.dumps(elements, indent=2),
-            "",
-        ]
-    parts += [
-        RULE,
-        f"ELEMENTS  ({len(page.items)} of {page.candidates} candidates on screen; "
-        f"{page.below_fold} below the fold, scroll_y={page.scroll_y})",
-        RULE,
-    ]
-    for it in page.items:
-        parts.append(f"[{it.index:3d}] {it.x:5d},{it.y:5d} {it.w:4d}x{it.h:<4d} {it.tag:8s} {it.name!r}")
-    if page.text:
-        parts += [
-            "",
-            RULE,
-            f"PAGE TEXT  ({len(page.text)} visible blocks; evidence only, never click targets)",
-            RULE,
-        ]
-        for tb in page.text:
-            parts.append(f"      {tb.x:5d},{tb.y:5d} {tb.w:4d}x{tb.h:<4d} {tb.text!r}")
-    return "\n".join(parts) + "\n"
-
-
 # --------------------------------------------------------------------------- #
 # Replay
 # --------------------------------------------------------------------------- #
 
 
-def page_from_elements(data: dict) -> Page:
-    """Rebuild a Page from a saved `step-NN-elements.json`."""
-    items = [
-        Element(
-            index=int(it["index"]),
-            tag=str(it["tag"]),
-            role=str(it.get("role", "")),
-            name=str(it["name"]),
-            x=int(it["x"]),
-            y=int(it["y"]),
-            w=int(it["w"]),
-            h=int(it["h"]),
-            in_view=bool(it.get("in_view", True)),
-            covered=bool(it.get("covered", False)),
-            href=str(it.get("href", "")),
-            field=bool(it.get("field", False)),
-            secret=bool(it.get("secret", False)),
+class Report:
+    """Write a step's payload, and read a saved step back."""
+
+    @staticmethod
+    def render_payload(
+        *,
+        goal: str,
+        page: Page,
+        history: list[str],
+        state: dict,
+        actions: dict[str, str],
+        elements: dict[str, str],
+    ) -> str:
+        """Exactly what goes to TypeSafe this step, plus the element list it was built from."""
+        parts = [
+            RULE,
+            "STATE  (sent as `state`)",
+            RULE,
+            json.dumps(state, indent=2, default=str),
+            "",
+            RULE,
+            "QUESTION kind  (Choice criteria)",
+            RULE,
+            json.dumps(actions, indent=2),
+            "",
+        ]
+        if elements:
+            parts += [
+                RULE,
+                "QUESTION element  (Choice criteria)",
+                RULE,
+                json.dumps(elements, indent=2),
+                "",
+            ]
+        parts += [
+            RULE,
+            f"ELEMENTS  ({len(page.items)} of {page.candidates} candidates on screen; "
+            f"{page.below_fold} below the fold, scroll_y={page.scroll_y})",
+            RULE,
+        ]
+        for it in page.items:
+            parts.append(f"[{it.index:3d}] {it.x:5d},{it.y:5d} {it.w:4d}x{it.h:<4d} {it.tag:8s} {it.name!r}")
+        if page.text:
+            parts += [
+                "",
+                RULE,
+                f"PAGE TEXT  ({len(page.text)} visible blocks; evidence only, never click targets)",
+                RULE,
+            ]
+            for tb in page.text:
+                parts.append(f"      {tb.x:5d},{tb.y:5d} {tb.w:4d}x{tb.h:<4d} {tb.text!r}")
+        return "\n".join(parts) + "\n"
+
+    @staticmethod
+    def page_from_elements(data: dict) -> Page:
+        """Rebuild a Page from a saved `step-NN-elements.json`."""
+        items = [
+            Element(
+                index=int(it["index"]),
+                tag=str(it["tag"]),
+                role=str(it.get("role", "")),
+                name=str(it["name"]),
+                x=int(it["x"]),
+                y=int(it["y"]),
+                w=int(it["w"]),
+                h=int(it["h"]),
+                in_view=bool(it.get("in_view", True)),
+                covered=bool(it.get("covered", False)),
+                href=str(it.get("href", "")),
+                field=bool(it.get("field", False)),
+                secret=bool(it.get("secret", False)),
+            )
+            for it in data.get("items", [])
+        ]
+        text = [
+            TextBlock(
+                text=str(tb.get("text", "")),
+                x=int(tb.get("x", 0)),
+                y=int(tb.get("y", 0)),
+                w=int(tb.get("w", 0)),
+                h=int(tb.get("h", 0)),
+            )
+            for tb in data.get("text", [])
+        ]
+        return Page(
+            url=str(data.get("url", "")),
+            title=str(data.get("title", "")),
+            vw=int(data.get("vw", 0)),
+            vh=int(data.get("vh", 0)),
+            items=items,
+            elapsed_ms=0.0,
+            raw_count=int(data.get("element_count", len(items))),
+            can_scroll=bool(data.get("can_scroll", True)),
+            history_len=int(data.get("history_len", 1)),
+            field_count=sum(1 for e in items if e.typeable),
+            scroll_y=int(data.get("scroll_y", 0)),
+            candidates=int(data.get("candidates", len(items))),
+            below_fold=int(data.get("below_fold", 0)),
+            text=text,
         )
-        for it in data.get("items", [])
-    ]
-    text = [
-        TextBlock(
-            text=str(tb.get("text", "")),
-            x=int(tb.get("x", 0)),
-            y=int(tb.get("y", 0)),
-            w=int(tb.get("w", 0)),
-            h=int(tb.get("h", 0)),
-        )
-        for tb in data.get("text", [])
-    ]
-    return Page(
-        url=str(data.get("url", "")),
-        title=str(data.get("title", "")),
-        vw=int(data.get("vw", 0)),
-        vh=int(data.get("vh", 0)),
-        items=items,
-        elapsed_ms=0.0,
-        raw_count=int(data.get("element_count", len(items))),
-        can_scroll=bool(data.get("can_scroll", True)),
-        history_len=int(data.get("history_len", 1)),
-        field_count=sum(1 for e in items if e.typeable),
-        scroll_y=int(data.get("scroll_y", 0)),
-        candidates=int(data.get("candidates", len(items))),
-        below_fold=int(data.get("below_fold", 0)),
-        text=text,
-    )
 
+    @staticmethod
+    def load_step(run_dir: str | Path, n: int) -> dict:
+        """Read one step back out of a run folder, for offline re-decision."""
+        run = Path(run_dir)
+        meta_path = run / "run.json"
+        elements_path = run / f"step-{n:02d}-elements.json"
+        if not elements_path.exists():
+            raise FileNotFoundError(f"no {elements_path.name} in {run}")
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        elements = json.loads(elements_path.read_text())
+        payload_path = run / f"step-{n:02d}-payload.txt"
+        answers_path = run / f"step-{n:02d}-answers.json"
+        state_path = run / f"step-{n:02d}-state.json"
+        history_path = run / f"step-{n:02d}-history.json"
+        return {
+            "goal": meta.get("goal", ""),
+            "page": Report.page_from_elements(elements),
+            "can_write": bool(elements.get("can_write", False)),
+            "payload": payload_path.read_text() if payload_path.exists() else "",
+            "state": json.loads(state_path.read_text()) if state_path.exists() else {},
+            "history": json.loads(history_path.read_text()) if history_path.exists() else [],
+            "answers": json.loads(answers_path.read_text()) if answers_path.exists() else {},
+        }
 
-def load_step(run_dir: str | Path, n: int) -> dict:
-    """Read one step back out of a run folder, for offline re-decision."""
-    run = Path(run_dir)
-    meta_path = run / "run.json"
-    elements_path = run / f"step-{n:02d}-elements.json"
-    if not elements_path.exists():
-        raise FileNotFoundError(f"no {elements_path.name} in {run}")
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    elements = json.loads(elements_path.read_text())
-    payload_path = run / f"step-{n:02d}-payload.txt"
-    answers_path = run / f"step-{n:02d}-answers.json"
-    state_path = run / f"step-{n:02d}-state.json"
-    history_path = run / f"step-{n:02d}-history.json"
-    return {
-        "goal": meta.get("goal", ""),
-        "page": page_from_elements(elements),
-        "can_write": bool(elements.get("can_write", False)),
-        "payload": payload_path.read_text() if payload_path.exists() else "",
-        "state": json.loads(state_path.read_text()) if state_path.exists() else {},
-        "history": json.loads(history_path.read_text()) if history_path.exists() else [],
-        "answers": json.loads(answers_path.read_text()) if answers_path.exists() else {},
-    }
-
-
-def render_answers(answers: dict[str, Any]) -> str:
-    """Every probability the classifier returned, in a readable form."""
-    lines = []
-    for key, ans in answers.items():
-        if not isinstance(ans, dict):
-            lines.append(f"{key}: {ans}")
-            continue
-        kind = ans.get("type")
-        if kind == "noul":
-            lines.append(f"{key}: noul={ans.get('noul')}")
-        elif kind == "choice":
-            probs = sorted((ans.get("probabilities") or {}).items(), key=lambda kv: -kv[1])
-            ranked = "  ".join(f"{k}={v:.3f}" for k, v in probs[:6])
-            lines.append(f"{key}: choice={ans.get('choice')} confidence={ans.get('confidence'):.3f}  {ranked}")
-        elif kind == "score":
-            lines.append(f"{key}: score={ans.get('score')} confidence={ans.get('confidence'):.3f}")
-        else:
-            lines.append(f"{key}: {ans}")
-    return "\n".join(lines) + "\n"
+    @staticmethod
+    def render_answers(answers: dict[str, Any]) -> str:
+        """Every probability the classifier returned, in a readable form."""
+        lines = []
+        for key, ans in answers.items():
+            if not isinstance(ans, dict):
+                lines.append(f"{key}: {ans}")
+                continue
+            kind = ans.get("type")
+            if kind == "noul":
+                lines.append(f"{key}: noul={ans.get('noul')}")
+            elif kind == "choice":
+                probs = sorted((ans.get("probabilities") or {}).items(), key=lambda kv: -kv[1])
+                ranked = "  ".join(f"{k}={v:.3f}" for k, v in probs[:6])
+                lines.append(f"{key}: choice={ans.get('choice')} confidence={ans.get('confidence'):.3f}  {ranked}")
+            elif kind == "score":
+                lines.append(f"{key}: score={ans.get('score')} confidence={ans.get('confidence'):.3f}")
+            else:
+                lines.append(f"{key}: {ans}")
+        return "\n".join(lines) + "\n"

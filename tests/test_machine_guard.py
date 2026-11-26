@@ -7,12 +7,12 @@ import pytest
 
 
 def test_element_text_is_refused_until_a_test_patches_it():
-    from yuanji_computer_use import macos, windows
+    from yuanji_computer_use.platforms import macos, windows
 
     with pytest.raises(RuntimeError, match="element_text"):
-        macos.element_text(object())
+        macos.MacDesktop.element_text(object())
     with pytest.raises(RuntimeError, match="element_text"):
-        windows.element_text(object())
+        windows.WindowsDesktop.element_text(object())
 
 
 def test_docker_and_the_waa_vm_are_refused():

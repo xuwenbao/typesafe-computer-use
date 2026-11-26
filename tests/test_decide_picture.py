@@ -8,9 +8,9 @@ from PIL import Image
 from typesafe_sdk import TypeSafeAPIError, TypeSafeAuthenticationError, TypeSafeBadRequestError
 from world import FakeTypeSafe, Page, World, drive, scripted
 
-from yuanji_computer_use.decide import IMAGES_HEADER, SCREEN_IMAGE, decide, refuses_the_picture, verify_typed
+from yuanji_computer_use.llm.classifier import IMAGES_HEADER, SCREEN_IMAGE, Classifier
 from yuanji_computer_use.models import Field
-from yuanji_computer_use.parse.marks import marks
+from yuanji_computer_use.parse.marks import Marker
 
 
 def answer(choice, confidence=0.9):
@@ -39,12 +39,12 @@ def refusal(status: int, message: str) -> TypeSafeAPIError:
 @pytest.fixture
 def scene(screen, make_item):
     items = [make_item(0, "Sign in")]
-    return screen, items, marks(screen.image, items, (0, 0, *screen.image.size))
+    return screen, items, Marker.marks(screen.image, items, (0, 0, *screen.image.size))
 
 
 def ask(client, scene, picture=True):
     screen, items, marked = scene
-    return decide(client, "sign in", screen, items, [], "Google Chrome", None, picture=marked if picture else None)
+    return Classifier(client).decide("sign in", screen, items, [], "Google Chrome", None, picture=marked if picture else None)
 
 
 def test_the_picture_goes_as_an_asset_the_state_names(scene):
@@ -66,7 +66,8 @@ def test_the_picture_goes_as_an_asset_the_state_names(scene):
 def test_every_picture_has_its_own_reference(scene):
     screen, items, _ = scene
     assert (
-        marks(screen.image, items, (0, 0, *screen.image.size)).ref != marks(screen.image, items, (0, 0, *screen.image.size)).ref
+        Marker.marks(screen.image, items, (0, 0, *screen.image.size)).ref
+        != Marker.marks(screen.image, items, (0, 0, *screen.image.size)).ref
     )
 
 
@@ -109,7 +110,7 @@ def test_any_other_error_is_raised_without_a_second_request(scene, error):
     with pytest.raises(TypeSafeAPIError):
         ask(client, scene)
     assert len(client.requests) == 1
-    assert not refuses_the_picture(error)
+    assert not Classifier.refuses_the_picture(error)
 
 
 def test_a_second_failure_is_raised(scene):
@@ -128,7 +129,7 @@ def test_the_typing_check_sends_no_picture():
 
     client.system_one = system_one
     field = Field(role="AXTextField", label="Email", placeholder="", value="", x=0, y=0, w=10, h=10)
-    verify_typed(client, "sign in", field, "a@b.c", field)
+    Classifier(client).verify_typed("sign in", field, "a@b.c", field)
 
     (request,) = client.requests
     assert set(request) == {"state", "questions"}

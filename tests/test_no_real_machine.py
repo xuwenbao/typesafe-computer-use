@@ -8,23 +8,23 @@ from pathlib import Path
 
 import pytest
 
-from yuanji_computer_use import macos, windows
 from yuanji_computer_use.browser import cdp
 from yuanji_computer_use.browser.cdp import Chrome, Session
 from yuanji_computer_use.helper import desk_lock as helper_desk
+from yuanji_computer_use.platforms import macos, windows
 
 
 @pytest.mark.parametrize(
     "touch",
     [
-        lambda: macos.click_at((200.0, 200.0)),
-        lambda: macos.press("return"),
-        lambda: macos.type_text("hi"),
-        lambda: macos.scroll(-5),
-        lambda: macos.open_url("Google Chrome", "https://example.com"),
-        lambda: macos.activate("Finder"),
-        lambda: macos.screenshot(),
-        lambda: macos.element_state(object()),
+        lambda: macos.MacDesktop.click_at((200.0, 200.0)),
+        lambda: macos.MacDesktop.press("return"),
+        lambda: macos.MacDesktop.type_text("hi"),
+        lambda: macos.MacDesktop.scroll(-5),
+        lambda: macos.MacDesktop.open_url("Google Chrome", "https://example.com"),
+        lambda: macos.MacDesktop.activate("Finder"),
+        lambda: macos.MacDesktop.screenshot(),
+        lambda: macos.MacDesktop.element_state(object()),
     ],
 )
 def test_an_unpatched_call_refuses_instead_of_reaching_the_machine(touch):
@@ -34,28 +34,28 @@ def test_an_unpatched_call_refuses_instead_of_reaching_the_machine(touch):
 
 
 def test_the_pointer_reads_as_mid_screen_so_no_test_aborts_by_chance():
-    assert macos.mouse_location() == (500.0, 500.0)
-    macos.check_abort()
+    assert macos.MacDesktop.mouse_location() == (500.0, 500.0)
+    macos.MacDesktop.check_abort()
 
 
 @pytest.mark.parametrize(
     "touch",
     [
-        lambda: windows.click_at((200.0, 200.0)),
-        lambda: windows.press("return"),
-        lambda: windows.press("[", command=True),
-        lambda: windows.type_text("hi"),
-        lambda: windows.scroll(-5),
-        lambda: windows.open_url("Google Chrome", "https://example.com"),
-        lambda: windows.activate("notepad.exe"),
-        lambda: windows.open_path(Path("state.txt")),
-        lambda: windows.screenshot(),
-        lambda: windows.ax_press(object()),
-        lambda: windows.ax_focus(object()),
-        lambda: windows.ax_set_value(object(), "hi"),
-        lambda: windows.ax_operate(object(), "toggle"),
-        lambda: windows.element_state(object()),
-        lambda: windows.element_frame(object()),
+        lambda: windows.WindowsDesktop.click_at((200.0, 200.0)),
+        lambda: windows.WindowsDesktop.press("return"),
+        lambda: windows.WindowsDesktop.press("[", command=True),
+        lambda: windows.WindowsDesktop.type_text("hi"),
+        lambda: windows.WindowsDesktop.scroll(-5),
+        lambda: windows.WindowsDesktop.open_url("Google Chrome", "https://example.com"),
+        lambda: windows.WindowsDesktop.activate("notepad.exe"),
+        lambda: windows.WindowsDesktop.open_path(Path("state.txt")),
+        lambda: windows.WindowsDesktop.screenshot(),
+        lambda: windows.WindowsDesktop.ax_press(object()),
+        lambda: windows.WindowsDesktop.ax_focus(object()),
+        lambda: windows.WindowsDesktop.ax_set_value(object(), "hi"),
+        lambda: windows.WindowsDesktop.ax_operate(object(), "toggle"),
+        lambda: windows.WindowsDesktop.element_state(object()),
+        lambda: windows.WindowsDesktop.element_frame(object()),
     ],
 )
 def test_an_unpatched_windows_call_refuses_instead_of_reaching_the_machine(touch):
@@ -67,7 +67,7 @@ def test_an_unpatched_windows_call_refuses_instead_of_reaching_the_machine(touch
 @pytest.mark.parametrize(
     "touch",
     [
-        lambda: helper_desk.open_mutex(),
+        lambda: helper_desk.DeskLock.open_mutex(),
     ],
 )
 def test_the_desktop_mutex_is_not_created_during_tests(touch):
@@ -76,25 +76,25 @@ def test_the_desktop_mutex_is_not_created_during_tests(touch):
 
 
 def test_the_windows_pointer_reads_as_mid_screen_too():
-    assert windows.mouse_location() == (500.0, 500.0)
-    windows.check_abort()
+    assert windows.WindowsDesktop.mouse_location() == (500.0, 500.0)
+    windows.WindowsDesktop.check_abort()
 
 
 def test_an_unpatched_session_call_refuses_instead_of_opening_one():
-    from yuanji_computer_use import windows_session
+    from yuanji_computer_use.platforms import windows_session
 
     for touch in (
-        windows_session.enable_child_session,
-        windows_session.open_child_window,
-        windows_session.connect_child_session,
-        lambda: windows_session._remember_credentials("user", "secret"),
-        lambda: windows_session.wait_for_child_explorer(lambda: None, 0, None),
-        lambda: windows_session.launch_in_session("jev-session"),
-        windows_session.attach_input_desktop,
-        lambda: windows_session.create_session_pipe("jev-session"),
-        lambda: windows_session.attach_session_pipe("jev-session"),
-        windows_session.in_console_session,
-        windows_session.collect_facts,
+        windows_session.WindowsSession.enable_child_session,
+        windows_session.WindowsSession.open_child_window,
+        windows_session.WindowsSession.connect_child_session,
+        lambda: windows_session.WindowsSession._remember_credentials("user", "secret"),
+        lambda: windows_session.WindowsSession.wait_for_child_explorer(lambda: None, 0, None),
+        lambda: windows_session.WindowsSession.launch_in_session("jev-session"),
+        windows_session.WindowsSession.attach_input_desktop,
+        lambda: windows_session.WindowsSession.create_session_pipe("jev-session"),
+        lambda: windows_session.WindowsSession.attach_session_pipe("jev-session"),
+        windows_session.WindowsSession.in_console_session,
+        windows_session.WindowsSession.collect_facts,
     ):
         with pytest.raises(RuntimeError, match="real machine"):
             touch()
@@ -105,8 +105,8 @@ def test_an_unpatched_session_call_refuses_instead_of_opening_one():
     "touch",
     [
         lambda tmp: Chrome(port=9, profile=str(tmp)).start(),
-        lambda tmp: cdp.find_chrome(),
-        lambda tmp: cdp._get_json("http://127.0.0.1:9/json/version"),
+        lambda tmp: cdp.Chrome.find_chrome(),
+        lambda tmp: cdp.Chrome._get_json("http://127.0.0.1:9/json/version"),
         lambda tmp: Session("ws://127.0.0.1:9/devtools/page/X", origin="http://127.0.0.1:9"),
         lambda tmp: subprocess.Popen(["true"]),
         lambda tmp: subprocess.run(["true"]),

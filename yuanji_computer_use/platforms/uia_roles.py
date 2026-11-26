@@ -36,29 +36,33 @@ ROLE_TO_CONTROL_TYPE_ID = {role: type_id for _, type_id, role in _TYPES} | {"AXT
 STATE_READ_ONLY = 0x40  # STATE_SYSTEM_READONLY, in LegacyIAccessible's state
 
 
-def focused_role(control_type_name: str, legacy_state: int | None = None) -> str:
-    """The role of the focused control. A writable document is a text area; a read-only one is not."""
-    if control_type_name == "DocumentControl":
-        return document_role(0 if legacy_state is None else legacy_state)
-    return role_for(control_type_name)
+class Roles:
+    """UI Automation control types in the AX role vocabulary."""
 
+    @staticmethod
+    def focused_role(control_type_name: str, legacy_state: int | None = None) -> str:
+        """The role of the focused control. A writable document is a text area; a read-only one is not."""
+        if control_type_name == "DocumentControl":
+            return Roles.document_role(0 if legacy_state is None else legacy_state)
+        return Roles.role_for(control_type_name)
 
-def role_for(control_type_name: str) -> str:
-    """The AX role a UI Automation control type stands for, or "" for one the walk ignores."""
-    return CONTROL_TYPE_TO_ROLE.get(control_type_name, "")
+    @staticmethod
+    def role_for(control_type_name: str) -> str:
+        """The AX role a UI Automation control type stands for, or "" for one the walk ignores."""
+        return CONTROL_TYPE_TO_ROLE.get(control_type_name, "")
 
+    @staticmethod
+    def role_for_id(control_type_id: int) -> str:
+        """The same role, from UI Automation's numeric control type."""
+        return CONTROL_TYPE_ID_TO_ROLE.get(control_type_id, "")
 
-def role_for_id(control_type_id: int) -> str:
-    """The same role, from UI Automation's numeric control type."""
-    return CONTROL_TYPE_ID_TO_ROLE.get(control_type_id, "")
+    @staticmethod
+    def document_role(legacy_state: int) -> str:
+        """A document you can type into is a text area. A read-only one, like a web page, is ignored."""
+        return "" if legacy_state & STATE_READ_ONLY else "AXTextArea"
 
-
-def document_role(legacy_state: int) -> str:
-    """A document you can type into is a text area. A read-only one, like a web page, is ignored."""
-    return "" if legacy_state & STATE_READ_ONLY else "AXTextArea"
-
-
-def pressable(has_invoke: bool, default_action: str) -> bool:
-    """Whether an element accepts a press. Almost every element carries the LegacyIAccessible
-    pattern, so that pattern alone says nothing; only a named default action makes it a control."""
-    return has_invoke or bool(default_action.strip())
+    @staticmethod
+    def pressable(has_invoke: bool, default_action: str) -> bool:
+        """Whether an element accepts a press. Almost every element carries the LegacyIAccessible
+        pattern, so that pattern alone says nothing; only a named default action makes it a control."""
+        return has_invoke or bool(default_action.strip())

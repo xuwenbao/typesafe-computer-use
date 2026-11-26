@@ -5,11 +5,19 @@ from types import SimpleNamespace
 
 from world import FakeWriter, Page, World, drive, scripted
 
-from yuanji_computer_use import host
+from yuanji_computer_use.agents.host import HostAgent
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.platforms.adapter import desktop
 from yuanji_computer_use.report import Log
 from yuanji_computer_use.runner import RunConfig
+
+
+def _prepare(cfg, ctx, state, log=None):
+    """Fill the session the way the loop does, then let the host agent open the app."""
+    state.cfg = cfg
+    state.ctx = ctx
+    state.log = Log() if log is None else log
+    HostAgent().handle(state)
 
 
 def _reply(body: dict):
@@ -57,7 +65,7 @@ def test_an_open_window_is_focused_and_not_launched(monkeypatch, tmp_path):
     state = Session()
     shown = {"app": "explorer.exe"}
     launched = _desktop(monkeypatch, [("1", "Untitled - Notepad", "notepad.exe")], shown)
-    host.prepare(
+    _prepare(
         RunConfig(goal="type into notepad", out=tmp_path, act=True),
         SimpleNamespace(writer=_reply({"action": "focus", "id": "1", "executable": "", "reason": "Notepad is open"})),
         state,
@@ -72,7 +80,7 @@ def test_a_missing_app_is_launched_by_name(monkeypatch, tmp_path):
     state = Session()
     shown = {"app": "explorer.exe"}
     launched = _desktop(monkeypatch, [], shown)
-    host.prepare(
+    _prepare(
         RunConfig(goal="type into notepad", out=tmp_path, act=True),
         SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "notepad", "reason": "open it"})),
         state,
@@ -84,13 +92,13 @@ def test_a_missing_app_is_launched_by_name(monkeypatch, tmp_path):
 
 
 def test_a_name_with_a_path_or_arguments_is_refused(monkeypatch, tmp_path):
-    assert host.executable_name("notepad") == "notepad"
-    assert host.executable_name("notepad.exe") == "notepad.exe"
-    assert host.executable_name(r"C:\Windows\notepad.exe") is None
-    assert host.executable_name("notepad /c calc") is None
+    assert HostAgent.executable_name("notepad") == "notepad"
+    assert HostAgent.executable_name("notepad.exe") == "notepad.exe"
+    assert HostAgent.executable_name(r"C:\Windows\notepad.exe") is None
+    assert HostAgent.executable_name("notepad /c calc") is None
     state = Session()
     launched = _desktop(monkeypatch, [], {"app": "explorer.exe"})
-    host.prepare(
+    _prepare(
         RunConfig(goal="open notepad", out=tmp_path, act=True),
         SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "notepad /c calc", "reason": "no"})),
         state,
@@ -111,7 +119,7 @@ def test_settings_counts_as_open_when_the_frame_host_is_in_front(monkeypatch, tm
 
     def activate(app, timeout=3.0):
         launched.activated.append(app)
-        return any(host._same_app(app, process) for _, _, process in windows)
+        return any(HostAgent._same_app(app, process) for _, _, process in windows)
 
     monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
     monkeypatch.setattr(desktop, "launch_app", launch)
@@ -119,7 +127,7 @@ def test_settings_counts_as_open_when_the_frame_host_is_in_front(monkeypatch, tm
     monkeypatch.setattr(desktop, "activate", activate)
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     monkeypatch.setattr(desktop, "check_abort", lambda: None)
-    host.prepare(
+    _prepare(
         RunConfig(goal="turn notifications off", out=tmp_path, act=True),
         SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "SystemSettings", "reason": "open settings"})),
         state,
@@ -141,7 +149,7 @@ def test_control_panel_counts_when_explorer_shows_that_title(monkeypatch, tmp_pa
 
     def activate(app, timeout=3.0):
         launched.activated.append(app)
-        return any(host._same_app(app, process) for _, _, process in windows)
+        return any(HostAgent._same_app(app, process) for _, _, process in windows)
 
     monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
     monkeypatch.setattr(desktop, "launch_app", launch)
@@ -149,7 +157,7 @@ def test_control_panel_counts_when_explorer_shows_that_title(monkeypatch, tmp_pa
     monkeypatch.setattr(desktop, "activate", activate)
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     monkeypatch.setattr(desktop, "check_abort", lambda: None)
-    host.prepare(
+    _prepare(
         RunConfig(goal="set the time zone", out=tmp_path, act=True),
         SimpleNamespace(writer=_reply({"action": "launch", "id": "", "executable": "control", "reason": "open it"})),
         state,

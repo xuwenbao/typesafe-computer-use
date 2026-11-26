@@ -1,7 +1,7 @@
 import pytest
 from PIL import Image, ImageDraw
 
-from yuanji_computer_use.parse.caption import CROP_PX, IMAGE_TOKENS, CaptionCache, caption, crop, key, native_name, native_state
+from yuanji_computer_use.parse.caption import CROP_PX, IMAGE_TOKENS, CaptionCache, Captioner
 
 
 def toolbar():
@@ -29,42 +29,42 @@ class Model:
 
 
 def test_each_icon_is_cropped_and_stretched_to_64_pixels():
-    icon = crop(toolbar(), (10.0, 10.0, 50.0, 30.0))
+    icon = Captioner.crop(toolbar(), (10.0, 10.0, 50.0, 30.0))
     assert icon.size == (CROP_PX, CROP_PX)
 
 
 def test_a_box_with_no_pixels_has_no_crop():
-    assert crop(toolbar(), (100.0, 10.0, 100.0, 50.0)) is None
-    assert crop(toolbar(), (400.0, 10.0, 450.0, 50.0)) is None
+    assert Captioner.crop(toolbar(), (100.0, 10.0, 100.0, 50.0)) is None
+    assert Captioner.crop(toolbar(), (400.0, 10.0, 450.0, 50.0)) is None
 
 
 def test_captions_come_back_one_per_box_in_order():
     model = Model()
-    assert caption(toolbar(), [BLUE, RED], generate=model) == ["blue square", "red square"]
+    assert Captioner.caption(toolbar(), [BLUE, RED], generate=model) == ["blue square", "red square"]
 
 
 def test_a_failed_crop_gets_an_empty_caption_and_the_rest_stay_aligned():
     model = Model()
-    captions = caption(toolbar(), [RED, (100.0, 10.0, 100.0, 50.0), BLUE], generate=model)
+    captions = Captioner.caption(toolbar(), [RED, (100.0, 10.0, 100.0, 50.0), BLUE], generate=model)
     assert captions == ["red square", "", "blue square"]
 
 
 def test_with_no_icon_the_model_is_not_called():
     model = Model()
-    assert caption(toolbar(), [], generate=model) == []
+    assert Captioner.caption(toolbar(), [], generate=model) == []
     assert model.calls == []
 
 
 def test_identical_icons_in_one_capture_are_read_once():
     model = Model()
-    assert caption(toolbar(), [RED, BLUE, RED_AGAIN], generate=model) == ["red square", "blue square", "red square"]
+    assert Captioner.caption(toolbar(), [RED, BLUE, RED_AGAIN], generate=model) == ["red square", "blue square", "red square"]
     assert model.calls == [2]
 
 
 def test_a_cached_icon_is_not_read_again():
     model, cache = Model(), CaptionCache()
-    caption(toolbar(), [RED, BLUE], cache, model)
-    assert caption(toolbar(), [BLUE, RED], cache, model) == ["blue square", "red square"]
+    Captioner.caption(toolbar(), [RED, BLUE], cache, model)
+    assert Captioner.caption(toolbar(), [BLUE, RED], cache, model) == ["blue square", "red square"]
     assert model.calls == [2]
 
 
@@ -79,8 +79,8 @@ def test_the_cache_drops_the_least_recently_used_past_its_size():
 
 
 def test_the_key_is_the_crops_pixels():
-    a, b = crop(toolbar(), RED), crop(toolbar(), RED_AGAIN)
-    assert key(a) == key(b) != key(crop(toolbar(), BLUE))
+    a, b = Captioner.crop(toolbar(), RED), Captioner.crop(toolbar(), RED_AGAIN)
+    assert Captioner.key(a) == Captioner.key(b) != Captioner.key(Captioner.crop(toolbar(), BLUE))
 
 
 @pytest.mark.parametrize(
@@ -113,7 +113,7 @@ def test_the_key_is_the_crops_pixels():
     ],
 )
 def test_checkpoint_names_map_to_transformers_florence2(checkpoint, native):
-    assert native_name(checkpoint) == native
+    assert Captioner.native_name(checkpoint) == native
 
 
 def test_an_unresized_crop_is_five_image_tokens():
@@ -124,7 +124,7 @@ def test_native_state_pads_the_vocabulary_unties_the_output_and_transposes_the_p
     torch = pytest.importorskip("torch")
     shared, head = torch.ones(3, 2), torch.full((3, 2), 2.0)
     projection = torch.arange(6.0).reshape(2, 3)
-    state = native_state(
+    state = Captioner.native_state(
         {
             "language_model.model.shared.weight": shared,
             "language_model.lm_head.weight": head,

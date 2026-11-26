@@ -2,16 +2,18 @@
 
 ```
 yuanji_computer_use/
-  platform_adapter.py
-                  `desktop`, the one way to the platform: windows.py on Windows,
-                  macos.py everywhere else; `Desktop` names what both provide
-  macos.py        the macOS adapter: Quartz, AX, AppleScript
-  windows.py      the Windows adapter (experimental): UI Automation, SendInput
-  ax_walk.py      the bounded accessibility-tree walk, shared by both adapters
-  perception.py   capture, the read region and the changed-tile cache, what the
+  platforms/      the one way to the machine
+    adapter.py    `desktop`: windows.py on Windows, macos.py everywhere else;
+                  `Desktop` names what both provide
+    macos.py      the macOS adapter: Quartz, AX, AppleScript
+    windows.py    the Windows adapter (experimental): UI Automation, SendInput
+    ax_walk.py    the bounded accessibility-tree walk, shared by both adapters
+  perception/
+    pipeline.py   capture, the read region and the changed-tile cache, what the
                   models read and what is kept: fusion, block merging, goal-echo
                   filter, icon captions, the accessibility item source, and the
                   merge of the two
+    eval.py       `clicker-perception-eval`: recall and character error on labeled captures
   parse/          the perception's models, each loaded on first use
     ocr.py        RapidOCR lines, boxes hugged to their ink
     detect.py     OmniParser's YOLOv9 icon detector, as TorchScript
@@ -20,17 +22,16 @@ yuanji_computer_use/
     marks.py      the numbered picture System One sees
     weights.py    the pinned model files and `clicker-models`
     runtime.py    the one inference lock, the device, and why a machine cannot run them
-  perception_eval.py
-                  `clicker-perception-eval`: recall and character error on labeled captures
   dates.py        date parsing and "in N days" hints
-  decide.py       state, criteria, the three-Choice request, the Noul check
-  writer.py       the writer model, structured replies, URL validation, the answer
+  llm/
+    classifier.py state, criteria, the three-Choice request, the Noul check
+    writer.py     the writer model, structured replies, URL validation, the answer
                   with its focus or question
-  openai_writer.py the writer's requests on an OpenAI-compatible endpoint
+    openai_writer.py the writer's requests on an OpenAI-compatible endpoint
+    calls.py      requests counted per model, at the two clients
   actions.py      one handler per action, each returning a history line
-  runner.py       the step loop, run folder, stop rules, the hand-off to the writer
-                  and back
-  calls.py        requests counted per model, at the two clients
+  runner.py       `RunConfig`, `run`, and the writing of `run.json`
+  agents/         the roles: host, policy, writer, and driver (see CONTRIBUTING.md)
   report.py       logging, annotated screenshots, payload dump
   timing.py       phase stopwatches, the timing line, run summary
   cli.py          `clicker` and `clicker-inspect`
@@ -48,7 +49,7 @@ yuanji_computer_use/
     desktop.py    the adapter over WAA's observation: screenshots in, pyautogui code out
     tree.py       the foreground UIA tree, fetched from the VM and read with ax_walk
     results.py    each task's score, steps, time, and tokens, for `scripts/waa results`
-  browser/        the browser backend (see [browser backend](browser-backend.md)), opt-in and independent of macos.py
+  browser/        the browser backend (see [browser backend](browser-backend.md)), opt-in and independent of platforms/macos.py
     cdp.py        the only module that touches the browser        (platform adapter)
     perceive.py   DOM collection: ordered elements, click points, occlusion
     decide.py     browser action set, two-Choice request, answer serialization
@@ -71,9 +72,9 @@ scripts/          `sandbox`, `waa`, and `build-helper.ps1` (builds clicker-setup
 ```
 
 A Linux port adds a third adapter over xdotool and AT-SPI, and one line in
-`platform_adapter.py`; the perception already runs there. The tree walk takes its children, attributes, and actions as callables,
+`platforms/adapter.py`; the perception already runs there. The tree walk takes its children, attributes, and actions as callables,
 so only those three bindings change per platform. Nothing else knows which OS it is running on.
 
-The browser backend replaces `macos.py` with `browser/cdp.py` instead. Both are opt-in and
+The browser backend replaces `platforms/macos.py` with `browser/cdp.py` instead. Both are opt-in and
 independent: a browser task never needs Screen Recording permission, and a canvas-only task
 still wants the desktop perception.

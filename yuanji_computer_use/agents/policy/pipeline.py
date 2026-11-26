@@ -9,14 +9,14 @@ import json
 import time
 from typing import Protocol
 
-from .. import runner as loop
-from ..parse.marks import marks
-from ..perception import ocr_region
-from ..report import annotate, render_payload
-from ..timing import format_timing
-from ..windows_session import report_action
-from .session import Session, StepContext
-from .strategies import answers
+from ...parse.marks import Marker
+from ...perception import pipeline as perception
+from ...perception.pipeline import Perceiver
+from ...platforms.windows_session import WindowsSession
+from ...report import ScreenReport
+from ...timing import Timing as Phases
+from ..session import Session, StepContext
+from .stages import DecideStrategy
 
 
 class StepMiddleware(Protocol):
@@ -58,7 +58,7 @@ class StepFiles:
         if sc.prefix is None or sc.decision is None:
             return
         sc.prefix.with_name(sc.prefix.name + "-answers.json").write_text(
-            json.dumps(answers(sc.decision, sc.screen, sc.items, sc.timing, sc.tried, session), indent=2),
+            json.dumps(DecideStrategy.answers(sc.decision, sc.screen, sc.items, sc.timing, sc.tried, session), indent=2),
             encoding="utf-8",
         )
 
@@ -67,12 +67,12 @@ class StepFiles:
 
     def open_request(self, cfg, ctx, session: Session, sc: StepContext) -> None:
         screen = sc.screen
-        sc.picture = marks(screen.image, sc.items, ocr_region(screen))
+        sc.picture = Marker.marks(screen.image, sc.items, Perceiver.ocr_region(screen))
         screen.image.save(sc.prefix.with_name(sc.prefix.name + "-raw.png"))
         sent = sc.prefix.with_name(sc.prefix.name + "-sent.png")
         sent.write_bytes(sc.picture.png)
         sc.prefix.with_name(sc.prefix.name + "-payload.txt").write_text(
-            render_payload(
+            ScreenReport.render_payload(
                 cfg.goal,
                 screen,
                 sc.items,
@@ -88,7 +88,7 @@ class StepFiles:
         )
 
     def after_decide(self, session: Session, sc: StepContext) -> None:
-        annotate(sc.screen, sc.items, sc.decision.chosen, sc.prefix.with_suffix(".png"))
+        ScreenReport.annotate(sc.screen, sc.items, sc.decision.chosen, sc.prefix.with_suffix(".png"))
 
 
 class SessionReport:
@@ -99,7 +99,7 @@ class SessionReport:
 
     def after(self, session: Session, sc: StepContext, log) -> None:
         if sc.what:
-            report_action(sc.what)
+            WindowsSession.report_action(sc.what)
 
     def on_error(self, session: Session, sc: StepContext, error: BaseException) -> None:
         return None
@@ -119,7 +119,7 @@ class StepLog:
             log(f"  files: {name}-raw.png, {name}-sent.png, {name}-payload.txt")
         else:
             log(f"  files: {name}-raw.png, {name}.png, {name}-sent.png, {name}-payload.txt, {name}-answers.json")
-        log(format_timing(sc.timing))
+        log(Phases.format_timing(sc.timing))
 
     def on_error(self, session: Session, sc: StepContext, error: BaseException) -> None:
         return None
@@ -165,7 +165,7 @@ class StepPipeline:
         for mw in reversed(self.middleware):
             mw.after(session, sc, log)
         if session.view is None:
-            loop.settle(sc.screen.image, cfg.delay)
+            perception.Capture.settle(sc.screen.image, cfg.delay)
         return sc.keep_going
 
     def _files(self) -> StepFiles:

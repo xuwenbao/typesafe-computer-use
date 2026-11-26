@@ -85,6 +85,17 @@ class Calls:
         parts = [f"{model} {self.count[model]} ({(self.share(model) or 0):.0%}, {self.seconds[model]:.1f}s)" for model in shown]
         return "calls: " + "  ".join(parts)
 
+    @staticmethod
+    def _model(*names) -> str:
+        """The first name that is a model id, as a reply or a request may leave it out."""
+        return next(name for name in names if isinstance(name, str) and name)
+
+    @staticmethod
+    def _tokens(usage, name: str) -> int:
+        """One count from a usage object, or 0 when the reply leaves it out or reports it as None."""
+        count = getattr(usage, name, None)
+        return count if isinstance(count, int) else 0
+
 
 class MeteredClassifier:
     """The TypeSafe client, counting each request. `system_one` is the only call the package makes.
@@ -102,9 +113,9 @@ class MeteredClassifier:
             reply = self._client.system_one(**request)
         usage = getattr(reply, "usage", None)
         self._calls.used(
-            _model(getattr(reply, "model", None), request.get("model"), CLASSIFIER),
-            input_tokens=_tokens(usage, "input_tokens"),
-            output_tokens=_tokens(usage, "output_tokens"),
+            Calls._model(getattr(reply, "model", None), request.get("model"), CLASSIFIER),
+            input_tokens=Calls._tokens(usage, "input_tokens"),
+            output_tokens=Calls._tokens(usage, "output_tokens"),
         )
         return reply
 
@@ -130,20 +141,9 @@ class MeteredWriter:
             reply = self._client.messages.create(**request)
         usage = getattr(reply, "usage", None)
         self._calls.used(
-            _model(request.get("model"), self._role),
-            input_tokens=_tokens(usage, "input_tokens") + _tokens(usage, "cache_creation_input_tokens"),
-            cached_input_tokens=_tokens(usage, "cache_read_input_tokens"),
-            output_tokens=_tokens(usage, "output_tokens"),
+            Calls._model(request.get("model"), self._role),
+            input_tokens=Calls._tokens(usage, "input_tokens") + Calls._tokens(usage, "cache_creation_input_tokens"),
+            cached_input_tokens=Calls._tokens(usage, "cache_read_input_tokens"),
+            output_tokens=Calls._tokens(usage, "output_tokens"),
         )
         return reply
-
-
-def _model(*names) -> str:
-    """The first name that is a model id, as a reply or a request may leave it out."""
-    return next(name for name in names if isinstance(name, str) and name)
-
-
-def _tokens(usage, name: str) -> int:
-    """One count from a usage object, or 0 when the reply leaves it out or reports it as None."""
-    count = getattr(usage, name, None)
-    return count if isinstance(count, int) else 0

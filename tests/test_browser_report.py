@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from yuanji_computer_use.browser.decide import serialize_answers
+from yuanji_computer_use.browser.decide import Decider
 from yuanji_computer_use.browser.perceive import Element, Page, TextBlock
-from yuanji_computer_use.browser.report import RunFolder, load_step, render_answers, render_payload
-from yuanji_computer_use.browser.runner import resolve_text
-from yuanji_computer_use.writer import CREDENTIAL_HINTS, compose_browser_text, looks_credential
+from yuanji_computer_use.browser.report import Report, RunFolder
+from yuanji_computer_use.browser.runner import GoalRunner
+from yuanji_computer_use.llm.writer import CREDENTIAL_HINTS, Writer
 
 
 def make_page(**kwargs) -> Page:
@@ -68,18 +68,18 @@ def test_serialize_answers_rebuilds_the_wire_shape():
             score=1.5, confidence=0.8, legend={"0": "none", "1": "minor"}, probabilities={"0": 0.5, "1": 0.5}
         ),
     }
-    out = serialize_answers(answers)
+    out = Decider.serialize_answers(answers)
     for key, expected in payload.items():
         assert out[key] == expected, key
 
 
 def test_serialize_answers_does_not_crash_on_unexpected_types():
-    out = serialize_answers({"odd": object()})
+    out = Decider.serialize_answers({"odd": object()})
     assert out["odd"]["type"] == "object" and "repr" in out["odd"]
 
 
 def test_render_answers_is_readable_and_ranks_probabilities():
-    text = render_answers(
+    text = Report.render_answers(
         {
             "kind": {
                 "type": "choice",
@@ -104,7 +104,8 @@ def test_run_folder_writes_every_artefact(tmp_path: Path):
     folder.step_answers(1, {"kind": {"type": "choice", "choice": "click", "probabilities": {}, "confidence": 0.5}})
     folder.step_elements(1, page, can_write=True)
     folder.step_payload(
-        1, render_payload(goal="g", page=page, history=[], state={"goal": "g"}, actions={"click": "c"}, elements={"0": "e"})
+        1,
+        Report.render_payload(goal="g", page=page, history=[], state={"goal": "g"}, actions={"click": "c"}, elements={"0": "e"}),
     )
     folder.finish({"goal": "g", "outcome": "done"})
     folder.log("hello")
@@ -130,7 +131,7 @@ def test_load_step_round_trips_a_step(tmp_path: Path):
     folder.step_elements(1, page, can_write=True)
     folder.finish({"goal": "find the invoice", "outcome": "done"})
 
-    step = load_step(folder.root, 1)
+    step = Report.load_step(folder.root, 1)
     assert step["goal"] == "find the invoice"
     assert step["history"] == ["click: [1] 'Search'"]
     assert step["state"]["previous_actions"] == ["click: [1] 'Search'"]
@@ -159,13 +160,13 @@ def test_load_step_round_trips_page_text(tmp_path: Path):
     folder.step_elements(1, page, can_write=False)
     folder.finish({"goal": "g", "outcome": "done"})
 
-    rebuilt = load_step(folder.root, 1)["page"]
+    rebuilt = Report.load_step(folder.root, 1)["page"]
     assert rebuilt.text == page.text
 
 
 def test_render_payload_shows_page_text_as_evidence():
     page = make_page(text=[TextBlock("Next concert SEP 19", 10, 300, 300, 20)])
-    text = render_payload(goal="g", page=page, history=[], state={"goal": "g"}, actions={}, elements={})
+    text = Report.render_payload(goal="g", page=page, history=[], state={"goal": "g"}, actions={}, elements={})
     assert "PAGE TEXT" in text
     assert "never click targets" in text
     assert "Next concert SEP 19" in text
@@ -175,11 +176,11 @@ def test_missing_step_raises(tmp_path: Path):
     folder = RunFolder.create(tmp_path)
     folder.finish({"goal": "g"})
     with pytest.raises(FileNotFoundError):
-        load_step(folder.root, 9)
+        Report.load_step(folder.root, 9)
 
 
 def test_render_payload_shows_state_criteria_and_elements():
-    text = render_payload(
+    text = Report.render_payload(
         goal="g",
         page=make_page(),
         history=[],
@@ -199,20 +200,20 @@ def test_render_payload_shows_state_criteria_and_elements():
     ["Password", "Enter your one-time code", "CVV", "Card number", "API key", "PIN", "seed phrase"],
 )
 def test_credential_guard_catches_dangerous_fields(label):
-    assert looks_credential(label)
+    assert Writer.looks_credential(label)
 
 
 @pytest.mark.parametrize("label", ["Search invoices", "Customer name", "PO number", "Email address"])
 def test_credential_guard_allows_ordinary_fields(label):
-    assert not looks_credential(label)
+    assert not Writer.looks_credential(label)
 
 
 def test_a_file_name_and_a_word_that_only_contains_a_hint_are_not_credentials():
-    assert not looks_credential("attrib +h secret.txt")
-    assert not looks_credential("secret.txt")
-    assert not looks_credential("spin")
-    assert looks_credential("the secret file")
-    assert looks_credential("enter the pin")
+    assert not Writer.looks_credential("attrib +h secret.txt")
+    assert not Writer.looks_credential("secret.txt")
+    assert not Writer.looks_credential("spin")
+    assert Writer.looks_credential("the secret file")
+    assert Writer.looks_credential("enter the pin")
 
 
 def test_credential_hints_cover_the_obvious_cases():
@@ -248,15 +249,15 @@ class StubWriter:
 def test_writer_refuses_credential_fields_without_calling_the_model():
     writer = StubWriter({"fill": True, "text": "hunter2", "reason": "no"})
     assert (
-        compose_browser_text(writer, "log in", field_label="Password", page_title="t", url="u", nearby_text=[], history=[]) == ""
+        Writer(writer).compose_browser_text("log in", field_label="Password", page_title="t", url="u", nearby_text=[], history=[])
+        == ""
     )
     assert writer.messages.calls == 0
 
 
 def test_writer_returns_composed_text():
     writer = StubWriter({"fill": True, "text": "invoice automation", "reason": "from the goal"})
-    got = compose_browser_text(
-        writer,
+    got = Writer(writer).compose_browser_text(
         "search for invoice automation",
         field_label="Search invoices",
         page_title="Dashboard",
@@ -270,24 +271,28 @@ def test_writer_returns_composed_text():
 
 def test_writer_declines_when_fill_is_false():
     writer = StubWriter({"fill": False, "text": "should not be used", "reason": "not my business"})
-    assert compose_browser_text(writer, "g", field_label="Search", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    assert (
+        Writer(writer).compose_browser_text("g", field_label="Search", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    )
 
 
 def test_writer_output_that_looks_like_a_secret_is_dropped():
     writer = StubWriter({"fill": True, "text": "my api key is abc123", "reason": "oops"})
-    assert compose_browser_text(writer, "g", field_label="Notes", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    assert (
+        Writer(writer).compose_browser_text("g", field_label="Notes", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    )
 
 
 # ------------------------------------------------------- text provenance
 def test_resolve_text_streams_from_the_writer_when_available():
     writer = StubWriter({"fill": True, "text": "invoice automation", "reason": "ok"})
-    text, source = resolve_text(writer, "search for 'invoice automation'", make_page(), make_page().items[0], [])
+    text, source = GoalRunner.resolve_text(writer, "search for 'invoice automation'", make_page(), make_page().items[0], [])
     assert (text, source) == ("invoice automation", "writer")
 
 
 def test_resolve_text_reports_a_writer_decline_distinctly():
     writer = StubWriter({"fill": False, "text": "", "reason": "no"})
-    text, source = resolve_text(writer, "search for 'x'", make_page(), make_page().items[0], [])
+    text, source = GoalRunner.resolve_text(writer, "search for 'x'", make_page(), make_page().items[0], [])
     assert text == "" and source == "writer_declined"
 
 
@@ -298,11 +303,11 @@ def test_resolve_text_survives_a_writer_failure():
             def create(**kwargs):
                 raise RuntimeError("upstream 500")
 
-    text, source = resolve_text(Boom, "search for 'x'", make_page(), make_page().items[0], [])
+    text, source = GoalRunner.resolve_text(Boom, "search for 'x'", make_page(), make_page().items[0], [])
     assert text == "" and source == "writer_error(RuntimeError)"
 
 
 def test_resolve_text_without_a_writer_types_nothing():
     """Free text only comes from the writer: there is no fallback that reads it out of the goal."""
-    text, source = resolve_text(None, "search for 'invoice automation'", make_page(), make_page().items[0], [])
+    text, source = GoalRunner.resolve_text(None, "search for 'invoice automation'", make_page(), make_page().items[0], [])
     assert text == "" and source == "no_writer"

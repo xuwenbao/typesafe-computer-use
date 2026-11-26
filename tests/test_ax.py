@@ -3,10 +3,10 @@ from dataclasses import replace
 import pytest
 from conftest import busy_page
 
-from yuanji_computer_use import perception
-from yuanji_computer_use.ax_walk import AxAttrs, walk_actionable
 from yuanji_computer_use.models import AxNode, Item
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.platforms.adapter import desktop
+from yuanji_computer_use.platforms.ax_walk import AxAttrs, AxWalk
 
 DISPLAY = (1728.0, 1117.0)
 
@@ -16,7 +16,7 @@ def node(role, label="", frame=(10.0, 10.0, 100.0, 20.0), press=False, children=
 
 
 def walk(root, **kwargs):
-    return walk_actionable(
+    return AxWalk.walk_actionable(
         root,
         lambda n: n["children"],
         lambda n: AxAttrs(n["role"], n["label"], n["frame"]),
@@ -214,7 +214,7 @@ def test_ax_items_convert_points_to_capture_pixels_and_name_the_role(screen, mon
         AxNode(role="AXDisclosureTriangle", label="More", x=10.0, y=10.0, w=12.0, h=12.0, pressable=True),
     ]
     monkeypatch.setattr(desktop, "actionable_elements", lambda pid, w, h: (nodes, [], False))
-    items = perception.ax_items(replace(screen, pid=123), 255)
+    items = perception.Perceiver.ax_items(replace(screen, pid=123), 255)
     assert [(it.role, it.source, it.text) for it in items] == [
         ("popup", "ax", "View site information"),
         ("other", "ax", "More"),
@@ -227,8 +227,8 @@ def test_ax_items_are_skipped_without_a_pid_and_when_the_walk_raises(screen, mon
         raise RuntimeError("accessibility said no")
 
     monkeypatch.setattr(desktop, "actionable_elements", boom)
-    assert perception.ax_items(screen, 255) == []
-    assert perception.ax_items(replace(screen, pid=123), 255) == []
+    assert perception.Perceiver.ax_items(screen, 255) == []
+    assert perception.Perceiver.ax_items(replace(screen, pid=123), 255) == []
 
 
 def test_the_walker_keeps_a_handle_to_every_element_it_reports():
@@ -246,7 +246,7 @@ def test_ax_refs_follow_items_through_the_merge_and_the_renumbering(screen, monk
     ]
     monkeypatch.setattr(desktop, "actionable_elements", lambda pid, w, h: (nodes, [], False))
     monkeypatch.setattr(
-        perception,
+        perception.Perceiver,
         "ocr",
         lambda screen, budget, goal, *_: [
             Item(0, "Left", 0.9, 100.0, 104.0, 220.0, 140.0),  # names the control, so the two merge
@@ -254,7 +254,7 @@ def test_ax_refs_follow_items_through_the_merge_and_the_renumbering(screen, monk
         ],
     )
     live = replace(screen, pid=123, image=busy_page(screen.image.size))
-    items = perception.perceive(live, 255, "goal")
+    items = perception.Perceiver.perceive(live, 255, "goal")
     assert [(it.index, it.text, it.source) for it in items] == [
         (0, "Left", "ax+ocr"),
         (1, "Right", "ax"),
@@ -271,16 +271,18 @@ def test_offscreen_controls_are_deduplicated_and_never_repeat_a_visible_item(scr
         AxNode(role="AXLink", label="Only text", x=0.0, y=-900.0, w=60.0, h=20.0, pressable=True, ref=object()),
     ]
     monkeypatch.setattr(desktop, "actionable_elements", lambda pid, w, h: ([], hidden, False))
-    monkeypatch.setattr(perception, "ocr", lambda screen, budget, goal, *_: [Item(0, "Only text", 0.9, 10.0, 10.0, 90.0, 40.0)])
+    monkeypatch.setattr(
+        perception.Perceiver, "ocr", lambda screen, budget, goal, *_: [Item(0, "Only text", 0.9, 10.0, 10.0, 90.0, 40.0)]
+    )
     live = replace(screen, pid=123)
-    perception.perceive(live, 255, "goal")
+    perception.Perceiver.perceive(live, 255, "goal")
     assert [(n.role, n.label) for n in live.offscreen] == [("AXRow", "Note 900"), ("AXButton", "Note 900")]
 
 
 def test_offscreen_controls_are_empty_in_replay(screen, monkeypatch):
     monkeypatch.setattr(desktop, "actionable_elements", lambda pid, w, h: pytest.fail("no pid to walk"))
-    monkeypatch.setattr(perception, "ocr", lambda screen, budget, goal, *_: [])
-    perception.perceive(screen, 255, "goal")
+    monkeypatch.setattr(perception.Perceiver, "ocr", lambda screen, budget, goal, *_: [])
+    perception.Perceiver.perceive(screen, 255, "goal")
     assert screen.offscreen == []
 
 
@@ -290,7 +292,7 @@ def test_a_text_area_is_the_ref_behind_the_document_text(screen, monkeypatch):
     nodes = [AxNode(role="AXTextArea", label="", x=10.0, y=10.0, w=200.0, h=150.0, pressable=False, ref=ref)]
     monkeypatch.setattr(desktop, "actionable_elements", lambda pid, w, h: (nodes, [], False))
     monkeypatch.setattr(
-        perception,
+        perception.Perceiver,
         "ocr",
         lambda screen, budget, goal, *_: [
             Item(0, "In many fields, providing a clear example", 0.9, 40.0, 40.0, 400.0, 280.0),
@@ -298,7 +300,7 @@ def test_a_text_area_is_the_ref_behind_the_document_text(screen, monkeypatch):
         ],
     )
     live = replace(screen, pid=123, image=busy_page(screen.image.size))
-    items = perception.perceive(live, 255, "count the word")
+    items = perception.Perceiver.perceive(live, 255, "count the word")
     body = next(it for it in items if it.text.startswith("In many fields"))
     status = next(it for it in items if it.text == "7 characters")
     assert live.ax_refs[body.index] is ref
@@ -307,8 +309,10 @@ def test_a_text_area_is_the_ref_behind_the_document_text(screen, monkeypatch):
 
 
 def test_ax_refs_are_empty_without_an_accessibility_tree(screen, monkeypatch):
-    monkeypatch.setattr(perception, "ocr", lambda screen, budget, goal, *_: [Item(0, "Only text", 0.9, 10.0, 10.0, 90.0, 40.0)])
-    items = perception.perceive(screen, 255, "goal")
+    monkeypatch.setattr(
+        perception.Perceiver, "ocr", lambda screen, budget, goal, *_: [Item(0, "Only text", 0.9, 10.0, 10.0, 90.0, 40.0)]
+    )
+    items = perception.Perceiver.perceive(screen, 255, "goal")
     assert [it.source for it in items] == ["ocr"] and screen.ax_refs == {}
 
 
@@ -337,7 +341,7 @@ def test_a_subtree_repeated_under_several_parents_is_walked_once():
     def attrs(n):
         return AxAttrs(roles.get(n, "AXMenuBar" if n.startswith("bar") else "AXMenuBarItem"), labels.get(n, ""), frames[n])
 
-    found, _, cap_hit = walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
+    found, _, cap_hit = AxWalk.walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
     assert [n.label for n in found] == ["File"]
     assert not cap_hit
 
@@ -360,7 +364,7 @@ def test_a_wrapper_keyed_like_its_parent_is_walked_into_and_not_listed_twice():
     def attrs(n):
         return AxAttrs(roles.get(n, "AXButton"), "OK" if n in ("button", "twin") else "", frames[n])
 
-    found, _, cap_hit = walk_actionable("app", lambda n: tree[n], attrs, lambda n: [], 1000, 800)
+    found, _, cap_hit = AxWalk.walk_actionable("app", lambda n: tree[n], attrs, lambda n: [], 1000, 800)
     assert [(n.label, n.ref) for n in found] == [("OK", "button")]
     assert not cap_hit
 
@@ -373,6 +377,6 @@ def test_an_app_that_lists_itself_as_a_child_terminates():
     def attrs(n):
         return AxAttrs(roles[n], "File" if n == "file" else "", frames[n])
 
-    found, _, cap_hit = walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
+    found, _, cap_hit = AxWalk.walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
     assert [n.label for n in found] == ["File"]
     assert not cap_hit

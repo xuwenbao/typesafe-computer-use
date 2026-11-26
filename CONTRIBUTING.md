@@ -11,22 +11,22 @@ so a stall can be replayed offline with `--image`.
 - The classifier picks; code decides facts. Anything the model would have to
   compute (dates, URL validity, whether a field is focused) is computed in code
   and handed over as state.
-- Free text only ever comes from `writer.py`, with a structured reply and a
+- Free text only ever comes from `llm/writer.py`, with a structured reply and a
   code-side guard.
 - The writer never picks an action. When the classifier stops it may name a focus
   or ask the user, and the classifier takes every step from there. Watch the
   `calls:` line: a change that moves work to the writer should say why.
-- Once the classifier has stopped short of the goal for good, `driver.py` picks actions
+- Once the classifier has stopped short of the goal for good, `agents/driver/takeover.py` picks actions
   itself, one per reply, from a whitelist code checks before anything reaches the machine.
   Only safety checks refuse; a check on state that may be stale takes the action and notes it.
   `CLICKER_DRIVER` defaults to on; `false` leaves the stop where it is. A new driver action
   goes in that whitelist, in both adapters' key tables, and in `tests/test_driver.py`; it
   never types a credential. Shortcuts other than Q, W, H, and M are allowed. The classifier's
   own double-click is `open_item`, and only while the frontmost app is not the browser.
-- Platform calls live in the adapters, `macos.py` and `windows.py`, only. Everything else
-  reaches them through `platform_adapter.desktop`, and a new adapter call goes into the
+- Platform calls live in the adapters, `platforms/macos.py` and `platforms/windows.py`, only. Everything else
+  reaches them through `platforms/adapter.py`'s `desktop`, and a new adapter call goes into the
   `Desktop` protocol and both adapters together. The accessibility-tree walk is shared, in
-  `ax_walk.py`.
+  `platforms/ax_walk.py`.
 - Configuration lives in `config.Settings` and is read only through `config.settings()`, which
   keeps one copy for the process. `load_dotenv` and `config.reset_settings()` drop it. A new
   variable is a field there, not another `os.environ.get`. `CLICKER_*` is the prefix; a variable
@@ -42,13 +42,15 @@ so a stall can be replayed offline with `--image`.
 `runner.py` holds `RunConfig`, `run`, and the writing of `run.json`. The rest of a
 run is the agents. `agents/status.py` is the status table (`HOST`, `POLICY`,
 `WRITER`, `DRIVER`, `FINAL_ANSWER`, `FINISH`). `agents/base.py` creates an agent
-by name. `agents/host.py`, `agents/policy.py`, `agents/writer.py`, and
-`agents/driver.py` are the roles. `agents/session.py` is the session.
-`agents/strategies.py` is the four stages of one classifier step
-(`PerceiveStrategy`, `DecideStrategy`, `ActStrategy`, `MemoryStrategy`).
-`agents/middleware.py` is `Timing`, `StepFiles`, `SessionReport`, `StepLog`, and
-`StepPipeline`. The takeover model SDK loads only inside `agents/driver.py`,
-when a takeover starts.
+by name. `agents/host.py`, `agents/policy/`, `agents/writer.py`, and
+`agents/driver/` are the roles. `agents/session.py` is the session.
+`agents/outcomes.py` is why a run stopped. `agents/policy/stages.py` is the four
+stages of one classifier step (`PerceiveStrategy`, `DecideStrategy`,
+`ActStrategy`, `MemoryStrategy`). `agents/policy/pipeline.py` is `Timing`,
+`StepFiles`, `SessionReport`, `StepLog`, and `StepPipeline`. The takeover model
+SDK loads only inside `agents/driver/`, when a takeover starts. The classifier
+client is `llm/classifier.py`, the writer client is `llm/writer.py`, and the
+desktop adapters are `platforms/`.
 
 ## A task the loop cannot do
 

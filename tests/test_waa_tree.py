@@ -5,10 +5,16 @@ import json
 import time
 from pathlib import Path
 
-from yuanji_computer_use import uia_roles, windows
 from yuanji_computer_use.models import Field
+from yuanji_computer_use.platforms import uia_roles, windows
 from yuanji_computer_use.waa import tree
-from yuanji_computer_use.waa.walk_vm import INVOKE, LEGACY, VALUE, LiveElement, empty, walk
+from yuanji_computer_use.waa.walk_vm import (
+    INVOKE,
+    LEGACY,
+    VALUE,
+    LiveElement,
+    Walker,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "waa"
 DISPLAY = (1440.0, 900.0)
@@ -74,7 +80,7 @@ class Node:
 
 def test_a_button_comes_back_as_a_button():
     window = Node("Edge", 50032, (0, 0, 800, 600), [Node("保存", 50000, (10, 10, 40, 20), invoke=True)])
-    got = walk(window, clock=lambda: 0)
+    got = Walker.walk(window, clock=lambda: 0)
     assert got["nodes"] == [
         {
             "role": "AXButton",
@@ -97,16 +103,16 @@ def test_a_button_comes_back_as_a_button():
 
 def test_a_selected_row_is_read_as_selected():
     window = Node("Documents", 50032, (0, 0, 800, 600), [Node("Doc01.docx", 50000, (10, 10, 40, 20), selected=True)])
-    got = walk(window, clock=lambda: 0)
+    got = Walker.walk(window, clock=lambda: 0)
     assert got["nodes"][0]["selected"] is True
-    reading = tree.read(got, *DISPLAY)
+    reading = tree.Tree.read(got, *DISPLAY)
     row = next(node for node in reading.found if node.label == "Doc01.docx")
     assert row.selected is True
 
 
 def test_a_wide_node_is_truncated_at_the_width_limit():
     kids = [Node(str(i), 50020, (0, i, 10, 10)) for i in range(300)]
-    got = walk(Node("w", 50032, (0, 0, 100, 100), kids), clock=lambda: 0, max_width=256)
+    got = Walker.walk(Node("w", 50032, (0, 0, 100, 100), kids), clock=lambda: 0, max_width=256)
     assert len(got["nodes"]) == 256
     assert got["truncated"] is True
     assert got["reason"] == "truncated"
@@ -119,17 +125,17 @@ def test_a_slow_walk_stops_at_the_deadline():
         return next(ticks, 100)
 
     kids = [Node("a", 50000, (0, 0, 10, 10), invoke=True), Node("b", 50000, (0, 20, 10, 10), invoke=True)]
-    got = walk(Node("w", 50032, (0, 0, 100, 100), kids), clock=clock, seconds=8)
+    got = Walker.walk(Node("w", 50032, (0, 0, 100, 100), kids), clock=clock, seconds=8)
     assert got["nodes"] == []
     assert got["truncated"] is True
 
 
 def test_no_foreground_window_is_an_empty_tree():
-    got = empty("no foreground window")
+    got = Walker.empty("no foreground window")
     assert got["nodes"] == []
     assert got["window"] is None
     assert got["reason"] == "no foreground window"
-    assert walk(None, clock=lambda: 0) == got
+    assert Walker.walk(None, clock=lambda: 0) == got
 
 
 class _Box:
@@ -179,7 +185,7 @@ def test_a_comtypes_stand_in_is_walked_the_same_way():
     name = _Raw("Name", 50004, _Box(10, 80, 210, 104), {VALUE: _Pattern(CurrentValue="abc")}, focus=True)
     window = _Raw("Edge", 50032, _Box(0, 0, 800, 600))
     root = LiveElement(window, _Walker({id(window): [button, address, name]}))
-    got = walk(root, clock=lambda: 0)
+    got = Walker.walk(root, clock=lambda: 0)
     assert [node["name"] for node in got["nodes"]] == ["保存", "Address and search bar", "Name"]
     assert got["nodes"][0]["pressable"] is True
     assert got["nodes"][1]["value"] == "example.com/a"
@@ -191,13 +197,13 @@ def test_a_focused_xaml_host_reads_as_its_edit():
     edit = Node("Horizontal", 50004, (110, 110, 80, 24), value="768")
     host = Node("DesktopWindowXamlSource", 50033, (100, 100, 400, 200), [edit], focused=True)
     window = Node("Paint", 50032, (0, 0, 800, 600), [host])
-    got = walk(window, clock=lambda: 0, focus=host)
+    got = Walker.walk(window, clock=lambda: 0, focus=host)
     host_node = got["nodes"][0]
     assert host_node["role"] == ""
     assert host_node["focused"] is False
     assert host_node["children"][0]["role"] == "AXTextField"
     assert host_node["children"][0]["focused"] is True
-    reading = tree.read(got, *DISPLAY)
+    reading = tree.Tree.read(got, *DISPLAY)
     assert reading.focused is not None and reading.focused.is_text
     assert reading.focused.label == "Horizontal"
     assert reading.focused.value == "768"
@@ -208,7 +214,7 @@ def test_two_edits_under_a_host_are_not_guessed():
     two = Node("Vertical", 50004, (60, 10, 40, 20), value="480")
     host = Node("DesktopWindowXamlSource", 50033, (0, 0, 200, 80), [one, two], focused=True)
     window = Node("Paint", 50032, (0, 0, 800, 600), [host])
-    got = walk(window, clock=lambda: 0, focus=host)
+    got = Walker.walk(window, clock=lambda: 0, focus=host)
     assert got["nodes"][0]["focused"] is True
     assert [child["focused"] for child in got["nodes"][0]["children"]] == [False, False]
 
@@ -218,9 +224,9 @@ def test_the_focused_edit_is_matched_by_its_runtime_id():
     host = Node("Find box", 50033, (0, 0, 200, 40), [edit])
     window = Node("Notepad", 50032, (0, 0, 800, 600), [host])
     focus = Node("Find", 50004, (10, 10, 80, 20), runtime_id=(7, 1))
-    got = walk(window, clock=lambda: 0, focus=focus)
+    got = Walker.walk(window, clock=lambda: 0, focus=focus)
     assert got["nodes"][0]["children"][0]["focused"] is True
-    reading = tree.read(got, *DISPLAY)
+    reading = tree.Tree.read(got, *DISPLAY)
     assert reading.focused is not None and reading.focused.is_text
     assert reading.focused.label == "Find"
 
@@ -230,21 +236,21 @@ def test_an_editable_document_is_a_text_area_and_a_web_page_is_not():
     page = _Raw("Example", 50030, _Box(0, 80, 800, 600), {LEGACY: _Pattern(CurrentState=0x100044)})
     bare = _Raw("No pattern", 50030, _Box(0, 0, 10, 10))
     window = _Raw("Notepad", 50032, _Box(0, 0, 800, 600))
-    got = walk(LiveElement(window, _Walker({id(window): [editor, page, bare]})), clock=lambda: 0)
+    got = Walker.walk(LiveElement(window, _Walker({id(window): [editor, page, bare]})), clock=lambda: 0)
     assert [node["role"] for node in got["nodes"]] == ["AXTextArea", "", ""]
-    focused = tree.read({"app": "notepad.exe", "pid": 1, "window": None, "nodes": got["nodes"]}, *DISPLAY).focused
+    focused = tree.Tree.read({"app": "notepad.exe", "pid": 1, "window": None, "nodes": got["nodes"]}, *DISPLAY).focused
     assert focused is not None and focused.is_text and focused.label == "Text editor"
 
 
 def test_the_script_embeds_the_one_role_table_and_fits_a_windows_command():
-    source = tree.script()
-    assert (tree.PACKAGE / "uia_roles.py").read_text(encoding="utf-8") in source
+    source = tree.Tree.script()
+    assert (tree.PACKAGE / "platforms" / "uia_roles.py").read_text(encoding="utf-8") in source
     compile(source, "<waa-tree>", "exec")
     assert windows.CONTROL_TYPE_TO_ROLE == uia_roles.CONTROL_TYPE_TO_ROLE
-    assert windows.pressable is uia_roles.pressable
+    assert windows.Roles.pressable is uia_roles.Roles.pressable
     for name, role in uia_roles.CONTROL_TYPE_TO_ROLE.items():
         type_id = next(type_id for type_name, type_id, _ in uia_roles._TYPES if type_name == name)
-        assert uia_roles.role_for_id(type_id) == role
+        assert uia_roles.Roles.role_for_id(type_id) == role
     assert len(source.encode("utf-8")) < tree.COMMAND_LIMIT
 
 
@@ -289,7 +295,7 @@ def _load(name):
 
 
 def test_a_saved_edge_tree_reads_the_button_the_address_and_the_focus():
-    reading = tree.read(_load("edge-address.json"), *DISPLAY)
+    reading = tree.Tree.read(_load("edge-address.json"), *DISPLAY)
     assert reading.app == "Microsoft Edge"
     assert reading.pid == 4212
     assert reading.window == (0.0, 0.0, 1440.0, 900.0)
@@ -300,31 +306,31 @@ def test_a_saved_edge_tree_reads_the_button_the_address_and_the_focus():
 
 def test_a_truncated_tree_keeps_the_button_and_says_so():
     raw = _load("truncated.json")
-    reading = tree.read(raw, *DISPLAY)
+    reading = tree.Tree.read(raw, *DISPLAY)
     assert reading.app == "Google Chrome"
     assert [node.label for node in reading.found] == ["保存"]
     assert reading.capped is True
     fetch = tree.Fetch(raw, raw["reason"], 1.5, 1, True)
-    assert tree.summary([fetch])["tree_truncated"] == 1
-    assert tree.summary([fetch])["tree_nodes"] == {"mean": 1.0, "max": 1.0}
+    assert tree.Tree.summary([fetch])["tree_truncated"] == 1
+    assert tree.Tree.summary([fetch])["tree_nodes"] == {"mean": 1.0, "max": 1.0}
 
 
 def test_a_failed_fetch_reads_as_nothing_and_is_counted(tmp_path):
     fetch = tree.Fetch(None, "timed out", 10.0, 0, False)
-    reading = tree.read(None, *DISPLAY)
+    reading = tree.Tree.read(None, *DISPLAY)
     assert reading.found == [] and reading.url is None and reading.focused is None
-    assert tree.summary([fetch])["tree_failures"] == 1
-    assert tree.summary([fetch])["tree_failure_reasons"] == ["timed out"]
-    tree.save(tmp_path, 0, None)
-    tree.save(tmp_path, 0, {"nodes": []})
-    tree.save(tmp_path, 1, {"nodes": []})
+    assert tree.Tree.summary([fetch])["tree_failures"] == 1
+    assert tree.Tree.summary([fetch])["tree_failure_reasons"] == ["timed out"]
+    tree.Tree.save(tmp_path, 0, None)
+    tree.Tree.save(tmp_path, 0, {"nodes": []})
+    tree.Tree.save(tmp_path, 1, {"nodes": []})
     assert sorted(path.name for path in tmp_path.iterdir()) == ["obs-000-uia.json", "obs-001-uia.json"]
 
 
 def test_the_vm_script_imports_each_ctypes_submodule_it_uses():
     import re
 
-    text = tree.script()
+    text = tree.Tree.script()
     used = set(re.findall(r"\bctypes\.(wintypes|util)\b", text))
     imported = set(re.findall(r"^\s*import ctypes\.(\w+)", text, re.MULTILINE))
     assert used and used <= imported

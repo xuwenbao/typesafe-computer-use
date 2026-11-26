@@ -8,13 +8,36 @@ import anthropic
 import pytest
 from PIL import Image
 
-from yuanji_computer_use import runner, writer
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.driver import DriverAgent
+from yuanji_computer_use.agents.outcomes import CLASSIFIER_STOPPED
+from yuanji_computer_use.agents.policy.stages import DecideStrategy
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.strategies import resolve
+from yuanji_computer_use.agents.writer import WriterAgent
+from yuanji_computer_use.llm.writer import ANSWER_IMAGE_EDGE, Answer, Fill, Writer
 from yuanji_computer_use.models import Field, Guidance, Item, Popup
-from yuanji_computer_use.runner import RunConfig, answer_last, hand_off, wants_driver
-from yuanji_computer_use.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.platforms.adapter import desktop
+from yuanji_computer_use.runner import RunConfig
+
+
+def hand_off(cfg, ctx, state, step, log):
+    """Fill the session the way the loop does, then let the writer decide whether to continue."""
+    state.cfg, state.ctx, state.step, state.log = cfg, ctx, step, log
+    return WriterAgent().hand_off(state)
+
+
+def answer_last(cfg, ctx, state, log):
+    state.cfg, state.ctx, state.log = cfg, ctx, log
+    WriterAgent().conclude(state)
+
+
+def wants_driver(cfg, ctx, state, log=None):
+    state.cfg, state.ctx = cfg, ctx
+    if log is not None:
+        state.log = log
+    return DriverAgent.wants(state)
+
 
 GOAL = "find the next upcoming bruno mars concert"
 
@@ -36,7 +59,7 @@ def context(writer=None) -> Context:
     return Context(goal=GOAL, browser="Google Chrome", email=None, typesafe=None, writer=writer, history=[])
 
 
-def logged() -> tuple[list[str], runner.Log]:
+def logged():
     lines: list[str] = []
     return lines, lambda msg="", echo=True: lines.append(msg)
 
@@ -45,7 +68,7 @@ def test_the_answer_request_carries_the_capture_and_the_run(screen, make_item, m
     monkeypatch.setenv("CLICKER_ANSWER_MODEL", "answer-model")
     fake = FakeWriter({"achieved": True, "answer": " Sep 19, 2026 in Miami. "})
 
-    answer = compose_answer(fake, GOAL, screen, [make_item(0, "SEP 19, 2026")], ["clicked 'TOUR'"], "the goal is achieved")
+    answer = Writer(fake).compose_answer(GOAL, screen, [make_item(0, "SEP 19, 2026")], ["clicked 'TOUR'"], "the goal is achieved")
 
     assert answer == Answer(text="Sep 19, 2026 in Miami.", achieved=True, route="end")
     request = fake.requests[0]
@@ -65,7 +88,7 @@ def test_the_answer_reads_which_text_is_under_a_popup(screen, make_item):
     bubble = Popup("Restore pages?", 1592.0, 103.0, 334.0, 260.0)
     items = [make_item(0, "Organise"), make_item(1, "Restore pages?")]
 
-    compose_answer(fake, GOAL, replace(screen, covered={0: bubble}), items, [], "the classifier stopped")
+    Writer(fake).compose_answer(GOAL, replace(screen, covered={0: bubble}), items, [], "the classifier stopped")
 
     packet = json.loads(fake.requests[0]["messages"][0]["content"][-1]["text"])
     assert packet["screen_text_in_reading_order"] == ["Organise (under 'Restore pages?')", "Restore pages?"]
@@ -76,7 +99,7 @@ def test_the_answer_request_carries_what_the_run_has_learned_and_offers_both_way
     guided = Guidance().heard("13 or 15 inch?", "15").focused("Open the size menu")
     stops = [{"after_action": 1, "why": "the last actions changed nothing", "focus_given": "Open the size menu"}]
 
-    answer = compose_answer(fake, GOAL, screen, [], [], "stopped", guidance=guided, earlier_stops=stops, can_ask=True)
+    answer = Writer(fake).compose_answer(GOAL, screen, [], [], "stopped", guidance=guided, earlier_stops=stops, can_ask=True)
 
     assert answer == Answer(text="Two sizes.", achieved=False, focus="Click '15 inch'", question="", route="classifier")
     request = fake.requests[0]
@@ -98,8 +121,8 @@ def test_the_typed_text_and_the_proposed_url_are_composed_under_the_guidance(scr
     guided = Guidance().heard("which artist?", "bruno mars")
     fake = FakeWriter({"fill": True, "text": "bruno mars", "submit": False, "ok": True, "url": "https://www.brunomars.com"})
 
-    writer.compose_text(fake, GOAL, screen, [], [], guided)
-    writer.compose_url(fake, GOAL, [], guided)
+    Writer(fake).compose_text(GOAL, screen, [], [], guided)
+    Writer(fake).compose_url(GOAL, [], guided)
 
     for request in fake.requests:
         assert json.loads(request["messages"][0]["content"][0]["text"])["user_said"] == [
@@ -121,7 +144,7 @@ def test_the_writer_says_whether_return_follows_the_text(screen, role, reply, ex
     field = Field(role=role, label="Name", placeholder="", value="", x=0, y=0, w=100, h=20)
     fake = FakeWriter({**reply, "reason": "the goal names the folder"})
 
-    assert writer.compose_text(fake, GOAL, replace(screen, field=field), [], []) == expected
+    assert Writer(fake).compose_text(GOAL, replace(screen, field=field), [], []) == expected
     schema = fake.requests[0]["output_config"]["format"]["schema"]
     assert schema["properties"]["submit"] == {"type": "boolean"} and "submit" in schema["required"]
     assert list(schema["properties"]) == ["fill", "text", "reason", "submit"], "the reason is written before submit is decided"
@@ -130,7 +153,7 @@ def test_the_writer_says_whether_return_follows_the_text(screen, role, reply, ex
 def test_the_capture_is_shrunk_to_the_edge_the_model_reads_and_left_intact():
     capture = Image.new("RGBA", (3456, 2234))
 
-    block = writer._image_block(capture)
+    block = Writer._image_block(capture)
 
     sent = Image.open(io.BytesIO(base64.b64decode(block["source"]["data"])))
     assert sent.format == "PNG"
@@ -142,7 +165,7 @@ def test_requests_without_a_capture_stay_text_only_on_the_writer_model(monkeypat
     monkeypatch.setenv("CLICKER_WRITER_MODEL", "writer-model")
     fake = FakeWriter({"ok": True, "url": "https://www.brunomars.com"})
 
-    assert writer.compose_url(fake, GOAL, []) == "https://www.brunomars.com"
+    assert Writer(fake).compose_url(GOAL, []) == "https://www.brunomars.com"
 
     request = fake.requests[0]
     assert request["model"] == "writer-model"
@@ -171,7 +194,7 @@ def test_without_a_writer_the_run_says_why_there_is_no_answer(tmp_path, screen):
 
 
 def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path, screen, make_item, monkeypatch):
-    monkeypatch.setattr(runner, "capture", lambda *a, **k: pytest.fail("captured again"))
+    monkeypatch.setattr(perception.Capture, "capture", lambda *a, **k: pytest.fail("captured again"))
     fake = FakeWriter({"achieved": True, "answer": "Sep 19, 2026 in Miami."})
     state = Session(outcome="done", view=(screen, [make_item(0, "SEP 19, 2026")]))
     lines, log = logged()
@@ -185,9 +208,9 @@ def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path,
 
 
 def test_the_screen_is_captured_again_when_an_action_made_the_last_capture_stale(tmp_path, screen, make_item, monkeypatch):
-    monkeypatch.setattr(runner.desktop, "check_abort", lambda: None)
-    monkeypatch.setattr(runner, "capture", lambda *a, **k: screen)
-    monkeypatch.setattr(runner, "perceive", lambda *a, **k: [make_item(0, "TICKETS")])
+    monkeypatch.setattr(desktop, "check_abort", lambda: None)
+    monkeypatch.setattr(perception.Capture, "capture", lambda *a, **k: screen)
+    monkeypatch.setattr(perception.Perceiver, "perceive", lambda *a, **k: [make_item(0, "TICKETS")])
     fake = FakeWriter({"achieved": False, "answer": "No dates on screen."})
     state = Session(outcome="step limit", view=None)
     lines, log = logged()
@@ -240,11 +263,13 @@ def test_every_stop_names_its_outcome(kind, confidence, outcome, tmp_path, scree
     state = Session()
     _, log = logged()
 
-    keep_going = resolve(RunConfig(goal=GOAL, out=tmp_path), context(), state, screen, [], decision(kind, confidence), {}, log)
+    keep_going = DecideStrategy().resolve(
+        RunConfig(goal=GOAL, out=tmp_path), context(), state, screen, [], decision(kind, confidence), {}, log
+    )
 
     assert not keep_going
     assert state.outcome == outcome
-    assert (outcome in runner.STOPPED) == (outcome != "dry run")
+    assert (outcome in CLASSIFIER_STOPPED) == (outcome != "dry run")
 
 
 class Replies:
@@ -316,22 +341,24 @@ def test_files_still_in_the_place_being_cleared_stay_unfinished(tmp_path, screen
 
 
 def test_missing_is_empty_when_the_goal_is_reached_and_an_unknown_state_is_other(screen):
-    reached = compose_answer(
-        FakeWriter({"achieved": True, "answer": "done", "missing": [{"name": "Doc01.docx", "state": "absent"}]}),
+    reached = Writer(
+        FakeWriter({"achieved": True, "answer": "done", "missing": [{"name": "Doc01.docx", "state": "absent"}]})
+    ).compose_answer(
         GOAL,
         screen,
         [],
         [],
         "stopped",
     )
-    odd = compose_answer(
+    odd = Writer(
         FakeWriter(
             {
                 "achieved": False,
                 "answer": "not yet",
                 "missing": [{"name": "Save", "state": "gone"}, {"name": "", "state": "absent"}],
             }
-        ),
+        )
+    ).compose_answer(
         GOAL,
         screen,
         [],
@@ -459,7 +486,7 @@ def test_a_missing_name_that_is_not_on_screen_is_not_asked_again(tmp_path, scree
     ],
 )
 def test_a_route_is_settled_before_it_is_used(reply, route, screen):
-    answer = compose_answer(FakeWriter(reply), GOAL, screen, [], [], "stopped")
+    answer = Writer(FakeWriter(reply)).compose_answer(GOAL, screen, [], [], "stopped")
 
     assert answer.route == route
 
@@ -483,7 +510,7 @@ def test_a_driver_route_ends_the_classifier_and_the_driver_may_take_over(tmp_pat
 
 @pytest.mark.parametrize("state", ["absent", "still_here"])
 def test_an_end_route_that_names_a_gap_goes_to_the_driver(state, screen):
-    answer = compose_answer(
+    answer = Writer(
         FakeWriter(
             {
                 "achieved": False,
@@ -491,7 +518,8 @@ def test_an_end_route_that_names_a_gap_goes_to_the_driver(state, screen):
                 "route": "end",
                 "missing": [{"name": "example.txt", "state": state}],
             }
-        ),
+        )
+    ).compose_answer(
         GOAL,
         screen,
         [],
@@ -503,7 +531,7 @@ def test_an_end_route_that_names_a_gap_goes_to_the_driver(state, screen):
 
 
 def test_an_end_route_for_something_only_the_user_can_do_stays_end(screen):
-    answer = compose_answer(
+    answer = Writer(
         FakeWriter(
             {
                 "achieved": False,
@@ -511,7 +539,8 @@ def test_an_end_route_for_something_only_the_user_can_do_stays_end(screen):
                 "route": "end",
                 "missing": [{"name": "password", "state": "other"}],
             }
-        ),
+        )
+    ).compose_answer(
         GOAL,
         screen,
         [],
@@ -565,11 +594,11 @@ def test_a_second_stop_on_the_same_page_is_handed_back_when_the_driver_is_off(tm
 
 
 def test_an_action_makes_the_last_capture_stale(tmp_path, screen, monkeypatch):
-    monkeypatch.setattr("yuanji_computer_use.agents.strategies.perform", lambda *a, **_k: "scrolled down")
+    monkeypatch.setattr("yuanji_computer_use.actions.ActionPerformer.perform", lambda self, *a, **_k: "scrolled down")
     state = Session(view=(screen, []))
     _, log = logged()
 
-    keep_going = resolve(
+    keep_going = DecideStrategy().resolve(
         RunConfig(goal=GOAL, out=tmp_path, act=True), context(), state, screen, [], decision("scroll_down"), {}, log
     )
 

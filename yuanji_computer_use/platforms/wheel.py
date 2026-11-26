@@ -11,6 +11,10 @@ WHEEL_DELTA = 120  # one notch of the wheel
 LINES_PER_NOTCH = 3  # the Windows default; the actions ask for lines, as on macOS
 
 
-def wheel_delta(lines: int) -> int:
-    """The wheel delta that scrolls `lines` lines; positive scrolls up, as on macOS."""
-    return round(lines * WHEEL_DELTA / LINES_PER_NOTCH)
+class Wheel:
+    """How many wheel units one scroll action sends."""
+
+    @staticmethod
+    def wheel_delta(lines: int) -> int:
+        """The wheel delta that scrolls `lines` lines; positive scrolls up, as on macOS."""
+        return round(lines * WHEEL_DELTA / LINES_PER_NOTCH)

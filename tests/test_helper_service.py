@@ -11,7 +11,7 @@ from yuanji_computer_use.helper import service as service_module
 from yuanji_computer_use.helper.approvals import Gate
 from yuanji_computer_use.helper.service import Caller, Service, ToolFailure
 from yuanji_computer_use.models import Item, Missed, Screen
-from yuanji_computer_use.platform_adapter import desktop, using
+from yuanji_computer_use.platforms.adapter import desktop, using
 
 
 @pytest.fixture
@@ -38,8 +38,8 @@ def screen_reader(monkeypatch):
         screen.ax_refs[1] = "save-ref"
         return list(ITEMS)
 
-    monkeypatch.setattr(service_module, "capture", capture)
-    monkeypatch.setattr(service_module, "perceive", perceive)
+    monkeypatch.setattr(service_module.Capture, "capture", staticmethod(capture))
+    monkeypatch.setattr(service_module.Perceiver, "perceive", staticmethod(perceive))
     return looks
 
 
@@ -210,7 +210,7 @@ def test_run_goal_needs_a_typesafe_key(jev_home, fake_desk, tmp_path, monkeypatc
 
 def test_run_goal_acts_and_returns_what_the_run_recorded(jev_home, fake_desk, tmp_path, monkeypatch, clean_env):
     monkeypatch.setenv("TYPESAFE_API_KEY", "test")
-    monkeypatch.setattr(service_module, "make_writer", lambda: None)
+    monkeypatch.setattr(service_module.Writer, "open", classmethod(lambda cls: None))
     seen = {}
 
     def fake_run(cfg, ctx_factory):
@@ -220,7 +220,7 @@ def test_run_goal_acts_and_returns_what_the_run_recorded(jev_home, fake_desk, tm
         (cfg.out / "run.json").write_text(json.dumps(record))
         return SimpleNamespace(view=None)
 
-    monkeypatch.setattr(service_module, "run", fake_run)
+    monkeypatch.setattr(service_module.Runner, "run", staticmethod(fake_run))
     out = call(new_service(), approving(), "run_goal", goal="save the file", steps=7)
     assert seen["cfg"].act is True and seen["cfg"].steps == 7
     assert seen["cfg"].out.parent == jev_home / "runs"

@@ -5,25 +5,17 @@ from dataclasses import replace
 import pytest
 from PIL import Image, ImageChops, ImageStat
 
-from yuanji_computer_use import perception
 from yuanji_computer_use.parse import detect as parse_detect
 from yuanji_computer_use.parse import ocr as parse_ocr
-from yuanji_computer_use.perception import (
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.perception.pipeline import (
+    Capture,
     ParseCache,
-    boxes_intersect,
-    changed_tiles,
-    merge_reocr,
-    ocr_crop,
-    ocr_lines,
-    ocr_region,
-    reocr_rects,
-    thumbnail,
-    tile_clusters,
-    tiles_in,
+    Perceiver,
 )
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.platforms.adapter import desktop
 
-REAL_DETECT_REGION = perception.detect_region  # before the fixture below stands in for it
+REAL_DETECT_REGION = perception.Perceiver.detect_region  # before the fixture below stands in for it
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +27,7 @@ def detections(monkeypatch):
         seen.append(tuple(round(v) for v in region))
         return [((region[0], region[1], region[0] + 20.0, region[1] + 20.0), 0.9)]
 
-    monkeypatch.setattr(perception, "detect_region", fake_detect)
+    monkeypatch.setattr(perception.Perceiver, "detect_region", fake_detect)
     return seen
 
 
@@ -55,12 +47,12 @@ def screen_with(window, width=2000, height=1200, scale=2.0, app="Google Chrome",
 
 
 def test_region_is_the_whole_capture_without_a_window():
-    assert ocr_region(screen_with(None)) == (0.0, 0.0, 2000.0, 1200.0)
+    assert Perceiver.ocr_region(screen_with(None)) == (0.0, 0.0, 2000.0, 1200.0)
 
 
 def test_region_covers_the_window_with_a_margin_and_the_menu_bar():
     # window 100..500 pt vertically, scale 2, so 200..1000 px, plus an 8 pt margin below it
-    region = ocr_region(screen_with((50.0, 100.0, 600.0, 400.0)))
+    region = Perceiver.ocr_region(screen_with((50.0, 100.0, 600.0, 400.0)))
     assert region == ((50.0 - 8.0) * 2, 0.0, (50.0 + 600.0 + 8.0) * 2, (100.0 + 400.0 + 8.0) * 2)
 
 
@@ -68,7 +60,7 @@ def test_region_includes_a_popup_that_opens_to_the_left_of_the_window():
     """The window sits on the right. The menu hangs off its left side and must stay inside the crop."""
     window = (400.0, 100.0, 500.0, 400.0)
     popup = (10.0, 150.0, 180.0, 500.0)
-    region = ocr_region(screen_with(window, popups=(popup,)))
+    region = Perceiver.ocr_region(screen_with(window, popups=(popup,)))
     assert region[0] == (10.0 - 8.0) * 2
     assert region[0] < (400.0 - 8.0) * 2
     assert region[2] == (400.0 + 500.0 + 8.0) * 2
@@ -78,35 +70,35 @@ def test_region_includes_a_popup_that_opens_to_the_left_of_the_window():
 
 def test_region_clips_the_menu_bar_strip_to_the_window_columns():
     """The strip reaches the top of the display but never past the window's own sides."""
-    region = ocr_region(screen_with((300.0, 200.0, 400.0, 300.0)))
+    region = Perceiver.ocr_region(screen_with((300.0, 200.0, 400.0, 300.0)))
     assert region[0] == (300.0 - 8.0) * 2 and region[2] == (300.0 + 400.0 + 8.0) * 2
     assert region[1] == 0.0  # up to the menu bar
     assert region[2] < 2000.0  # the clock and the menu extras to the right go unread
 
 
 def test_region_reaches_the_menu_bar_even_for_a_window_low_on_the_display():
-    region = ocr_region(screen_with((50.0, 400.0, 600.0, 100.0)))
+    region = Perceiver.ocr_region(screen_with((50.0, 400.0, 600.0, 100.0)))
     assert region[1] == 0.0  # the menu bar strip is always read
 
 
 def test_region_is_at_least_the_menu_bar_strip_for_a_window_above_it():
-    region = ocr_region(screen_with((50.0, 0.0, 600.0, 10.0)))
+    region = Perceiver.ocr_region(screen_with((50.0, 0.0, 600.0, 10.0)))
     assert region[3] == perception.MENU_BAR_PT * 2
 
 
 def test_region_clamps_a_window_larger_than_the_display():
-    assert ocr_region(screen_with((-100.0, -50.0, 4000.0, 3000.0))) == (0.0, 0.0, 2000.0, 1200.0)
+    assert Perceiver.ocr_region(screen_with((-100.0, -50.0, 4000.0, 3000.0))) == (0.0, 0.0, 2000.0, 1200.0)
 
 
 def test_region_falls_back_to_the_whole_capture_for_a_degenerate_window():
-    assert ocr_region(screen_with((0.0, 0.0, 0.0, 0.0), scale=0.0)) == (0.0, 0.0, 2000.0, 1200.0)
+    assert Perceiver.ocr_region(screen_with((0.0, 0.0, 0.0, 0.0), scale=0.0)) == (0.0, 0.0, 2000.0, 1200.0)
 
 
 # ------------------------------------------------------------------ tiles and change detection
 
 
 def test_tiles_cover_the_region_aligned_to_its_origin():
-    tiles = tiles_in((100.0, 100.0, 700.0, 400.0), tile=256.0)
+    tiles = Capture.tiles_in((100.0, 100.0, 700.0, 400.0), tile=256.0)
     assert len(tiles) == 3 * 2
     assert tiles[0] == (100.0, 100.0, 356.0, 356.0)
     assert tiles[-1] == (612.0, 356.0, 700.0, 400.0)  # the last row and column are short
@@ -120,22 +112,22 @@ def painted(size=(2048, 1024), boxes=()):
 
 
 def test_no_tile_changes_between_identical_captures():
-    thumb = thumbnail(painted((1024, 512)))
-    tiles = tiles_in((0.0, 0.0, 1024.0, 512.0))
-    assert changed_tiles(thumb, thumb, tiles) == []
+    thumb = Capture.thumbnail(painted((1024, 512)))
+    tiles = Capture.tiles_in((0.0, 0.0, 1024.0, 512.0))
+    assert Capture.changed_tiles(thumb, thumb, tiles) == []
 
 
 def test_only_the_painted_tile_changes():
     before, after = painted((1024, 512)), painted((1024, 512), boxes=[(300, 300, 400, 400)])
-    tiles = tiles_in((0.0, 0.0, 1024.0, 512.0))
-    changed = changed_tiles(thumbnail(after), thumbnail(before), tiles)
+    tiles = Capture.tiles_in((0.0, 0.0, 1024.0, 512.0))
+    changed = Capture.changed_tiles(Capture.thumbnail(after), Capture.thumbnail(before), tiles)
     assert changed == [(256.0, 256.0, 512.0, 512.0)]
 
 
 def test_a_whole_new_screen_changes_every_tile():
     before, after = painted((1024, 512)), painted((1024, 512), boxes=[(0, 0, 1024, 512)])
-    tiles = tiles_in((0.0, 0.0, 1024.0, 512.0))
-    assert len(changed_tiles(thumbnail(after), thumbnail(before), tiles)) == len(tiles)
+    tiles = Capture.tiles_in((0.0, 0.0, 1024.0, 512.0))
+    assert len(Capture.changed_tiles(Capture.thumbnail(after), Capture.thumbnail(before), tiles)) == len(tiles)
 
 
 def _pale(box=None) -> Image.Image:
@@ -148,29 +140,29 @@ def _pale(box=None) -> Image.Image:
 def test_a_small_dark_mark_on_a_pale_tile_counts_as_a_change():
     """32 px of black on a pale tile: the mean stays under 6, and more than 1% of the pixels move."""
     before, after = _pale((40, 40, 72, 72)), _pale()
-    tiles = tiles_in((0.0, 0.0, 256.0, 256.0))
-    diff = ImageChops.difference(thumbnail(before), thumbnail(after))
+    tiles = Capture.tiles_in((0.0, 0.0, 256.0, 256.0))
+    diff = ImageChops.difference(Capture.thumbnail(before), Capture.thumbnail(after))
     assert ImageStat.Stat(diff).mean[0] <= perception.TILE_DIFF
-    assert changed_tiles(thumbnail(after), thumbnail(before), tiles) == [(0.0, 0.0, 256.0, 256.0)]
+    assert Capture.changed_tiles(Capture.thumbnail(after), Capture.thumbnail(before), tiles) == [(0.0, 0.0, 256.0, 256.0)]
 
 
 def test_a_pointer_sized_mark_does_not_count_as_a_change():
     before, after = _pale((40, 40, 56, 60)), _pale()
-    tiles = tiles_in((0.0, 0.0, 256.0, 256.0))
-    assert changed_tiles(thumbnail(after), thumbnail(before), tiles) == []
+    tiles = Capture.tiles_in((0.0, 0.0, 256.0, 256.0))
+    assert Capture.changed_tiles(Capture.thumbnail(after), Capture.thumbnail(before), tiles) == []
 
 
 def test_faint_noise_does_not_count_as_a_change():
     before = painted((1024, 512))
     after = before.point(lambda v: min(255, v + 3))
-    tiles = tiles_in((0.0, 0.0, 1024.0, 512.0))
-    assert changed_tiles(thumbnail(after), thumbnail(before), tiles) == []
+    tiles = Capture.tiles_in((0.0, 0.0, 1024.0, 512.0))
+    assert Capture.changed_tiles(Capture.thumbnail(after), Capture.thumbnail(before), tiles) == []
 
 
 def test_a_rect_pads_by_one_tile_and_clamps_to_the_region():
     region = (0.0, 0.0, 1024.0, 512.0)
-    assert reocr_rects([(256.0, 256.0, 512.0, 512.0)], region, []) == [(0.0, 0.0, 768.0, 512.0)]
-    assert reocr_rects([], region, []) == []
+    assert Capture.reocr_rects([(256.0, 256.0, 512.0, 512.0)], region, []) == [(0.0, 0.0, 768.0, 512.0)]
+    assert Capture.reocr_rects([], region, []) == []
 
 
 # ------------------------------------------------------------------ clustering the changed tiles
@@ -182,35 +174,35 @@ def grid(*cells, tile=256.0):
 
 
 def test_touching_tiles_are_one_blob():
-    assert len(tile_clusters(grid((0, 0), (1, 0), (1, 1)))) == 1
+    assert len(Capture.tile_clusters(grid((0, 0), (1, 0), (1, 1)))) == 1
 
 
 def test_tiles_touching_only_at_a_corner_are_one_blob():
-    assert len(tile_clusters(grid((0, 0), (1, 1)))) == 1
+    assert len(Capture.tile_clusters(grid((0, 0), (1, 1)))) == 1
 
 
 def test_far_apart_tiles_are_separate_blobs():
-    assert len(tile_clusters(grid((0, 0), (8, 6)))) == 2
+    assert len(Capture.tile_clusters(grid((0, 0), (8, 6)))) == 2
 
 
 def test_two_far_changes_become_two_rectangles():
     """The menu bar clock plus a repaint low on the page: one rectangle each, not one across both."""
     region = (0.0, 0.0, 4096.0, 2304.0)
-    rects = reocr_rects(grid((0, 0)) + grid((12, 7)), region, [])
+    rects = Capture.reocr_rects(grid((0, 0)) + grid((12, 7)), region, [])
     assert rects == [(0.0, 0.0, 512.0, 512.0), (2816.0, 1536.0, 3584.0, 2304.0)]
 
 
 def test_blobs_that_touch_once_grown_become_one_rectangle():
     region = (0.0, 0.0, 4096.0, 2304.0)
-    assert len(reocr_rects(grid((0, 0)) + grid((3, 0)), region, [])) == 1
+    assert len(Capture.reocr_rects(grid((0, 0)) + grid((3, 0)), region, [])) == 1
 
 
 def test_a_line_straddling_an_edge_can_merge_two_rectangles():
     region = (0.0, 0.0, 4096.0, 2304.0)
     apart = grid((0, 0)) + grid((8, 0))
-    assert len(reocr_rects(apart, region, [])) == 2
+    assert len(Capture.reocr_rects(apart, region, [])) == 2
     spanning = [line("a headline running across both", 400.0, 100.0, 2000.0, 140.0)]
-    assert len(reocr_rects(apart, region, spanning)) == 1
+    assert len(Capture.reocr_rects(apart, region, spanning)) == 1
 
 
 FIVE_BLOBS = ((0, 0), (6, 0), (12, 0), (16, 0), (21, 0))  # the middle two are the closest pair
@@ -218,12 +210,12 @@ WIDE_REGION = (0.0, 0.0, 8192.0, 2304.0)
 
 
 def test_more_blobs_than_the_cap_merge_down_to_it():
-    assert len(tile_clusters(grid(*FIVE_BLOBS))) == 5
-    assert len(reocr_rects(grid(*FIVE_BLOBS), WIDE_REGION, [])) == perception.MAX_REOCR_RECTS
+    assert len(Capture.tile_clusters(grid(*FIVE_BLOBS))) == 5
+    assert len(Capture.reocr_rects(grid(*FIVE_BLOBS), WIDE_REGION, [])) == perception.MAX_REOCR_RECTS
 
 
 def test_the_closest_pair_is_the_one_merged():
-    rects = reocr_rects(grid(*FIVE_BLOBS), WIDE_REGION, [])
+    rects = Capture.reocr_rects(grid(*FIVE_BLOBS), WIDE_REGION, [])
     assert (2816.0, 0.0, 4608.0, 512.0) in rects  # columns 12 and 16, the smallest gap, read as one
     assert (0.0, 0.0, 512.0, 512.0) in rects  # column 0, further from its neighbour, left alone
 
@@ -236,21 +228,21 @@ def line(text, x1, y1, x2, y2, conf=1.0):
 
 
 def test_boxes_intersect_only_on_real_overlap():
-    assert boxes_intersect((0, 0, 10, 10), (5, 5, 20, 20))
-    assert not boxes_intersect((0, 0, 10, 10), (10, 0, 20, 10))
+    assert Capture.boxes_intersect((0, 0, 10, 10), (5, 5, 20, 20))
+    assert not Capture.boxes_intersect((0, 0, 10, 10), (10, 0, 20, 10))
 
 
 def test_reocr_replaces_every_line_the_rectangle_touches():
     """A line that only straddles the edge goes too: the fresh read covers it whole."""
     previous = [line("stale", 100, 100, 200, 130), line("kept", 900, 900, 1000, 930), line("straddles", 90, 40, 110, 70)]
     fresh = [line("fresh", 100, 100, 260, 130)]
-    merged = merge_reocr(previous, fresh, [(50.0, 50.0, 400.0, 400.0)])
+    merged = Capture.merge_reocr(previous, fresh, [(50.0, 50.0, 400.0, 400.0)])
     assert [t for t, _, _ in merged] == ["kept", "fresh"]
 
 
 def test_reocr_keeps_a_line_that_only_touches_the_rectangle_edge():
     previous = [line("outside", 10.0, 10.0, 50.0, 40.0)]
-    assert merge_reocr(previous, [], [(50.0, 10.0, 400.0, 400.0)]) == previous
+    assert Capture.merge_reocr(previous, [], [(50.0, 10.0, 400.0, 400.0)]) == previous
 
 
 def test_ocr_crop_offsets_boxes_back_into_full_capture_coordinates(monkeypatch):
@@ -258,8 +250,8 @@ def test_ocr_crop_offsets_boxes_back_into_full_capture_coordinates(monkeypatch):
         assert image.size == (200, 100)  # the crop, not the capture
         return [("hello", 0.9, (10.0, 20.0, 60.0, 50.0))]
 
-    monkeypatch.setattr(parse_ocr, "recognize_text", recognize_text)
-    ((text, conf, box),) = ocr_crop(Image.new("RGB", (1000, 800)), (300.0, 400.0, 500.0, 500.0))
+    monkeypatch.setattr(parse_ocr.Ocr, "recognize_text", staticmethod(recognize_text))
+    ((text, conf, box),) = Perceiver.ocr_crop(Image.new("RGB", (1000, 800)), (300.0, 400.0, 500.0, 500.0))
     assert (text, conf) == ("hello", 0.9)
     assert box == (310.0, 420.0, 360.0, 450.0)
 
@@ -276,7 +268,7 @@ def reads(monkeypatch):
         seen.append(tuple(round(v) for v in rect))
         return [line(f"read {len(seen)}", rect[0], rect[1], rect[0] + 10, rect[1] + 10)]
 
-    monkeypatch.setattr(perception, "ocr_crop", fake_crop)
+    monkeypatch.setattr(perception.Perceiver, "ocr_crop", fake_crop)
     return seen
 
 
@@ -287,71 +279,71 @@ def capture_of(boxes=(), app="Google Chrome", window=(0.0, 0.0, 1024.0, 512.0)):
 
 def test_first_capture_reads_the_whole_region(reads):
     cache = ParseCache()
-    lines, pct, rects = ocr_lines(capture_of(), cache)
+    lines, pct, rects = Perceiver.ocr_lines(capture_of(), cache)
     assert reads == [(0, 0, 2048, 1024)] and pct == 100.0 and rects == 0  # a full read counts no rectangles
     assert [t for t, _, _ in lines] == ["read 1"]
 
 
 def test_an_unchanged_capture_is_not_read_again(reads):
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
-    lines, pct, rects = ocr_lines(capture_of(), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
+    lines, pct, rects = Perceiver.ocr_lines(capture_of(), cache)
     assert len(reads) == 1 and pct == 0.0 and rects == 0
     assert [t for t, _, _ in lines] == ["read 1"]
 
 
 def test_a_small_change_reads_only_the_rectangle_around_it(reads):
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
-    lines, pct, rects = ocr_lines(capture_of(boxes=[(300, 300, 400, 400)]), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
+    lines, pct, rects = Perceiver.ocr_lines(capture_of(boxes=[(300, 300, 400, 400)]), cache)
     assert reads[1] == (0, 0, 768, 768) and pct < 50.0 and rects == 1
     assert [t for t, _, _ in lines] == ["read 2"]  # the first read's line sat inside the rectangle
 
 
 def test_a_change_over_the_threshold_reads_the_whole_region(reads):
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
-    _, pct, rects = ocr_lines(capture_of(boxes=[(0, 0, 2048, 1024)]), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
+    _, pct, rects = Perceiver.ocr_lines(capture_of(boxes=[(0, 0, 2048, 1024)]), cache)
     assert reads[1] == (0, 0, 2048, 1024) and pct == 100.0 and rects == 0
 
 
 def test_a_different_app_is_never_reused(reads):
     cache = ParseCache()
     first = capture_of()
-    ocr_lines(first, cache)
-    ocr_lines(replace(first, app="Slack"), cache)
+    Perceiver.ocr_lines(first, cache)
+    Perceiver.ocr_lines(replace(first, app="Slack"), cache)
     assert reads == [(0, 0, 2048, 1024), (0, 0, 2048, 1024)]
 
 
 def test_a_moved_window_is_never_reused(reads):
     cache = ParseCache()
     first = capture_of()
-    ocr_lines(first, cache)
-    ocr_lines(replace(first, window=(20.0, 0.0, 1024.0, 512.0)), cache)
+    Perceiver.ocr_lines(first, cache)
+    Perceiver.ocr_lines(replace(first, window=(20.0, 0.0, 1024.0, 512.0)), cache)
     assert len(reads) == 2 and reads[1] == (24, 0, 2048, 1024)  # the moved window's own region, read whole
 
 
 def test_the_rectangle_grows_past_a_line_it_would_have_cut_in_half(reads, monkeypatch):
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
     cache.lines = [line("a headline running off to the right", 700.0, 300.0, 1400.0, 340.0)]
-    ocr_lines(capture_of(boxes=[(300, 300, 400, 400)]), cache)
+    Perceiver.ocr_lines(capture_of(boxes=[(300, 300, 400, 400)]), cache)
     assert reads[1] == (0, 0, 1400, 768)  # widened to take the whole headline
 
 
 def test_a_rectangle_that_grows_past_the_threshold_reads_the_whole_region(reads):
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
     cache.lines = [line("edge to edge", 0.0, 300.0, 2048.0, 900.0)]
-    _, pct, rects = ocr_lines(capture_of(boxes=[(300, 300, 400, 400)]), cache)
+    _, pct, rects = Perceiver.ocr_lines(capture_of(boxes=[(300, 300, 400, 400)]), cache)
     assert reads[1] == (0, 0, 2048, 1024) and pct == 100.0 and rects == 0
 
 
 def test_two_far_apart_changes_are_read_as_two_crops(reads):
     """The weakness a single union rectangle has: far apart changes would have spanned the capture."""
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
-    lines, pct, rects = ocr_lines(capture_of(boxes=[(100, 100, 180, 180), (1900, 900, 1980, 980)]), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
+    lines, pct, rects = Perceiver.ocr_lines(capture_of(boxes=[(100, 100, 180, 180), (1900, 900, 1980, 980)]), cache)
     assert reads[1:] == [(0, 0, 512, 512), (1536, 512, 2048, 1024)]
     assert rects == 2 and pct == 25.0  # both crops together, where one union rectangle would have been all of it
     assert [t for t, _, _ in lines] == ["read 2", "read 3"]
@@ -360,14 +352,14 @@ def test_two_far_apart_changes_are_read_as_two_crops(reads):
 def test_rectangles_whose_areas_add_past_the_threshold_read_the_whole_region(reads):
     """Neither rectangle is over the threshold on its own; together they are, so one read is cheaper."""
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
-    _, pct, rects = ocr_lines(capture_of(boxes=[(0, 0, 768, 1024), (1792, 0, 2048, 1024)]), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
+    _, pct, rects = Perceiver.ocr_lines(capture_of(boxes=[(0, 0, 768, 1024), (1792, 0, 2048, 1024)]), cache)
     assert reads[1] == (0, 0, 2048, 1024) and pct == 100.0 and rects == 0
 
 
 def test_no_cache_always_reads_the_region(reads):
-    ocr_lines(capture_of(), None)
-    ocr_lines(capture_of(), None)
+    Perceiver.ocr_lines(capture_of(), None)
+    Perceiver.ocr_lines(capture_of(), None)
     assert reads == [(0, 0, 2048, 1024), (0, 0, 2048, 1024)]
 
 
@@ -384,11 +376,11 @@ def read_both_ways(before, after):
     the step took from each."""
     in_line, ahead = ParseCache(), ParseCache()
     for cache in (in_line, ahead):
-        ocr_lines(before, cache)
-    expected = perception.ocr(after, 255, "goal", in_line)
+        Perceiver.ocr_lines(before, cache)
+    expected = perception.Perceiver.ocr(after, 255, "goal", in_line)
     ahead.read_ahead(after.image, after.scale)
     timing: dict[str, float] = {}
-    got = perception.ocr(after, 255, "goal", ahead, timing)
+    got = perception.Perceiver.ocr(after, 255, "goal", ahead, timing)
     return (in_line, expected), (ahead, got), timing
 
 
@@ -433,13 +425,13 @@ def test_the_ocr_engine_never_reads_two_captures_at_once(monkeypatch):
             active[0] -= 1
         return [line("text", rect[0], rect[1], rect[0] + 10, rect[1] + 10)]
 
-    monkeypatch.setattr(perception, "ocr_crop", slow_crop)
+    monkeypatch.setattr(perception.Perceiver, "ocr_crop", slow_crop)
     cache = ParseCache()
-    ocr_lines(capture_of(), cache)
+    Perceiver.ocr_lines(capture_of(), cache)
     changed = capture_of(boxes=[(300, 300, 400, 400)])
     cache.read_ahead(changed.image, changed.scale)
     cache.read_ahead(changed.image, changed.scale)  # the capture before it was never read
-    perception.ocr(replace(changed, window=(20.0, 0.0, 1024.0, 512.0)), 255, "goal", cache)
+    perception.Perceiver.ocr(replace(changed, window=(20.0, 0.0, 1024.0, 512.0)), 255, "goal", cache)
     assert most[0] == 1
 
 
@@ -451,13 +443,13 @@ def test_a_read_ahead_that_raised_leaves_the_step_to_read_and_raise_itself(monke
         raise RuntimeError("the OCR engine broke")
 
     cache = ParseCache()
-    monkeypatch.setattr(perception, "ocr_crop", lambda image, rect: [line("text", 0, 0, 10, 10)])
-    ocr_lines(capture_of(), cache)
-    monkeypatch.setattr(perception, "ocr_crop", broken)
+    monkeypatch.setattr(perception.Perceiver, "ocr_crop", lambda image, rect: [line("text", 0, 0, 10, 10)])
+    Perceiver.ocr_lines(capture_of(), cache)
+    monkeypatch.setattr(perception.Perceiver, "ocr_crop", broken)
     changed = capture_of(boxes=[(300, 300, 400, 400)])
     cache.read_ahead(changed.image, changed.scale)
     with pytest.raises(RuntimeError, match="the OCR engine broke"):
-        perception.ocr(changed, 255, "goal", cache)
+        perception.Perceiver.ocr(changed, 255, "goal", cache)
     assert calls == ["jev-read-ahead", threading.current_thread().name]
 
 
@@ -465,8 +457,8 @@ def test_capture_starts_the_read_before_it_asks_which_app_and_window_it_shows(mo
     events = []
     image = painted()
     cache = ParseCache()
-    monkeypatch.setattr(perception, "ocr_crop", lambda image, rect: [line("text", 0, 0, 10, 10)])
-    ocr_lines(capture_of(), cache)
+    monkeypatch.setattr(perception.Perceiver, "ocr_crop", lambda image, rect: [line("text", 0, 0, 10, 10)])
+    Perceiver.ocr_lines(capture_of(), cache)
     monkeypatch.setattr(cache, "read_ahead", lambda image, scale: events.append("read ahead"))
     monkeypatch.setattr(desktop, "screenshot", lambda: image)
     monkeypatch.setattr(desktop, "display_scale", lambda image: 2.0)
@@ -475,9 +467,9 @@ def test_capture_starts_the_read_before_it_asks_which_app_and_window_it_shows(mo
     monkeypatch.setattr(desktop, "owned_popup_bounds", lambda pid: ())
     monkeypatch.setattr(desktop, "focused_field", lambda: None)
     monkeypatch.setattr(desktop, "browser_url", lambda browser: None)
-    perception.capture(browser="Google Chrome", ahead=cache)
+    perception.Capture.capture(browser="Google Chrome", ahead=cache)
     assert events == ["read ahead", "app"]
-    perception.capture(browser="Google Chrome")
+    perception.Capture.capture(browser="Google Chrome")
     assert events == ["read ahead", "app", "app"], "no cache, no read ahead"
 
 
@@ -489,22 +481,22 @@ def test_detect_region_offsets_boxes_back_into_full_capture_coordinates(monkeypa
         assert image.size == (400, 300)  # the region, not the capture
         return [((10.0, 10.0, 30.0, 30.0), 0.8)]
 
-    monkeypatch.setattr(parse_detect, "detect", detect)
+    monkeypatch.setattr(parse_detect.Detector, "detect", staticmethod(detect))
     assert REAL_DETECT_REGION(Image.new("RGB", (1000, 800)), (100.0, 50.0, 500.0, 350.0)) == [((110.0, 60.0, 130.0, 80.0), 0.8)]
 
 
 def test_an_unchanged_capture_reuses_its_icons_without_detecting_again(reads, detections):
     cache = ParseCache()
-    first = perception.read_screen(capture_of(), cache)
-    second = perception.read_screen(capture_of(), cache)
+    first = perception.Perceiver.read_screen(capture_of(), cache)
+    second = perception.Perceiver.read_screen(capture_of(), cache)
     assert detections == [(0, 0, 2048, 1024)] and len(reads) == 1
     assert second.icons == first.icons and not second.detected
 
 
 def test_any_changed_tile_detects_the_whole_region_again(reads, detections):
     cache = ParseCache()
-    perception.read_screen(capture_of(), cache)
-    second = perception.read_screen(capture_of(boxes=[(300, 300, 400, 400)]), cache)
+    perception.Perceiver.read_screen(capture_of(), cache)
+    second = perception.Perceiver.read_screen(capture_of(boxes=[(300, 300, 400, 400)]), cache)
     assert reads[1] == (0, 0, 768, 768), "the text is read again over the changed tiles alone"
     assert detections == [(0, 0, 2048, 1024), (0, 0, 2048, 1024)] and second.detected
 
@@ -512,20 +504,20 @@ def test_any_changed_tile_detects_the_whole_region_again(reads, detections):
 def test_a_different_app_detects_again_even_with_identical_pixels(reads, detections):
     cache = ParseCache()
     first = capture_of()
-    perception.read_screen(first, cache)
-    perception.read_screen(replace(first, app="Slack"), cache)
+    perception.Perceiver.read_screen(first, cache)
+    perception.Perceiver.read_screen(replace(first, app="Slack"), cache)
     assert len(detections) == 2
 
 
 def test_without_a_cache_every_read_detects(reads, detections):
-    perception.read_screen(capture_of(), None)
-    perception.read_screen(capture_of(), None)
+    perception.Perceiver.read_screen(capture_of(), None)
+    perception.Perceiver.read_screen(capture_of(), None)
     assert len(detections) == 2
 
 
 def test_a_read_ahead_detects_the_icons_too(reads, detections):
     cache = ParseCache()
-    perception.read_screen(capture_of(), cache)
+    perception.Perceiver.read_screen(capture_of(), cache)
     after = capture_of(boxes=[(300, 300, 400, 400)])
     cache.read_ahead(after.image, after.scale)
     ahead = cache.take_ahead(after)

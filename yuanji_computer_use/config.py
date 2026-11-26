@@ -1,7 +1,7 @@
 """Tunables, the site catalog, and environment loading.
 
-`settings()` is the only way to read configuration, and it returns one `Settings` for the process.
-`load_dotenv` and `reset_settings()` drop that copy so the next call reads the environment again.
+`Config.settings()` is the only way to read configuration, and it returns one `Settings` for the process.
+`load_dotenv` and `Config.reset_settings()` drop that copy so the next call reads the environment again.
 `.env` is copied into the environment by `load_dotenv` first: the Anthropic and TypeSafe SDKs read
 their own variables from there, and pydantic-settings does not write them back.
 """
@@ -135,68 +135,72 @@ class Settings(BaseSettings):
 _settings: Settings | None = None
 
 
-def settings() -> Settings:
-    """The one configuration for this process, built from the environment on the first call.
+class Config:
+    """Read process settings and the .env file."""
 
-    Invalid values raise `ValueError` naming the environment variable, and are not kept: the next
-    call tries again.
-    """
-    global _settings
-    if _settings is None:
-        try:
-            _settings = Settings()
-        except ValidationError as error:
-            raise ValueError(_settings_error(error)) from None
-    return _settings
+    @staticmethod
+    def settings() -> Settings:
+        """The one configuration for this process, built from the environment on the first call.
 
+        Invalid values raise `ValueError` naming the environment variable, and are not kept: the next
+        call tries again.
+        """
+        global _settings
+        if _settings is None:
+            try:
+                _settings = Settings()
+            except ValidationError as error:
+                raise ValueError(Config._settings_error(error)) from None
+        return _settings
 
-def reset_settings() -> None:
-    """Drop the cached configuration. The next `settings()` reads the environment again."""
-    global _settings
-    _settings = None
+    @staticmethod
+    def reset_settings() -> None:
+        """Drop the cached configuration. The next `Config.settings()` reads the environment again."""
+        global _settings
+        _settings = None
 
+    @staticmethod
+    def _env_name(field: str) -> str:
+        info = Settings.model_fields.get(field)
+        alias = getattr(info, "validation_alias", None) if info is not None else None
+        if isinstance(alias, str):
+            return alias
+        return f"CLICKER_{field.upper()}"
 
-def _env_name(field: str) -> str:
-    info = Settings.model_fields.get(field)
-    alias = getattr(info, "validation_alias", None) if info is not None else None
-    if isinstance(alias, str):
-        return alias
-    return f"CLICKER_{field.upper()}"
+    @staticmethod
+    def _explain(item: dict) -> str:
+        field = str(item["loc"][0]) if item["loc"] else "settings"
+        env = Config._env_name(field)
+        raw = item.get("input")
+        kind = item["type"]
+        if field == "writer_api":
+            return f"{env} must be one of {', '.join(WRITER_APIS)}, not {raw!r}"
+        if kind == "bool_parsing":
+            return f"{env} must be true or false, not {raw!r}"
+        if field == "writer_timeout" and kind == "greater_than":
+            return f"{env} must be greater than zero, not {raw!r}"
+        if field == "writer_timeout" and kind in {"float_parsing", "int_parsing"}:
+            return f"{env} must be a number of seconds, not {raw!r}"
+        if field == "driver_steps" and kind in {"int_parsing", "float_parsing"}:
+            return f"{env} must be a whole number, not {raw!r}"
+        return f"{env} {item['msg']}"
 
+    @staticmethod
+    def _settings_error(error: ValidationError) -> str:
+        return "; ".join(Config._explain(item) for item in error.errors())
 
-def _explain(item: dict) -> str:
-    field = str(item["loc"][0]) if item["loc"] else "settings"
-    env = _env_name(field)
-    raw = item.get("input")
-    kind = item["type"]
-    if field == "writer_api":
-        return f"{env} must be one of {', '.join(WRITER_APIS)}, not {raw!r}"
-    if kind == "bool_parsing":
-        return f"{env} must be true or false, not {raw!r}"
-    if field == "writer_timeout" and kind == "greater_than":
-        return f"{env} must be greater than zero, not {raw!r}"
-    if field == "writer_timeout" and kind in {"float_parsing", "int_parsing"}:
-        return f"{env} must be a number of seconds, not {raw!r}"
-    if field == "driver_steps" and kind in {"int_parsing", "float_parsing"}:
-        return f"{env} must be a whole number, not {raw!r}"
-    return f"{env} {item['msg']}"
+    @staticmethod
+    def load_dotenv(path: Path) -> None:
+        """Set KEY=VALUE lines from a .env file into the environment unless already set.
 
-
-def _settings_error(error: ValidationError) -> str:
-    return "; ".join(_explain(item) for item in error.errors())
-
-
-def load_dotenv(path: Path) -> None:
-    """Set KEY=VALUE lines from a .env file into the environment unless already set.
-
-    Drops the cached configuration either way, so a `settings()` taken before this call is not the
-    one a later call returns.
-    """
-    if path.is_file():
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
-    reset_settings()
+        Drops the cached configuration either way, so a `Config.settings()` taken before this call is not the
+        one a later call returns.
+        """
+        if path.is_file():
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+        Config.reset_settings()

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from yuanji_computer_use.decide import base_state, item_criteria
+from yuanji_computer_use.llm.classifier import Classifier
 from yuanji_computer_use.models import Item, Screen
 
 FIXTURE = Path(__file__).parent / "fixtures" / "chrome-settings-step.json"
@@ -37,10 +37,10 @@ def test_a_captured_step_sends_less_and_loses_no_item():
     items = [Item(i, *row) for i, row in enumerate(captured["items"])]
     kept = items
 
-    state = base_state(sent["goal"], screen, kept, sent["previous_actions"], sent["already_tried_on_this_screen"])
+    state = Classifier.base_state(sent["goal"], screen, kept, sent["previous_actions"], sent["already_tried_on_this_screen"])
     state["now"] = sent["now"]  # the clock the step ran at
     state.update({key: sent[key] for key in ("current_focus", "focused_field")})
-    criteria = item_criteria(screen, kept)
+    criteria = Classifier.item_criteria(screen, kept)
     before, after = wire(sent) + wire(captured["item_criteria"]), wire(state) + wire(criteria)
     assert after < 0.97 * before, f"{before} -> {after} bytes"
 

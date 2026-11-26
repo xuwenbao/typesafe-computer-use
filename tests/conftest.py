@@ -2,7 +2,7 @@
 stand-ins for the platform-only modules.
 
 The suite is pure logic and should run on any OS. The platform adapters
-(`yuanji_computer_use.macos`, `yuanji_computer_use.windows`) import their
+(`yuanji_computer_use.platforms.macos`, `yuanji_computer_use.platforms.windows`) import their
 platform's packages at module scope, but the tests only ever import them -- they
 call nothing but the pure rules -- so a stand-in that exists and raises on any
 real use is enough to run the whole suite anywhere. Where a real module is
@@ -75,41 +75,42 @@ for _windows_module in (
 import pytest  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from yuanji_computer_use import config, macos, windows, windows_session  # noqa: E402
+from yuanji_computer_use import config  # noqa: E402
 from yuanji_computer_use.browser import cdp  # noqa: E402
 from yuanji_computer_use.helper import desk_lock as helper_desk  # noqa: E402
 from yuanji_computer_use.models import Item, Screen  # noqa: E402
 from yuanji_computer_use.parse import caption as parse_caption  # noqa: E402
 from yuanji_computer_use.parse import detect as parse_detect  # noqa: E402
 from yuanji_computer_use.parse import ocr as parse_ocr  # noqa: E402
+from yuanji_computer_use.platforms import macos, windows, windows_session  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def fresh_settings(monkeypatch):
     """Each test starts from a fresh settings singleton. Changing the environment through
     monkeypatch drops it, so the next `settings()` reads the new value. Tests that change
-    `os.environ` directly call `config.reset_settings()` themselves."""
-    config.reset_settings()
+    `os.environ` directly call `config.Config.reset_settings()` themselves."""
+    config.Config.reset_settings()
     for name in ("setenv", "delenv"):
         original = getattr(monkeypatch, name)
 
         def changed(*args, _original=original, **kwargs):
             _original(*args, **kwargs)
-            config.reset_settings()
+            config.Config.reset_settings()
 
         setattr(monkeypatch, name, changed)
     yield
-    config.reset_settings()
+    config.Config.reset_settings()
 
 
 @pytest.fixture(autouse=True)
 def fresh_clipboard():
     """A cut remembered by one test must not refuse a cut in the next."""
-    from yuanji_computer_use.actions import forget_clipboard
+    from yuanji_computer_use.actions import ActionPerformer
 
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
     yield
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
 
 
 @pytest.fixture(autouse=True)
@@ -130,8 +131,8 @@ def no_real_machine(monkeypatch):
         return call
 
     for name in ("_post", "osascript", "screenshot", "open_path", "list_windows", "launch_app", "element_state", "element_text"):
-        monkeypatch.setattr(macos, name, refuse(f"macos.{name}"))
-    monkeypatch.setattr(macos, "mouse_location", lambda: (500.0, 500.0))
+        monkeypatch.setattr(macos.MacDesktop, name, staticmethod(refuse(f"macos.{name}")))
+    monkeypatch.setattr(macos.MacDesktop, "mouse_location", staticmethod(lambda: (500.0, 500.0)))
     if REAL_ACCESSIBILITY:
         for name in ("AXUIElementPerformAction", "AXUIElementSetAttributeValue"):
             monkeypatch.setattr(macos.AS, name, refuse(f"ApplicationServices.{name}"))
@@ -154,7 +155,7 @@ def no_real_machine(monkeypatch):
         "element_text",
         "owned_popup_bounds",
     ):
-        monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))
+        monkeypatch.setattr(windows.WindowsDesktop, name, staticmethod(refuse(f"windows.{name}")))
     for name in (
         "enable_child_session",
         "open_child_window",
@@ -168,8 +169,8 @@ def no_real_machine(monkeypatch):
         "in_console_session",
         "collect_facts",
     ):
-        monkeypatch.setattr(windows_session, name, refuse(f"windows_session.{name}"))
-    monkeypatch.setattr(windows, "mouse_location", lambda: (500.0, 500.0))
+        monkeypatch.setattr(windows_session.WindowsSession, name, staticmethod(refuse(f"windows_session.{name}")))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (500.0, 500.0)))
 
     # The browser backend: no Chrome and no process of any kind, nothing over CDP, and no
     # connection except to a server on this machine that the test started itself.
@@ -177,14 +178,14 @@ def no_real_machine(monkeypatch):
     for name in ("system", "posix_spawn", "posix_spawnp"):
         if hasattr(os, name):
             monkeypatch.setattr(os, name, refuse(f"os.{name}"))
-    monkeypatch.setattr(cdp, "find_chrome", refuse("cdp.find_chrome"))
-    monkeypatch.setattr(cdp, "_get_json", refuse("the CDP HTTP endpoint"))
+    monkeypatch.setattr(cdp.Chrome, "find_chrome", staticmethod(refuse("cdp.find_chrome")))
+    monkeypatch.setattr(cdp.Chrome, "_get_json", staticmethod(refuse("the CDP HTTP endpoint")))
     monkeypatch.setattr(cdp.websocket, "create_connection", refuse("a CDP websocket"))
     _loopback_only(monkeypatch, refuse)
 
     # The desktop mutex: a test that needs one passes its own lock. Creating the real one is
     # the only call here that would touch Windows.
-    monkeypatch.setattr(helper_desk, "open_mutex", refuse("helper.desk_lock.open_mutex"))
+    monkeypatch.setattr(helper_desk.DeskLock, "open_mutex", staticmethod(refuse("helper.desk_lock.open_mutex")))
 
     # The perception's models: hundreds of MB each, and no PyTorch at all on an Intel Mac. A test
     # that reads a capture patches the step that would load one, as `fake_models` does.
@@ -194,9 +195,9 @@ def no_real_machine(monkeypatch):
 
         return call
 
-    monkeypatch.setattr(parse_detect, "load_model", refuse_model("the icon detector"))
-    monkeypatch.setattr(parse_caption, "load_model", refuse_model("the icon captioner"))
-    monkeypatch.setattr(parse_ocr, "_engine", refuse_model("the OCR engine"))
+    monkeypatch.setattr(parse_detect.Detector, "load_model", staticmethod(refuse_model("the icon detector")))
+    monkeypatch.setattr(parse_caption.Captioner, "load_model", staticmethod(refuse_model("the icon captioner")))
+    monkeypatch.setattr(parse_ocr.Ocr, "_engine", staticmethod(refuse_model("the OCR engine")))
 
 
 @pytest.fixture
@@ -221,9 +222,9 @@ def fake_models(monkeypatch):
         fake.calls["caption"] += 1
         return [fake.captions(icon) for icon in icons]
 
-    monkeypatch.setattr(parse_ocr, "recognize_text", recognize)
-    monkeypatch.setattr(parse_detect, "detect", find)
-    monkeypatch.setattr(parse_caption, "generate_captions", describe)
+    monkeypatch.setattr(parse_ocr.Ocr, "recognize_text", staticmethod(recognize))
+    monkeypatch.setattr(parse_detect.Detector, "detect", staticmethod(find))
+    monkeypatch.setattr(parse_caption.Captioner, "generate_captions", staticmethod(describe))
     return fake
 
 

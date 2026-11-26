@@ -22,13 +22,15 @@ from types import SimpleNamespace
 from PIL import Image
 from typesafe_sdk import Noul
 
-from yuanji_computer_use import actions, driver_agent, runner
-from yuanji_computer_use.actions import Context
+from yuanji_computer_use import runner
+from yuanji_computer_use.actions import ActionPerformer, Context
+from yuanji_computer_use.agents.driver.conversation import DriverConversation
 from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.llm.writer import WriterError
 from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
-from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.runner import RunConfig, run
-from yuanji_computer_use.writer import WriterError
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.platforms.adapter import desktop
+from yuanji_computer_use.runner import RunConfig, Runner
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -397,8 +399,8 @@ class World:
 
     def install(self, monkeypatch) -> None:
         """Replace the two outer seams: the screen the loop reads and the machine it drives."""
-        monkeypatch.setattr(runner, "capture", lambda *a, **k: self.capture())
-        monkeypatch.setattr(runner, "perceive", lambda screen, *a, **k: self.perceive(screen))
+        monkeypatch.setattr(perception.Capture, "capture", lambda *a, **k: self.capture())
+        monkeypatch.setattr(perception.Perceiver, "perceive", lambda screen, *a, **k: self.perceive(screen))
         monkeypatch.setattr(desktop, "check_abort", lambda: None)
         monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
         monkeypatch.setattr(desktop, "click_at", self.click_at)
@@ -421,7 +423,9 @@ class World:
         monkeypatch.setattr(desktop, "open_url", self.open_url)
         # `wait` is the one action that touches no machine call, so the only way the world hears
         # about it is the handler itself. Without this a loading page would never finish loading.
-        monkeypatch.setitem(actions._HANDLERS, "wait", lambda decision, screen, items, ctx: (self.apply("wait"), "waited")[1])
+        monkeypatch.setitem(
+            ActionPerformer._HANDLERS, "wait", lambda decision, screen, items, ctx: (self.apply("wait"), "waited")[1]
+        )
 
 
 DEFAULT_CONFIDENCE = 0.9  # comfortably over the runner's 0.4 floor, so a scenario stops for a reason
@@ -617,7 +621,7 @@ def drive(
     """
     world.install(monkeypatch)
     if capture is not None:
-        monkeypatch.setattr(runner, "capture", capture)
+        monkeypatch.setattr(perception.Capture, "capture", capture)
     fake = FakeTypeSafe(policy, noul)
     world.fake = fake
     monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)
@@ -631,14 +635,14 @@ def drive(
     packets = getattr(client, "drive_packets", None)
     model = ScriptedModel(scripts if scripts is not None else [], packets if packets is not None else [])
     model.on_request = getattr(client, "on_drive_request", None)
-    monkeypatch.setattr(driver_agent, "model_for", lambda: model)
+    monkeypatch.setattr(DriverConversation, "model_for", staticmethod(lambda: model))
     left = list(replies or [])
 
     def ask(question: str) -> str:
         world.asked.append(question)
         return left.pop(0) if left else ""
 
-    return run(
+    return Runner.run(
         cfg,
         lambda typesafe, history: Context(
             goal=goal,

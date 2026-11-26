@@ -9,7 +9,7 @@ from yuanji_computer_use.helper import setup
 
 def _main(tmp_path, argv, **kwargs):
     exe = kwargs.pop("exe", tmp_path / "app" / "clicker.exe")
-    return setup.main(argv, exe=exe, home=tmp_path / "home", appdata=tmp_path / "roaming", **kwargs)
+    return setup.Guide.main(argv, exe=exe, home=tmp_path / "home", appdata=tmp_path / "roaming", **kwargs)
 
 
 def test_a_pipe_must_name_the_host(tmp_path):
@@ -140,10 +140,10 @@ def test_a_checkout_points_at_its_clicker_script(tmp_path, monkeypatch):
     (script / name).write_text("", encoding="utf-8")
     monkeypatch.setattr(setup.sys, "prefix", str(tmp_path / "venv"))
     monkeypatch.delattr(setup.sys, "frozen", raising=False)
-    assert setup.program_exe() == script / name
+    assert setup.Guide.program_exe() == script / name
     monkeypatch.setattr(setup.sys, "prefix", str(tmp_path / "elsewhere"))
     with pytest.raises(setup.SetupError):
-        setup.program_exe()
+        setup.Guide.program_exe()
 
 
 def test_a_frozen_build_points_at_itself(tmp_path, monkeypatch):
@@ -151,7 +151,7 @@ def test_a_frozen_build_points_at_itself(tmp_path, monkeypatch):
     exe.write_text("", encoding="utf-8")
     monkeypatch.setattr(setup.sys, "frozen", True, raising=False)
     monkeypatch.setattr(setup.sys, "executable", str(exe))
-    assert setup.program_exe() == exe.resolve()
+    assert setup.Guide.program_exe() == exe.resolve()
 
 
 def test_workbuddy_merges_its_config_and_copies_the_skill(tmp_path):
@@ -172,7 +172,7 @@ def test_workbuddy_merges_its_config_and_copies_the_skill(tmp_path):
 def test_workbuddy_write_says_the_server_needs_trust(tmp_path, capsys):
     assert _main(tmp_path, ["--host", "workbuddy", "--write"]) == 0
     assert "next: " in capsys.readouterr().out
-    assert "「信任」" in setup._reload_note("workbuddy")
+    assert "「信任」" in setup.Guide._reload_note("workbuddy")
 
 
 def test_preview_writes_nothing(tmp_path, capsys):
@@ -257,7 +257,7 @@ def test_claude_code_prints_the_command_and_a_stand_in_runs_it(tmp_path):
 
 def test_key_is_refused_when_stdin_is_not_a_terminal(tmp_path, monkeypatch):
     monkeypatch.setenv("JEV_HOME", str(tmp_path / "jev"))
-    assert setup.main(["--key"], is_tty=lambda: False, prompt=lambda _label: "secret") == 2
+    assert setup.Guide.main(["--key"], is_tty=lambda: False, prompt=lambda _label: "secret") == 2
     assert not (tmp_path / "jev" / ".env").exists()
 
 
@@ -266,7 +266,7 @@ def test_key_keeps_the_other_variables(tmp_path, monkeypatch):
     env = tmp_path / "jev" / ".env"
     env.parent.mkdir()
     env.write_text("OTHER=1\nTYPESAFE_API_KEY=old\n", encoding="utf-8")
-    assert setup.main(["--key"], is_tty=lambda: True, prompt=lambda _label: "new-key") == 0
+    assert setup.Guide.main(["--key"], is_tty=lambda: True, prompt=lambda _label: "new-key") == 0
     text = env.read_text(encoding="utf-8")
     assert "OTHER=1" in text
     assert "TYPESAFE_API_KEY=new-key" in text

@@ -11,9 +11,9 @@ from world import FakeTypeSafe, scripted
 from yuanji_computer_use import runner
 from yuanji_computer_use.parse import detect as parse_detect
 from yuanji_computer_use.parse import ocr as parse_ocr
-from yuanji_computer_use.platform_adapter import current, host
+from yuanji_computer_use.platforms.adapter import current, host
 from yuanji_computer_use.waa import agent as agent_module
-from yuanji_computer_use.waa.agent import JevAgent, browser_for
+from yuanji_computer_use.waa.agent import JevAgent, WaaRun
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "waa" / "edge-address.json").read_text())
 DISPLAY = (1440, 900)
@@ -55,8 +55,8 @@ def jev(monkeypatch, tmp_path):
 
     def make(policy, *, lines=(), **kwargs) -> JevAgent:
         monkeypatch.setattr(runner, "TypeSafeClient", lambda: FakeTypeSafe(policy))
-        monkeypatch.setattr(parse_ocr, "recognize_text", lambda image: list(lines))
-        monkeypatch.setattr(parse_detect, "detect", lambda image, *args, **kwargs: [])
+        monkeypatch.setattr(parse_ocr.Ocr, "recognize_text", staticmethod(lambda image: list(lines)))
+        monkeypatch.setattr(parse_detect.Detector, "detect", staticmethod(lambda image, *args, **kwargs: []))
         kwargs.setdefault("writer", None)
         agent = JevAgent(out_root=tmp_path, step_seconds=STEP_SECONDS, **kwargs)
         made.append(agent)
@@ -138,12 +138,12 @@ def test_reset_stops_a_waiting_worker_and_the_next_task_starts_clean(jev, tmp_pa
 
 
 def test_the_browser_follows_the_domain_and_the_run_records_it(jev, tmp_path, monkeypatch):
-    assert browser_for("msedge") == "Microsoft Edge"
-    assert browser_for("chrome") == "Google Chrome"
-    assert browser_for("vlc") == "Google Chrome"
+    assert WaaRun.browser_for("msedge") == "Microsoft Edge"
+    assert WaaRun.browser_for("chrome") == "Google Chrome"
+    assert WaaRun.browser_for("vlc") == "Google Chrome"
     monkeypatch.setenv("WAA_COMMIT", "abc123")
     monkeypatch.setenv("WAA_IMAGE_DIGEST", "sha256:def")
-    agent = jev(scripted(("done", None)), browser=browser_for("msedge"))
+    agent = jev(scripted(("done", None)), browser=WaaRun.browser_for("msedge"))
 
     calls(agent, obs())
     finish(agent)
@@ -210,6 +210,6 @@ def test_run_on_reports_a_failed_execute(monkeypatch):
     class Controller:
         http_server = "http://vm:5000"
 
-    code, out = agent_module.run_on(Controller())("print(1)", 3)
+    code, out = agent_module.WaaRun.run_on(Controller())("print(1)", 3)
     assert code == 500
     assert out == "syntax error"

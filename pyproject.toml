@@ -64,7 +64,7 @@ Issues = "https://github.com/xuwenbao/yuanji-computer-use/issues"
 clicker = "yuanji_computer_use.cli:main"
 clicker-inspect = "yuanji_computer_use.cli:inspect"
 clicker-bench = "yuanji_computer_use.browser.bench:main"
-clicker-perception-eval = "yuanji_computer_use.perception_eval:main"
+clicker-perception-eval = "yuanji_computer_use.perception.eval:main"
 clicker-models = "yuanji_computer_use.parse.weights:main"
 
 [dependency-groups]

@@ -23,14 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config
-from ..actions import Context, click_item
+from ..actions import ActionPerformer, Context
+from ..llm.writer import Writer
 from ..models import Abort, Item, Missed, Screen
-from ..parse.runtime import unsupported
-from ..perception import capture, perceive
-from ..platform_adapter import current, desktop, using
-from ..report import annotate
-from ..runner import RunConfig, run
-from ..writer import make_writer
+from ..parse.runtime import Runtime
+from ..perception.pipeline import Capture, Perceiver
+from ..platforms.adapter import current, desktop, using
+from ..report import ScreenReport
+from ..runner import RunConfig, Runner
 from . import home
 from .approvals import Denied, Gate
 from .guard import GuardedDesktop
@@ -79,24 +79,24 @@ class Look:
     items: list[Item]
 
 
-def _png(path: Path) -> str:
-    return base64.b64encode(path.read_bytes()).decode("ascii")
-
-
-def _box(screen: Screen, it: Item) -> list[float]:
-    return [round(v / screen.scale, 1) for v in (it.x1, it.y1, it.x2, it.y2)]
-
-
-def _fresh_folder(parent: Path) -> Path:
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    out, n = parent / stamp, 1
-    while out.exists():
-        n += 1
-        out = parent / f"{stamp}-{n}"
-    return out
-
-
 class Service:
+    @staticmethod
+    def _png(path: Path) -> str:
+        return base64.b64encode(path.read_bytes()).decode("ascii")
+
+    @staticmethod
+    def _box(screen: Screen, it: Item) -> list[float]:
+        return [round(v / screen.scale, 1) for v in (it.x1, it.y1, it.x2, it.y2)]
+
+    @staticmethod
+    def _fresh_folder(parent: Path) -> Path:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        out, n = parent / stamp, 1
+        while out.exists():
+            n += 1
+            out = parent / f"{stamp}-{n}"
+        return out
+
     TOOLS = (
         "run_goal",
         "inspect_screen",
@@ -167,18 +167,18 @@ class Service:
         handoffs: int = _HANDOFFS,
         min_confidence: float = _MIN_CONFIDENCE,
     ) -> dict:
-        reason = unsupported()
+        reason = Runtime.unsupported()
         if reason:
             raise ToolFailure("not_supported", reason)
         if not os.environ.get("TYPESAFE_API_KEY"):
-            raise ToolFailure("not_configured", f"TYPESAFE_API_KEY is not set; put it in {home.env_file()}")
+            raise ToolFailure("not_configured", f"TYPESAFE_API_KEY is not set; put it in {home.Home.env_file()}")
         try:
-            cfg_settings = config.settings()
-            writer = make_writer()
+            cfg_settings = config.Config.settings()
+            writer = Writer.open()
             driver_steps = cfg_settings.driver_steps
         except ValueError as e:
             raise ToolFailure("not_configured", str(e)) from None
-        out = _fresh_folder(home.runs_dir())
+        out = Service._fresh_folder(home.Home.runs_dir())
         cfg = RunConfig(
             goal=goal,
             out=out,
@@ -200,28 +200,28 @@ class Service:
                 ask=None,
             )
 
-        state = run(cfg, ctx_factory)
+        state = Runner.run(cfg, ctx_factory)
         self._look = None
         record = json.loads((out / "run.json").read_text(encoding="utf-8"))
         data = {key: record.get(key) for key in RUN_FIELDS} | {"run_folder": str(out)}
         image = None
         if state.view is not None:
             screen, items = state.view
-            annotate(screen, items, chosen="", out=out / "final.png")
-            image = _png(out / "final.png")
+            ScreenReport.annotate(screen, items, chosen="", out=out / "final.png")
+            image = Service._png(out / "final.png")
         return {"data": data, "image": image}
 
     # ------------------------------------------------------------ looking
 
     def _see(self, goal: str) -> dict:
-        tuned = config.settings()
-        screen = capture(browser=tuned.browser)
-        items = perceive(screen, tuned.max_options, goal)
+        tuned = config.Config.settings()
+        screen = Capture.capture(browser=tuned.browser)
+        items = Perceiver.perceive(screen, tuned.max_options, goal)
         look = Look(secrets.token_hex(4), screen, items)
         self._look = look
-        shot = home.state_dir() / "look.png"
+        shot = home.Home.state_dir() / "look.png"
         shot.parent.mkdir(parents=True, exist_ok=True)
-        annotate(screen, items, chosen="", out=shot)
+        ScreenReport.annotate(screen, items, chosen="", out=shot)
         field = screen.field
         data = {
             "state_id": look.state_id,
@@ -230,12 +230,12 @@ class Service:
             "window": list(screen.window) if screen.window else None,
             "field": {"role": field.role, "label": field.label, "value": field.value} if field else None,
             "elements": [
-                {"element": it.index, "text": it.text, "role": it.role, "source": it.source, "box": _box(screen, it)}
+                {"element": it.index, "text": it.text, "role": it.role, "source": it.source, "box": Service._box(screen, it)}
                 for it in items
             ],
             "coordinates": f"screen points; the picture is in capture pixels, at scale {screen.scale} pixels per point",
         }
-        return {"data": data, "image": _png(shot)}
+        return {"data": data, "image": Service._png(shot)}
 
     def _inspect_screen(self, caller: Caller, goal: str = "") -> dict:
         return self._see(goal)
@@ -275,7 +275,7 @@ class Service:
         if element is not None:
             screen, item = self._element(state_id, element)
             if button == "left" and count == 1:
-                line = click_item(item, screen)
+                line = ActionPerformer().click_item(item, screen)
                 if "refused" in line:
                     raise ToolFailure("missed", line)
                 return self._acted(line)
@@ -293,7 +293,7 @@ class Service:
     def _type_text(self, caller: Caller, text: str, state_id: str = "", element: int | None = None) -> dict:
         if element is not None:
             screen, item = self._element(state_id, element)
-            line = click_item(item, screen)
+            line = ActionPerformer().click_item(item, screen)
             if "refused" in line:
                 raise ToolFailure("missed", line)
         desktop.type_text(text)

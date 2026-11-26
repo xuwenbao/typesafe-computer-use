@@ -4,58 +4,46 @@ import ctypes
 
 import pytest
 
-from yuanji_computer_use import windows
 from yuanji_computer_use.models import ROLE_WORDS, TEXT_ROLES, Missed
-from yuanji_computer_use.windows import (
-    KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE,
-    app_matches,
-    display_name,
-    key_events,
-    landed,
-    placed_origin,
-    pressable,
-    role_for,
-    unicode_events,
-    unsigned_pid,
-    wheel_delta,
-)
+from yuanji_computer_use.platforms import windows
+from yuanji_computer_use.platforms.uia_roles import Roles
+from yuanji_computer_use.platforms.wheel import Wheel
+from yuanji_computer_use.platforms.windows import KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, WindowsDesktop
 
 # Captured before the machine guard replaces it.
-_ELEMENT_TEXT = windows.element_text
+_ELEMENT_TEXT = windows.WindowsDesktop.element_text
 
 # ------------------------------------------------------------------ roles
 
 
 def test_control_types_map_onto_the_roles_the_shared_code_knows():
-    assert role_for("ButtonControl") == "AXButton"
-    assert role_for("HyperlinkControl") == "AXLink"
-    assert role_for("EditControl") in TEXT_ROLES  # a focused edit box is a text field
-    assert role_for("ComboBoxControl") in TEXT_ROLES
-    assert role_for("TextControl") == "AXStaticText"  # where a list row's label is recovered from
-    assert windows.focused_role("DocumentControl") == "AXTextArea"  # Notepad's editor, when its state is unreadable
-    assert windows.focused_role("DocumentControl", 0) == "AXTextArea"
-    assert windows.focused_role("DocumentControl", 0x40) == ""  # a read-only document, such as a web page
+    assert Roles.role_for("ButtonControl") == "AXButton"
+    assert Roles.role_for("HyperlinkControl") == "AXLink"
+    assert Roles.role_for("EditControl") in TEXT_ROLES  # a focused edit box is a text field
+    assert Roles.role_for("ComboBoxControl") in TEXT_ROLES
+    assert Roles.role_for("TextControl") == "AXStaticText"  # where a list row's label is recovered from
+    assert Roles.focused_role("DocumentControl") == "AXTextArea"  # Notepad's editor, when its state is unreadable
+    assert Roles.focused_role("DocumentControl", 0) == "AXTextArea"
+    assert Roles.focused_role("DocumentControl", 0x40) == ""  # a read-only document, such as a web page
 
 
 def test_a_writable_document_is_a_text_area_for_the_walk(monkeypatch):
-    monkeypatch.setattr(windows, "_legacy_state", lambda element: 0)
-    monkeypatch.setattr(windows, "_ui_frame", lambda element: (1.0, 2.0, 300.0, 200.0))
-    attrs = windows._ui_attrs(type("El", (), {"Name": "文本编辑器", "ControlTypeName": "DocumentControl"})())
+    monkeypatch.setattr(windows.WindowsDesktop, "_legacy_state", staticmethod(lambda element: 0))
+    monkeypatch.setattr(windows.WindowsDesktop, "_ui_frame", staticmethod(lambda element: (1.0, 2.0, 300.0, 200.0)))
+    attrs = windows.WindowsDesktop._ui_attrs(type("El", (), {"Name": "文本编辑器", "ControlTypeName": "DocumentControl"})())
     assert attrs.role == "AXTextArea" and attrs.label == "文本编辑器"
 
 
 def test_a_read_only_document_stays_out_of_the_walk(monkeypatch):
-    monkeypatch.setattr(windows, "_legacy_state", lambda element: 0x40)
-    monkeypatch.setattr(windows, "_ui_frame", lambda element: (0.0, 0.0, 10.0, 10.0))
-    attrs = windows._ui_attrs(type("El", (), {"Name": "Example", "ControlTypeName": "DocumentControl"})())
+    monkeypatch.setattr(windows.WindowsDesktop, "_legacy_state", staticmethod(lambda element: 0x40))
+    monkeypatch.setattr(windows.WindowsDesktop, "_ui_frame", staticmethod(lambda element: (0.0, 0.0, 10.0, 10.0)))
+    attrs = windows.WindowsDesktop._ui_attrs(type("El", (), {"Name": "Example", "ControlTypeName": "DocumentControl"})())
     assert attrs.role == ""
 
 
 def test_an_unknown_control_type_has_no_role():
-    assert role_for("PaneControl") == ""
-    assert role_for("") == ""
+    assert Roles.role_for("PaneControl") == ""
+    assert Roles.role_for("") == ""
 
 
 def test_every_mapped_control_role_has_a_word_or_is_structural():
@@ -67,18 +55,18 @@ def test_every_mapped_control_role_has_a_word_or_is_structural():
 
 
 def test_an_invoke_pattern_is_pressable():
-    assert pressable(True, "")
+    assert Roles.pressable(True, "")
 
 
 def test_a_legacy_default_action_is_pressable():
-    assert pressable(False, "Press")
-    assert pressable(False, "Jump")
+    assert Roles.pressable(False, "Press")
+    assert Roles.pressable(False, "Jump")
 
 
 def test_the_legacy_pattern_alone_is_not_pressable():
     """Almost every element carries LegacyIAccessible; without a named action it is not a control."""
-    assert not pressable(False, "")
-    assert not pressable(False, "   ")
+    assert not Roles.pressable(False, "")
+    assert not Roles.pressable(False, "   ")
 
 
 # ------------------------------------------------------------------ which window is the app
@@ -87,10 +75,10 @@ def test_the_legacy_pattern_alone_is_not_pressable():
 def test_a_checkout_starts_the_capture_module(monkeypatch):
     monkeypatch.delattr(windows.sys, "frozen", raising=False)
     monkeypatch.setattr(windows.sys, "executable", r"C:\Python\python.exe")
-    assert windows.capture_command("shot.png", "") == [
+    assert windows.WindowsDesktop.capture_command("shot.png", "") == [
         r"C:\Python\python.exe",
         "-m",
-        "yuanji_computer_use.capture_proc",
+        "yuanji_computer_use.platforms.capture_proc",
         "shot.png",
         "",
     ]
@@ -99,7 +87,7 @@ def test_a_checkout_starts_the_capture_module(monkeypatch):
 def test_a_frozen_build_restarts_itself_for_the_screenshot(monkeypatch):
     monkeypatch.setattr(windows.sys, "frozen", True, raising=False)
     monkeypatch.setattr(windows.sys, "executable", r"C:\Programs\clicker\clicker.exe")
-    assert windows.capture_command("shot.png", "chrome") == [
+    assert windows.WindowsDesktop.capture_command("shot.png", "chrome") == [
         r"C:\Programs\clicker\clicker.exe",
         "capture-proc",
         "shot.png",
@@ -124,90 +112,102 @@ def test_the_frozen_entry_peels_the_capture_command_off_argv():
 
 
 def test_a_window_process_id_keeps_its_high_bit():
-    assert unsigned_pid(4) == 4
-    assert unsigned_pid(-1504199776) == 2790767520
-    assert unsigned_pid(0) == 0
+    assert WindowsDesktop.unsigned_pid(4) == 4
+    assert WindowsDesktop.unsigned_pid(-1504199776) == 2790767520
+    assert WindowsDesktop.unsigned_pid(0) == 0
 
 
 def test_an_app_matches_its_own_process_exactly():
-    assert app_matches("notepad.exe", "Notepad.exe")
-    assert app_matches("notepad", "notepad.exe")
-    assert app_matches("OUTLOOK", "outlook.exe")
+    assert WindowsDesktop.app_matches("notepad.exe", "Notepad.exe")
+    assert WindowsDesktop.app_matches("notepad", "notepad.exe")
+    assert WindowsDesktop.app_matches("OUTLOOK", "outlook.exe")
 
 
 def test_a_browser_matches_by_its_product_name():
-    assert app_matches("Google Chrome", "chrome.exe")
-    assert app_matches("microsoft edge", "msedge.exe")
+    assert WindowsDesktop.app_matches("Google Chrome", "chrome.exe")
+    assert WindowsDesktop.app_matches("microsoft edge", "msedge.exe")
 
 
 def test_no_substring_match():
-    assert not app_matches("Outlook", "outlookhelper.exe")
-    assert not app_matches("note", "notepad.exe")
-    assert not app_matches("Google Chrome", "chromedriver.exe")
+    assert not WindowsDesktop.app_matches("Outlook", "outlookhelper.exe")
+    assert not WindowsDesktop.app_matches("note", "notepad.exe")
+    assert not WindowsDesktop.app_matches("Google Chrome", "chromedriver.exe")
 
 
 def test_a_chrome_tab_named_after_an_app_is_not_that_app():
     """The window title never counts: only the process that owns the window."""
-    assert not app_matches("Outlook", "chrome.exe")
+    assert not WindowsDesktop.app_matches("Outlook", "chrome.exe")
 
 
 def test_a_browser_is_reported_by_its_product_name():
-    assert display_name("chrome.exe") == "Google Chrome"
-    assert display_name("msedge.exe") == "Microsoft Edge"
-    assert display_name("notepad.exe") == "notepad.exe"
-    assert app_matches(display_name("chrome.exe"), "chrome.exe")  # what is reported can be activated
+    assert WindowsDesktop.display_name("chrome.exe") == "Google Chrome"
+    assert WindowsDesktop.display_name("msedge.exe") == "Microsoft Edge"
+    assert WindowsDesktop.display_name("notepad.exe") == "notepad.exe"
+    assert WindowsDesktop.app_matches(
+        WindowsDesktop.display_name("chrome.exe"), "chrome.exe"
+    )  # what is reported can be activated
 
 
 # ------------------------------------------------------------------ input events
 
 
 def test_a_plain_key_is_down_then_up():
-    assert key_events("return") == [(0x0D, 0), (0x0D, KEYEVENTF_KEYUP)]
+    assert WindowsDesktop.key_events("return") == [(0x0D, 0), (0x0D, KEYEVENTF_KEYUP)]
 
 
 def test_command_becomes_control_held_around_the_key():
-    assert key_events("a", command=True) == [(0x11, 0), (0x41, 0), (0x41, KEYEVENTF_KEYUP), (0x11, KEYEVENTF_KEYUP)]
+    assert WindowsDesktop.key_events("a", command=True) == [
+        (0x11, 0),
+        (0x41, 0),
+        (0x41, KEYEVENTF_KEYUP),
+        (0x11, KEYEVENTF_KEYUP),
+    ]
 
 
 def test_command_bracket_is_alt_left_the_windows_back():
     ext = KEYEVENTF_EXTENDEDKEY
-    assert key_events("[", command=True) == [(0x12, 0), (0x25, ext), (0x25, ext | KEYEVENTF_KEYUP), (0x12, KEYEVENTF_KEYUP)]
+    assert WindowsDesktop.key_events("[", command=True) == [
+        (0x12, 0),
+        (0x25, ext),
+        (0x25, ext | KEYEVENTF_KEYUP),
+        (0x12, KEYEVENTF_KEYUP),
+    ]
 
 
 def test_delete_is_an_extended_key():
-    assert key_events("delete") == [(0x2E, KEYEVENTF_EXTENDEDKEY), (0x2E, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
+    assert WindowsDesktop.key_events("delete") == [(0x2E, KEYEVENTF_EXTENDEDKEY), (0x2E, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
 
 
 def test_start_is_the_windows_key():
-    assert key_events("start") == [(0x5B, KEYEVENTF_EXTENDEDKEY), (0x5B, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
+    assert WindowsDesktop.key_events("start") == [(0x5B, KEYEVENTF_EXTENDEDKEY), (0x5B, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP)]
 
 
 def test_run_is_the_windows_key_held_around_r():
     ext = KEYEVENTF_EXTENDEDKEY
-    assert key_events("run") == [(0x5B, ext), (0x52, 0), (0x52, KEYEVENTF_KEYUP), (0x5B, ext | KEYEVENTF_KEYUP)]
+    assert WindowsDesktop.key_events("run") == [(0x5B, ext), (0x52, 0), (0x52, KEYEVENTF_KEYUP), (0x5B, ext | KEYEVENTF_KEYUP)]
 
 
 def test_text_is_typed_as_unicode_characters_not_keys():
     down, up = KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-    assert unicode_events("aé") == [(ord("a"), down), (ord("a"), up), (0xE9, down), (0xE9, up)]
+    assert WindowsDesktop.unicode_events("aé") == [(ord("a"), down), (ord("a"), up), (0xE9, down), (0xE9, up)]
 
 
 def test_text_outside_ascii_survives():
     """pyautogui.typewrite dropped every one of these."""
     text = "Zoë, 東京, Ω"
-    units = [unit for unit, flags in unicode_events(text) if not flags & KEYEVENTF_KEYUP]
+    units = [unit for unit, flags in WindowsDesktop.unicode_events(text) if not flags & KEYEVENTF_KEYUP]
     assert "".join(map(chr, units)) == text
 
 
 def test_a_character_outside_the_bmp_is_a_surrogate_pair():
-    units = [unit for unit, flags in unicode_events("😀") if not flags & KEYEVENTF_KEYUP]
+    units = [unit for unit, flags in WindowsDesktop.unicode_events("😀") if not flags & KEYEVENTF_KEYUP]
     assert units == [0xD83D, 0xDE00]
 
 
 def test_the_scroll_the_actions_ask_for_is_whole_notches_in_the_macos_direction():
-    assert wheel_delta(10) > 0 and wheel_delta(-10) < 0  # positive scrolls up on both
-    assert wheel_delta(-10) == -400  # ten lines at three a notch
-    assert wheel_delta(3) == windows.WHEEL_DELTA
+    assert Wheel.wheel_delta(10) > 0 and Wheel.wheel_delta(-10) < 0  # positive scrolls up on both
+    assert Wheel.wheel_delta(-10) == -400  # ten lines at three a notch
+    assert Wheel.wheel_delta(3) == windows.WHEEL_DELTA
 
 
 def test_the_input_record_has_the_size_windows_expects():
@@ -220,34 +220,34 @@ def test_the_input_record_has_the_size_windows_expects():
 
 
 def test_a_click_lands_only_where_the_cursor_went():
-    assert landed((100, 200), (100.0, 200.0))
-    assert landed((100, 200), (101.0, 199.0))
-    assert not landed((100, 200), (0.0, 0.0))  # another desktop has the input
-    assert not landed((100, 200), (100.0, 260.0))
+    assert WindowsDesktop.landed((100, 200), (100.0, 200.0))
+    assert WindowsDesktop.landed((100, 200), (101.0, 199.0))
+    assert not WindowsDesktop.landed((100, 200), (0.0, 0.0))  # another desktop has the input
+    assert not WindowsDesktop.landed((100, 200), (100.0, 260.0))
 
 
 WORK = (0.0, 0.0, 1280.0, 800.0)
 
 
 def test_a_window_inside_the_work_area_stays_where_it_is():
-    assert placed_origin((10.0, 20.0, 100.0, 80.0), WORK) is None
-    assert placed_origin((0.0, 0.0, 2000.0, 2000.0), WORK) is None  # already at the origin, though larger
+    assert WindowsDesktop.placed_origin((10.0, 20.0, 100.0, 80.0), WORK) is None
+    assert WindowsDesktop.placed_origin((0.0, 0.0, 2000.0, 2000.0), WORK) is None  # already at the origin, though larger
 
 
 def test_a_window_outside_the_work_area_is_moved_back_inside():
-    assert placed_origin((-40.0, 20.0, 100.0, 80.0), WORK) == (0.0, 20.0)
-    assert placed_origin((1250.0, 20.0, 100.0, 80.0), WORK) == (1180.0, 20.0)
-    assert placed_origin((10.0, 900.0, 100.0, 80.0), WORK) == (10.0, 720.0)
-    assert placed_origin((50.0, 10.0, 2000.0, 80.0), WORK) == (0.0, 10.0)
+    assert WindowsDesktop.placed_origin((-40.0, 20.0, 100.0, 80.0), WORK) == (0.0, 20.0)
+    assert WindowsDesktop.placed_origin((1250.0, 20.0, 100.0, 80.0), WORK) == (1180.0, 20.0)
+    assert WindowsDesktop.placed_origin((10.0, 900.0, 100.0, 80.0), WORK) == (10.0, 720.0)
+    assert WindowsDesktop.placed_origin((50.0, 10.0, 2000.0, 80.0), WORK) == (0.0, 10.0)
 
 
 def test_a_click_that_did_not_land_presses_nothing(monkeypatch):
     sent = []
-    monkeypatch.setattr(windows, "_move", lambda point: None)
-    monkeypatch.setattr(windows, "mouse_location", lambda: (0.0, 0.0))
-    monkeypatch.setattr(windows, "_send", sent.append)
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(lambda point: None))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (0.0, 0.0)))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(sent.append))
     with pytest.raises(Missed, match="not \\(640, 480\\)"):
-        windows.click_at((640.0, 480.0))
+        windows.WindowsDesktop.click_at((640.0, 480.0))
     assert sent == []
 
 
@@ -259,11 +259,11 @@ def test_a_modified_click_holds_the_key_and_releases_it_when_the_click_fails(mon
         if event.type == windows.INPUT_MOUSE:
             raise OSError("blocked")
 
-    monkeypatch.setattr(windows, "_move", lambda point: None)
-    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 10.0))
-    monkeypatch.setattr(windows, "_send", send)
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(lambda point: None))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (10.0, 10.0)))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(send))
     with pytest.raises(OSError):
-        windows.click_at((10.0, 10.0), modifier="add")
+        windows.WindowsDesktop.click_at((10.0, 10.0), modifier="add")
     assert sent[0].type == windows.INPUT_KEYBOARD and sent[0].u.ki.wVk == windows.VK_CONTROL
     assert sent[1].type == windows.INPUT_MOUSE
     assert sent[-1].type == windows.INPUT_KEYBOARD and sent[-1].u.ki.dwFlags & windows.KEYEVENTF_KEYUP
@@ -271,28 +271,28 @@ def test_a_modified_click_holds_the_key_and_releases_it_when_the_click_fails(mon
 
 def test_a_double_right_click_is_two_presses_of_the_right_button(monkeypatch):
     sent = []
-    monkeypatch.setattr(windows, "_move", lambda point: None)
-    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 10.0))
-    monkeypatch.setattr(windows, "_send", sent.append)
-    windows.click_at((10.0, 10.0), button="right", count=2)
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(lambda point: None))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (10.0, 10.0)))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(sent.append))
+    windows.WindowsDesktop.click_at((10.0, 10.0), button="right", count=2)
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_RIGHTDOWN, windows.MOUSEEVENTF_RIGHTUP] * 2
 
 
 def test_a_scroll_aimed_at_a_point_parks_the_pointer_there(monkeypatch):
     moved = []
-    monkeypatch.setattr(windows, "_move", moved.append)
-    monkeypatch.setattr(windows, "_send", lambda event: None)
-    windows.scroll(-10, at=(30.2, 40.8))
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(moved.append))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(lambda event: None))
+    windows.WindowsDesktop.scroll(-10, at=(30.2, 40.8))
     assert moved == [(30, 41)]
 
 
 def test_a_drag_presses_moves_and_releases(monkeypatch):
     sent = []
     moved = []
-    monkeypatch.setattr(windows, "_move", moved.append)
-    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 20.0))
-    monkeypatch.setattr(windows, "_send", sent.append)
-    windows.drag((10.0, 20.0), (18.0, 28.0))
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(moved.append))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (10.0, 20.0)))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(sent.append))
+    windows.WindowsDesktop.drag((10.0, 20.0), (18.0, 28.0))
     assert moved[0] == (10, 20) and moved[-1] == (18, 28)
     assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
     assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
@@ -308,11 +308,11 @@ def test_a_drag_releases_the_button_when_a_move_fails(monkeypatch):
         if len(moved) > 2:
             raise OSError("blocked")
 
-    monkeypatch.setattr(windows, "_move", move)
-    monkeypatch.setattr(windows, "mouse_location", lambda: (10.0, 20.0))
-    monkeypatch.setattr(windows, "_send", sent.append)
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(move))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (10.0, 20.0)))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(sent.append))
     with pytest.raises(OSError):
-        windows.drag((10.0, 20.0), (50.0, 20.0))
+        windows.WindowsDesktop.drag((10.0, 20.0), (50.0, 20.0))
     assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
     assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
 
@@ -333,15 +333,15 @@ def _cursor_denied(monkeypatch):
     def refuse() -> tuple[float, float]:
         raise denied(5, "GetCursorPos", "Access is denied.")
 
-    monkeypatch.setattr(windows, "mouse_location", refuse)
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(refuse))
 
 
 def test_a_click_presses_when_the_cursor_cannot_be_read(monkeypatch):
     sent = []
     _cursor_denied(monkeypatch)
-    monkeypatch.setattr(windows, "_move", lambda point: None)
-    monkeypatch.setattr(windows, "_send", sent.append)
-    windows.click_at((640.0, 480.0))
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(lambda point: None))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(sent.append))
+    windows.WindowsDesktop.click_at((640.0, 480.0))
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_LEFTDOWN, windows.MOUSEEVENTF_LEFTUP]
 
 
@@ -349,9 +349,9 @@ def test_a_drag_proceeds_when_the_cursor_cannot_be_read(monkeypatch):
     sent = []
     moved = []
     _cursor_denied(monkeypatch)
-    monkeypatch.setattr(windows, "_move", moved.append)
-    monkeypatch.setattr(windows, "_send", sent.append)
-    windows.drag((10.0, 20.0), (18.0, 28.0))
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(moved.append))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(sent.append))
+    windows.WindowsDesktop.drag((10.0, 20.0), (18.0, 28.0))
     assert sent[0].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTDOWN
     assert sent[-1].u.mi.dwFlags == windows.MOUSEEVENTF_LEFTUP
     assert len(moved) == windows.DRAG_STEPS + 1
@@ -359,15 +359,15 @@ def test_a_drag_proceeds_when_the_cursor_cannot_be_read(monkeypatch):
 
 def test_a_click_that_landed_presses_and_releases(monkeypatch):
     sent = []
-    monkeypatch.setattr(windows, "_move", lambda point: None)
-    monkeypatch.setattr(windows, "mouse_location", lambda: (640.0, 480.0))
-    monkeypatch.setattr(windows, "_send", sent.append)
-    windows.click_at((640.4, 479.6))
+    monkeypatch.setattr(windows.WindowsDesktop, "_move", staticmethod(lambda point: None))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (640.0, 480.0)))
+    monkeypatch.setattr(windows.WindowsDesktop, "_send", staticmethod(sent.append))
+    windows.WindowsDesktop.click_at((640.4, 479.6))
     assert [event.u.mi.dwFlags for event in sent] == [windows.MOUSEEVENTF_LEFTDOWN, windows.MOUSEEVENTF_LEFTUP]
 
 
 def test_element_text_reads_the_document_then_the_value_then_nothing(monkeypatch):
-    monkeypatch.setattr(windows, "element_text", _ELEMENT_TEXT)
+    monkeypatch.setattr(windows.WindowsDesktop, "element_text", staticmethod(_ELEMENT_TEXT))
 
     class Document:
         class DocumentRange:
@@ -390,8 +390,8 @@ def test_element_text_reads_the_document_then_the_value_then_nothing(monkeypatch
                 return self.value
             return None
 
-    monkeypatch.setattr(windows, "_pattern_id", lambda name: 1 if name == "TextPattern" else 2)
-    assert windows.element_text(Element(Document(), Value())) == "the whole note"
-    assert windows.element_text(Element(value=Value())) == "just the value"
-    assert windows.element_text(Element()) is None
-    assert windows.element_text(None) is None
+    monkeypatch.setattr(windows.WindowsDesktop, "_pattern_id", staticmethod(lambda name: 1 if name == "TextPattern" else 2))
+    assert windows.WindowsDesktop.element_text(Element(Document(), Value())) == "the whole note"
+    assert windows.WindowsDesktop.element_text(Element(value=Value())) == "just the value"
+    assert windows.WindowsDesktop.element_text(Element()) is None
+    assert windows.WindowsDesktop.element_text(None) is None

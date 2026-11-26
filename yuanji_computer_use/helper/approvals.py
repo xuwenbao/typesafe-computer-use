@@ -47,26 +47,26 @@ class Denied(Abort):
     """An input the gate refused. An `Abort`, so a run that meets one stops before acting."""
 
 
-def app_key(app: str) -> str:
-    """The one name an app goes by here: `Notepad.EXE`, `notepad` and `Google Chrome`'s `chrome` alike."""
-    name = app.strip()
-    exe = next((exe for product, exe in BROWSER_EXES.items() if product.lower() == name.lower()), None)
-    return exe if exe is not None else name.lower().removesuffix(".exe")
-
-
-def host_apps(ancestors: Iterable[str]) -> frozenset[str]:
-    """The agent that started the front: every ancestor process but the desktop's own."""
-    return frozenset(key for key in map(app_key, ancestors) if key and key not in SYSTEM_ANCESTORS)
-
-
 class Gate:
     """One front's hard rules for the apps it drives. `check` returns, or raises `Denied`."""
+
+    @staticmethod
+    def app_key(app: str) -> str:
+        """The one name an app goes by here: `Notepad.EXE`, `notepad` and `Google Chrome`'s `chrome` alike."""
+        name = app.strip()
+        exe = next((exe for product, exe in BROWSER_EXES.items() if product.lower() == name.lower()), None)
+        return exe if exe is not None else name.lower().removesuffix(".exe")
+
+    @staticmethod
+    def host_apps(ancestors: Iterable[str]) -> frozenset[str]:
+        """The agent that started the front: every ancestor process but the desktop's own."""
+        return frozenset(key for key in map(Gate.app_key, ancestors) if key and key not in SYSTEM_ANCESTORS)
 
     def __init__(self, host: frozenset[str] = frozenset()) -> None:
         self.host = host
 
     def check(self, app: str, typing: bool = False) -> None:
-        key = app_key(app)
+        key = Gate.app_key(app)
         if not key:
             raise Denied("no app is in front, so there is nothing to drive")
         if key in NEVER or key in self.host:

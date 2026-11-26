@@ -23,6 +23,38 @@ _MODULES = {
 }
 
 
+class BaseAgent:
+    """角色共用的会话绑定。历史和蒙板只在这里写一次。"""
+
+    session: Session
+    cfg: object
+    ctx: object
+    log: object
+
+    def bind(self, session: Session) -> None:
+        self.session = session
+        self.cfg = session.cfg
+        self.ctx = session.ctx
+        self.log = session.log
+
+    def report(self, line: str) -> None:
+        from ..platforms.windows_session import WindowsSession
+
+        WindowsSession.report_action(line)
+
+    def say(self, line: str, *, remember: bool = True) -> None:
+        """写进运行日志。`remember` 时同时留下给后面的角色，并送到蒙板。"""
+        self.log(line)
+        if remember:
+            self.session.history.append(line)
+        self.report(line)
+
+    def remember(self, line: str) -> None:
+        """记进历史并送到蒙板。调用方已经用自己的措辞写过日志。"""
+        self.session.history.append(line)
+        self.report(line)
+
+
 class Agent(Protocol):
     name: str
 

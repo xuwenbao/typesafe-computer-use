@@ -13,10 +13,12 @@ import json
 import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
-from yuanji_computer_use import driver, runner
-from yuanji_computer_use.agents.strategies import UNCHANGED
-from yuanji_computer_use.driver import BANNED, DONE_BEFORE
-from yuanji_computer_use.runner import MAX_STALLS, STOPPED
+from yuanji_computer_use.agents.driver import DriverAgent
+from yuanji_computer_use.agents.driver import takeover as driver
+from yuanji_computer_use.agents.driver.takeover import BANNED, DONE_BEFORE
+from yuanji_computer_use.agents.outcomes import CLASSIFIER_STOPPED as STOPPED
+from yuanji_computer_use.agents.policy.stages import UNCHANGED
+from yuanji_computer_use.agents.writer import MAX_STALLS
 
 GOAL = "buy a ticket to the next show"
 
@@ -2120,7 +2122,7 @@ def test_a_takeover_that_cannot_load_keeps_the_classifiers_answer(monkeypatch, t
     def missing():
         raise FileNotFoundError("memory_consolidation_prompt.md")
 
-    monkeypatch.setattr(runner, "_driver", missing)
+    monkeypatch.setattr(DriverAgent, "_takeover", staticmethod(missing))
     writer = FakeWriter(reviews=[{"achieved": False}])
 
     state = drive(

@@ -9,10 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..calls import Calls
+from ..llm.calls import Calls
+from ..llm.writer import Answer
 from ..models import Guidance, Item, Screen, Signature
-from ..perception import ParseCache
-from ..writer import Answer
+from ..perception.pipeline import ParseCache
 
 
 @dataclass(frozen=True)
