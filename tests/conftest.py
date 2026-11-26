@@ -106,11 +106,11 @@ def fresh_settings(monkeypatch):
 @pytest.fixture(autouse=True)
 def fresh_clipboard():
     """A cut remembered by one test must not refuse a cut in the next."""
-    from yuanji_computer_use.actions import forget_clipboard
+    from yuanji_computer_use.actions import ActionPerformer
 
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
     yield
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
 
 
 @pytest.fixture(autouse=True)

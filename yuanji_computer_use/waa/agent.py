@@ -29,7 +29,7 @@ import requests
 from .. import config, runner
 from ..actions import Context
 from ..llm.classifier import Decision
-from ..llm.writer import Writer, make_writer
+from ..llm.writer import Writer
 from ..models import Abort
 from ..parse.runtime import unsupported
 from ..platforms.adapter import using
@@ -107,7 +107,7 @@ class JevAgent:
         self.browser = browser
         options = config.settings()
         if isinstance(writer, _FromEnv):
-            writer = make_writer()
+            writer = Writer.open()
         self.writer = writer
         self.driver_steps = options.driver_budget
         self.email = options.email

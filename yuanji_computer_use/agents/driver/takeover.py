@@ -11,20 +11,10 @@ import string
 import time
 from dataclasses import asdict
 
-from ...actions import (
-    WAIT_SECONDS,
-    _paste_note,
-    _return_note,
-    add_item,
-    click_item,
-    clipboard_line,
-    fill_field,
-    focus_landed,
-    noted,
-)
+from ...actions import WAIT_SECONDS, ActionPerformer
 from ...config import settings
 from ...llm.calls import DRIVER
-from ...llm.writer import DriveStep, denied_listed_names, looks_credential
+from ...llm.writer import DriveStep, Writer
 from ...models import AxNode, Item, Missed, Screen, same_screen, signature
 from ...parse.marks import marks
 from ...perception import pipeline as perception
@@ -208,7 +198,7 @@ class Takeover(BaseAgent):
             return told, None, self._unusable(told, prefix)
         move = told.move
         reached = move.action == "done" and move.achieved
-        denied = [] if reached else denied_listed_names(move.reason, False, items)
+        denied = [] if reached else Writer.denied_listed_names(move.reason, False, items)
         if not denied:
             return told, None, None
         told = self._tell(screen, items, earlier, earlier_stops, None, denied=denied, change=change, fresh=True)
@@ -533,7 +523,7 @@ class MoveExecutor:
             return BANNED
         what = self.act(move)
         if sig in Takeover.dead(state) and not Takeover.refused(what):
-            return noted(what, DONE_BEFORE)
+            return ActionPerformer().noted(what, DONE_BEFORE)
         return what
 
     def _target(self, move: DriveStep) -> str:
@@ -578,18 +568,18 @@ class MoveExecutor:
             # 目标：只按名单里的单个键。完成：名单内按下并记下键名，名单外拒绝。
             if move.key not in KEYS:
                 return f"key refused: {move.key!r} is not one of {', '.join(KEYS)}"
-            note = _return_note(screen) if move.key == "return" else None
+            note = ActionPerformer()._return_note(screen) if move.key == "return" else None
             desktop.press(move.key)
-            return noted(f"pressed {move.key}", note)
+            return ActionPerformer().noted(f"pressed {move.key}", note)
         if move.action == "shortcut":
             # 目标：按一个允许的 Cmd/Ctrl 组合。完成：禁止退出类快捷键；复制和剪切在结果里标明屏幕可以不变。
             if move.key not in SHORTCUTS:
                 return f"shortcut refused: {move.key!r} is not one of {', '.join(SHORTCUTS)}"
             if move.key in QUIET_SHORTCUTS:
-                return clipboard_line(move.key, items)
-            note = _paste_note(items) if move.key == "v" else None
+                return ActionPerformer().clipboard_line(move.key, items)
+            note = ActionPerformer()._paste_note(items) if move.key == "v" else None
             desktop.press(move.key, command=True)
-            return noted(f"pressed command+{move.key}", note)
+            return ActionPerformer().noted(f"pressed command+{move.key}", note)
         if move.action in ("scroll_down", "scroll_up"):
             return self._scroll(move)
         if move.action == "set_value":
@@ -659,7 +649,7 @@ class MoveExecutor:
             item = next((it for it in items if str(it.index) == move.item), None)
             if item is None:
                 return f"type refused: there is no item {move.item!r} on this screen"
-            if looks_credential(item.text) or looks_credential(text):
+            if Writer.looks_credential(item.text) or Writer.looks_credential(text):
                 return f"type refused: {item.text!r} or the text looks like a credential"
             try:
                 desktop.click_at(screen.to_points(item))
@@ -672,13 +662,13 @@ class MoveExecutor:
         # 目标：没点名项目时，打进当前聚焦的文本框。完成：像密码就拒绝；没看到文本框也照样送按键，结果行带提醒；有文本框就打入并读回来核对。
         field = screen.field
         if field is None or not field.is_text:
-            if looks_credential(text):
+            if Writer.looks_credential(text):
                 return "type refused: the text looks like a credential"
             desktop.type_text(text)
-            return noted(f"typed {text!r} (keystrokes, not read back)", "no text field was seen focused")
-        if looks_credential(field.label) or looks_credential(field.placeholder) or looks_credential(text):
+            return ActionPerformer().noted(f"typed {text!r} (keystrokes, not read back)", "no text field was seen focused")
+        if Writer.looks_credential(field.label) or Writer.looks_credential(field.placeholder) or Writer.looks_credential(text):
             return f"type refused: {field.label!r} or the text looks like a credential"
-        return f"typed {text!r} into {field.label!r} {fill_field(field, text)}"
+        return f"typed {text!r} into {field.label!r} {ActionPerformer().fill_field(field, text)}"
 
     def _whole_pixels(self, raw: str) -> int | None:
         """模型给的像素偏移。不是整数就返回 None，拖动会被拒绝。"""
@@ -754,7 +744,7 @@ class MoveExecutor:
         if node.enabled is False:
             return f"focus_offscreen refused: {node.label!r} is disabled"
         desktop.ax_operate(node.ref, "scroll_into_view")
-        if desktop.ax_focus(node.ref) and focus_landed(node.label):
+        if desktop.ax_focus(node.ref) and ActionPerformer().focus_landed(node.label):
             return f"focused {node.label!r} (off-screen control)"
         return f"focus_offscreen refused: {node.label!r} did not take the focus"
 
@@ -768,7 +758,7 @@ class MoveExecutor:
             return f"set_value refused: {item.text!r} is disabled"
         if item.writable is False:
             return f"set_value refused: {item.text!r} is read-only"
-        if looks_credential(move.text):
+        if Writer.looks_credential(move.text):
             return "set_value refused: that text looks like a password"
         ref = screen.ax_refs.get(item.index)
         if ref is None or not item.controls:
@@ -806,9 +796,9 @@ class MoveExecutor:
         # 目标：普通单击走分类器同一条路径。追加选择走 AddToSelection，不靠按住 Control 再点一个很矮的文件名。
         # 完成：返回点击结果；双击、右键和带 Shift 的点击改走下面。
         if move.action == "click" and not move.modifier:
-            return click_item(item, screen, items)
+            return ActionPerformer().click_item(item, screen, items)
         if move.action == "click" and modifier == "add":
-            return add_item(item, screen)
+            return ActionPerformer().add_item(item, screen)
 
         # 目标：发出双击、右键或带修饰的点击。完成：点中则写明点法和项目；点不中则拒绝。
         button = "right" if move.action == "right_click" else "left"

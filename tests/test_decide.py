@@ -6,20 +6,7 @@ import pytest
 from yuanji_computer_use.agents.policy.stages import DecideStrategy
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.config import SITES
-from yuanji_computer_use.llm.classifier import (
-    Decision,
-    MalformedAnswer,
-    base_state,
-    check_answer,
-    decide,
-    item_criteria,
-    key_criteria,
-    kind_criteria,
-    merged_margin,
-    offscreen_criteria,
-    row_mates,
-    site_criteria,
-)
+from yuanji_computer_use.llm.classifier import Classifier, Decision, MalformedAnswer
 from yuanji_computer_use.models import AxNode, Guidance
 from yuanji_computer_use.runner import RunConfig
 
@@ -66,22 +53,22 @@ def test_decision_ignores_an_offscreen_answer_for_any_other_kind():
 
 
 def test_kind_criteria_offers_a_double_click_only_on_the_desktop():
-    assert "open_item" not in kind_criteria("Google Chrome", None)
-    assert "open_item" in kind_criteria("Google Chrome", None, desktop=True)
+    assert "open_item" not in Classifier.kind_criteria("Google Chrome", None)
+    assert "open_item" in Classifier.kind_criteria("Google Chrome", None, desktop=True)
 
 
 def test_kind_criteria_offers_selection_and_shortcuts_only_on_the_desktop():
-    browser = kind_criteria("Google Chrome", None)
-    desktop_kinds = kind_criteria("Google Chrome", None, desktop=True)
+    browser = Classifier.kind_criteria("Google Chrome", None)
+    desktop_kinds = Classifier.kind_criteria("Google Chrome", None, desktop=True)
     assert "add_item" not in browser and "shortcut" not in browser
     assert "added to the current selection" in desktop_kinds["add_item"]
     assert "cut, copy" in desktop_kinds["shortcut"]
-    assert list(key_criteria()) == ["x", "c", "v", "a"]
+    assert list(Classifier.key_criteria()) == ["x", "c", "v", "a"]
 
 
 def test_kind_criteria_offers_press_offscreen_only_when_there_are_offscreen_controls():
-    assert "press_offscreen" not in kind_criteria("Google Chrome", None)
-    assert "press_offscreen" in kind_criteria("Google Chrome", None, offscreen=True)
+    assert "press_offscreen" not in Classifier.kind_criteria("Google Chrome", None)
+    assert "press_offscreen" in Classifier.kind_criteria("Google Chrome", None, offscreen=True)
 
 
 def test_offscreen_criteria_and_state_name_the_role_and_say_it_is_not_visible(screen, make_item):
@@ -89,27 +76,27 @@ def test_offscreen_criteria_and_state_name_the_role_and_say_it_is_not_visible(sc
         AxNode(role="AXLink", label="Register Now", x=0.0, y=-4200.0, w=120.0, h=32.0, pressable=True),
         AxNode(role="AXRow", label="Note 900", x=0.0, y=42718.0, w=280.0, h=68.0, pressable=True),
     ]
-    assert offscreen_criteria(nodes) == {
+    assert Classifier.offscreen_criteria(nodes) == {
         "0": "link 'Register Now' (not visible)",
         "1": "cell 'Note 900' (not visible)",
     }
     live = replace(screen, offscreen=nodes)
-    state = base_state("buy the thing", live, [make_item(0, "Buy")], [])
+    state = Classifier.base_state("buy the thing", live, [make_item(0, "Buy")], [])
     assert state["offscreen_controls"] == [
         {"k": 0, "role": "link", "label": "Register Now"},
         {"k": 1, "role": "cell", "label": "Note 900"},
     ]
-    assert "offscreen_controls" not in base_state("buy the thing", screen, [make_item(0, "Buy")], [])
-    banned = base_state("buy the thing", live, [make_item(0, "Buy")], [], banned_offscreen={"Register Now"})
+    assert "offscreen_controls" not in Classifier.base_state("buy the thing", screen, [make_item(0, "Buy")], [])
+    banned = Classifier.base_state("buy the thing", live, [make_item(0, "Buy")], [], banned_offscreen={"Register Now"})
     assert banned["offscreen_controls"] == [{"k": 1, "role": "cell", "label": "Note 900"}]
-    assert offscreen_criteria(nodes, {"Register Now"}) == {"1": "cell 'Note 900' (not visible)"}
+    assert Classifier.offscreen_criteria(nodes, {"Register Now"}) == {"1": "cell 'Note 900' (not visible)"}
 
 
 def test_the_state_carries_the_current_subgoal_only_when_a_plan_has_one(screen, make_item):
     items = [make_item(0, "Hour")]
-    assert "current_subgoal" not in base_state("set a timer", screen, items, [])
+    assert "current_subgoal" not in Classifier.base_state("set a timer", screen, items, [])
     packet = {"do": "shortcut", "label": None, "role": None, "verify": {"exists": True}, "key": "v"}
-    state = base_state("set a timer", screen, items, [], subgoal=packet)
+    state = Classifier.base_state("set a timer", screen, items, [], subgoal=packet)
     assert state["current_subgoal"] == packet
 
     seen = {}
@@ -120,45 +107,45 @@ def test_the_state_carries_the_current_subgoal_only_when_a_plan_has_one(screen, 
             seen["kind"] = questions["kind"].instructions
             return SimpleNamespace(answers={"kind": answer("done", 0.9), "site": answer("none", 1.0), "item": answer("0", 0.9)})
 
-    decide(Client(), "set a timer", screen, items, [], "Google Chrome", None, subgoal=packet)
+    Classifier(Client()).decide("set a timer", screen, items, [], "Google Chrome", None, subgoal=packet)
     assert seen["state"]["current_subgoal"]["key"] == "v"
     assert "current_subgoal" in seen["kind"]
     assert "user's goal" in seen["kind"]
 
 
 def test_kind_criteria_offers_one_browser_action():
-    crit = kind_criteria("Google Chrome", None)
+    crit = Classifier.kind_criteria("Google Chrome", None)
     assert "use_browser" in crit
     assert "switch_to_browser" not in crit and "open_site" not in crit
     assert "Google Chrome" in crit["use_browser"] and "address bar" in crit["use_browser"]
 
 
 def test_site_criteria_covers_the_catalog_a_site_outside_it_and_no_site():
-    crit = site_criteria()
+    crit = Classifier.site_criteria()
     assert crit["github"] == SITES["github"]
     assert "not one of the sites named in this list" in crit["other"]
     assert "already open" in crit["none"]
 
 
 def test_kind_criteria_offers_email_only_when_set():
-    assert "type_email" not in kind_criteria("Google Chrome", None)
-    assert "type_email" in kind_criteria("Google Chrome", "user@example.com")
-    assert "click_item" in kind_criteria("Google Chrome", None)
+    assert "type_email" not in Classifier.kind_criteria("Google Chrome", None)
+    assert "type_email" in Classifier.kind_criteria("Google Chrome", "user@example.com")
+    assert "click_item" in Classifier.kind_criteria("Google Chrome", None)
 
 
 def test_kind_criteria_offers_typing_only_into_a_focused_text_field():
-    assert "type_text" not in kind_criteria("Google Chrome", "user@example.com", typing=False)
-    assert "type_email" not in kind_criteria("Google Chrome", "user@example.com", typing=False)
-    offered = kind_criteria("Google Chrome", "user@example.com", typing=True)
+    assert "type_text" not in Classifier.kind_criteria("Google Chrome", "user@example.com", typing=False)
+    assert "type_email" not in Classifier.kind_criteria("Google Chrome", "user@example.com", typing=False)
+    offered = Classifier.kind_criteria("Google Chrome", "user@example.com", typing=True)
     assert "type_text" in offered and "type_email" in offered
 
 
 def test_item_criteria_and_state_carry_region_and_dates(screen, make_item):
     items = [make_item(0, "Sale ends Oct 1, 2099", y1=100, y2=130), make_item(1, "Buy", y1=140, y2=170)]
-    crit = item_criteria(screen, items)
+    crit = Classifier.item_criteria(screen, items)
     assert crit["0"].startswith("'Sale ends Oct 1, 2099' (top-left; dated 2099-10-01")
     assert "near a line dated 2099-10-01" in crit["1"]
-    state = base_state("buy the thing", screen, items, ["opened https://example.com/"])
+    state = Classifier.base_state("buy the thing", screen, items, ["opened https://example.com/"])
     assert state["goal"] == "buy the thing"
     assert state["previous_actions"] == ["opened https://example.com/"]
     assert state["screen_items_in_reading_order"][1]["when"].startswith("near a line dated")
@@ -168,7 +155,7 @@ def test_item_criteria_and_state_carry_region_and_dates(screen, make_item):
 def test_a_selected_row_says_so_in_its_criterion(screen, make_item):
     chosen = replace(make_item(0, "Doc01.docx"), selected=True)
     other = make_item(1, "Doc02.docx")
-    crit = item_criteria(screen, [chosen, other])
+    crit = Classifier.item_criteria(screen, [chosen, other])
     assert crit["0"].endswith("; selected)")
     assert "selected" not in crit["1"]
 
@@ -183,17 +170,17 @@ def test_a_duplicated_label_names_its_row_and_a_unique_one_does_not(screen, make
         make_item(5, "Buy", x1=420, x2=480, y1=200, y2=230),
         make_item(6, "Terms", y1=300, y2=330),
     ]
-    assert row_mates(items) == {2: ["Bruno Mars", "Sep 25"], 5: ["Coldplay", "Oct 2"]}
+    assert Classifier.row_mates(items) == {2: ["Bruno Mars", "Sep 25"], 5: ["Coldplay", "Oct 2"]}
     wide = [make_item(i, f"Col {i}", x1=100 + 60 * i, x2=150 + 60 * i) for i in range(5)] + [
         make_item(5, "Buy", x1=420, x2=480),
         make_item(6, "Buy", x1=420, x2=480, y1=200, y2=230),
     ]
-    assert row_mates(wide)[5] == ["Col 0", "Col 1", "Col 2"]  # a criterion stays short
-    assert row_mates(wide, limit=None)[5] == [f"Col {i}" for i in range(5)]  # a history line takes the whole row
-    crit = item_criteria(screen, items)
+    assert Classifier.row_mates(wide)[5] == ["Col 0", "Col 1", "Col 2"]  # a criterion stays short
+    assert Classifier.row_mates(wide, limit=None)[5] == [f"Col {i}" for i in range(5)]  # a history line takes the whole row
+    crit = Classifier.item_criteria(screen, items)
     assert crit["5"].endswith("; in the row of 'Coldplay', 'Oct 2')")
     assert "row" not in crit["3"] and "row" not in crit["6"]
-    state = base_state("buy a ticket to Coldplay", screen, items, [])
+    state = Classifier.base_state("buy a ticket to Coldplay", screen, items, [])
     rows = state["screen_items_in_reading_order"]
     assert rows[5]["beside"] == ["Coldplay", "Oct 2"] and "beside" not in rows[3]
 
@@ -210,8 +197,8 @@ def test_guidance_reaches_the_state_only_when_there_is_some(screen, make_item):
     items = [make_item(0, "Buy")]
     guided = Guidance().heard("13 or 15 inch?", "15").focused("Click '15 inch'")
 
-    assert not {"current_focus", "user_said"} & set(base_state("buy the thing", screen, items, [], None, Guidance()))
-    state = base_state("buy the thing", screen, items, [], None, guided)
+    assert not {"current_focus", "user_said"} & set(Classifier.base_state("buy the thing", screen, items, [], None, Guidance()))
+    state = Classifier.base_state("buy the thing", screen, items, [], None, guided)
     assert state["current_focus"] == "Click '15 inch'"
     assert state["user_said"] == [{"asked": "13 or 15 inch?", "replied": "15"}]
     assert list(state)[:3] == ["goal", "current_focus", "user_said"]  # beside the goal they refine
@@ -229,7 +216,9 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
 
     items = [make_item(0, "Microsoft Bing"), make_item(1, "Set as default", y1=200, y2=230)]
     tried = ["clicked 'Microsoft Bing'"]
-    decide(SimpleNamespace(system_one=system_one), "make Bing the default", screen, items, [], "Google Chrome", None, tried)
+    Classifier(SimpleNamespace(system_one=system_one)).decide(
+        "make Bing the default", screen, items, [], "Google Chrome", None, tried
+    )
 
     (questions,) = asked
     for key in ("kind", "item"):
@@ -345,8 +334,8 @@ OFFERED = {"click_item", "none"}
 
 
 def test_a_partial_distribution_that_names_its_choice_is_legal():
-    check_answer("kind", answer("click_item", 0.4), OFFERED)
-    check_answer("kind", answer("click_item", 0.6, {"click_item": 0.6, "none": 0.4}), OFFERED)
+    Classifier.check_answer("kind", answer("click_item", 0.4), OFFERED)
+    Classifier.check_answer("kind", answer("click_item", 0.6, {"click_item": 0.6, "none": 0.4}), OFFERED)
 
 
 @pytest.mark.parametrize(
@@ -363,7 +352,7 @@ def test_a_partial_distribution_that_names_its_choice_is_legal():
 )
 def test_an_inconsistent_answer_is_refused(given):
     with pytest.raises(MalformedAnswer):
-        check_answer("kind", given, OFFERED)
+        Classifier.check_answer("kind", given, OFFERED)
 
 
 def test_decide_refuses_a_choice_that_was_not_offered(screen, make_item):
@@ -373,7 +362,7 @@ def test_decide_refuses_a_choice_that_was_not_offered(screen, make_item):
         return SimpleNamespace(answers={"kind": answer("not_a_kind", 0.9), "site": answer("none", 1.0), "item": answer("0", 0.9)})
 
     with pytest.raises(MalformedAnswer):
-        decide(SimpleNamespace(system_one=system_one), "look", screen, items, [], "Google Chrome", None)
+        Classifier(SimpleNamespace(system_one=system_one)).decide("look", screen, items, [], "Google Chrome", None)
 
 
 def test_a_candidate_subset_keeps_the_original_numbers(screen, make_item):
@@ -384,8 +373,7 @@ def test_a_candidate_subset_keeps_the_original_numbers(screen, make_item):
         return SimpleNamespace(answers={"kind": answer("click_item", 0.9), "item": answer("1", 0.9), "site": answer("none", 1.0)})
 
     items = [make_item(0, "Title"), make_item(1, "Switch", y1=200, y2=230), make_item(2, "Other", y1=300, y2=330)]
-    decide(
-        SimpleNamespace(system_one=system_one),
+    Classifier(SimpleNamespace(system_one=system_one)).decide(
         "toggle it",
         screen,
         items,
@@ -402,11 +390,11 @@ def test_the_same_name_on_one_row_is_one_target(screen, make_item):
     title = make_item(0, "虚拟网卡模式", x1=100, x2=280, y1=100, y2=140)
     switch = make_item(1, "虚拟网卡模式", x1=420, x2=480, y1=100, y2=140)
     other = make_item(2, "其他", y1=400, y2=430)
-    margin = merged_margin(answer("1", 0.41, {"0": 0.41, "1": 0.37, "2": 0.22}), [title, switch, other])
+    margin = Classifier.merged_margin(answer("1", 0.41, {"0": 0.41, "1": 0.37, "2": 0.22}), [title, switch, other])
     assert margin > 0.15
 
 
 def test_edit_and_delete_on_one_row_stay_apart(make_item):
     edit = make_item(0, "编辑", x1=100, x2=180, y1=100, y2=130)
     delete = make_item(1, "删除", x1=400, x2=480, y1=100, y2=130)
-    assert abs(merged_margin(answer("0", 0.41, {"0": 0.41, "1": 0.37}), [edit, delete]) - 0.04) < 1e-9
+    assert abs(Classifier.merged_margin(answer("0", 0.41, {"0": 0.41, "1": 0.37}), [edit, delete]) - 0.04) < 1e-9

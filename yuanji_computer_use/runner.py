@@ -16,7 +16,7 @@ from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
-from .actions import Context, forget_clipboard
+from .actions import ActionPerformer, Context
 from .agents.base import AgentFactory
 from .agents.session import Session
 from .agents.status import Status, allows
@@ -63,7 +63,7 @@ def run(cfg: RunConfig, ctx_factory) -> Session:
     """
     cfg.out.mkdir(parents=True, exist_ok=True)
     log = Log(cfg.out / "run.log")
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
     log(f"run folder: {cfg.out}")
     if cfg.act:
         log(f"driving the machine. abort: {desktop.abort_hint()}.")

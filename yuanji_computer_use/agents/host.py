@@ -31,10 +31,10 @@ class HostAgent(BaseAgent):
         except Exception as error:
             self.say(f"host: could not see the desktop ({error})")
             return Status.POLICY
-        from ..llm.writer import WriterError, compose_host
+        from ..llm.writer import Writer, WriterError
 
         try:
-            choice = compose_host(self.ctx.writer, self.cfg.goal, windows, front)
+            choice = Writer(self.ctx.writer).compose_host(self.cfg.goal, windows, front)
         except WriterError as error:
             self.say(f"host: could not choose an app ({error})")
             return Status.POLICY

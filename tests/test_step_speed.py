@@ -141,7 +141,7 @@ def test_the_answer_reads_with_the_runs_parse_cache(monkeypatch, tmp_path, scree
     monkeypatch.setattr(perception, "capture", lambda *args, **kwargs: screen)
     monkeypatch.setattr(perception, "perceive", lambda *args, **kwargs: seen.append(kwargs.get("cache")) or [])
     monkeypatch.setattr(
-        "yuanji_computer_use.agents.writer.compose_answer",
+        "yuanji_computer_use.llm.writer.Writer.compose_answer",
         lambda *args, **kwargs: SimpleNamespace(text="", focus="", achieved=True, missing=[]),
     )
     WriterAgent().review(state, "", False)

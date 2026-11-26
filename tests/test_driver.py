@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from yuanji_computer_use import config
-from yuanji_computer_use.actions import Context, perform
+from yuanji_computer_use.actions import ActionPerformer, Context
 from yuanji_computer_use.agents.driver.takeover import (
     BANNED,
     DONE_BEFORE,
@@ -19,7 +19,7 @@ from yuanji_computer_use.agents.driver.takeover import (
 from yuanji_computer_use.agents.policy.stages import UNCHANGED, PerceiveStrategy
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.llm.classifier import Decision
-from yuanji_computer_use.llm.writer import DriveStep, WriterError, _drive_step, _last_action, checked
+from yuanji_computer_use.llm.writer import DriveStep, Writer, WriterError
 from yuanji_computer_use.models import AxNode, Field, Item, signature
 from yuanji_computer_use.platforms import macos, windows
 from yuanji_computer_use.platforms.adapter import desktop
@@ -135,7 +135,7 @@ def test_a_different_menu_item_is_clicked_while_one_is_focused(screen, machine):
 def _press_enter(screen):
     decision = Decision(kind=SimpleNamespace(choice="press_enter"), item=None, site=SimpleNamespace(choice=""))
     ctx = Context(goal="move the files", browser="", email=None, typesafe=None, writer=None, history=[])
-    return perform(decision, screen, [], ctx)
+    return ActionPerformer().perform(decision, screen, [], ctx)
 
 
 def test_return_on_a_file_row_is_pressed_with_a_note(screen, machine):
@@ -374,7 +374,7 @@ def _paste(screen, items):
         key=SimpleNamespace(choice="v"),
     )
     ctx = Context(goal="move the files", browser="", email=None, typesafe=None, writer=None, history=[])
-    return perform(decision, screen, items, ctx)
+    return ActionPerformer().perform(decision, screen, items, ctx)
 
 
 def test_a_paste_of_files_already_in_this_folder_is_pressed_with_a_note(screen, machine, monkeypatch):
@@ -445,13 +445,11 @@ def test_a_second_cut_of_files_already_on_the_clipboard_presses_with_a_note(scre
         key=SimpleNamespace(choice="x"),
     )
     ctx = Context(goal="move the files", browser="", email=None, typesafe=None, writer=None, history=[])
-    assert perform(decision, screen, rows, ctx).endswith(note)
+    assert ActionPerformer().perform(decision, screen, rows, ctx).endswith(note)
     assert machine == [("press", "x", True)] * 3
 
 
 def test_a_cut_goes_ahead_when_the_key_the_files_or_the_clipboard_change(screen, machine, monkeypatch):
-    from yuanji_computer_use.actions import forget_clipboard
-
     both = [file_row(0, "Doc01.docx", True), file_row(1, "Doc02.docx", True)]
     held = {"files": (), "next": ()}
 
@@ -466,14 +464,14 @@ def test_a_cut_goes_ahead_when_the_key_the_files_or_the_clipboard_change(screen,
     MoveExecutor(screen, both).act(move("shortcut", key="x"))
     assert MoveExecutor(screen, both).act(move("shortcut", key="c")).startswith("pressed command+c")
 
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
     machine.clear()
     held["files"] = ()
     held["next"] = ("Doc01.docx",)
     MoveExecutor(screen, [file_row(0, "Doc01.docx", True)]).act(move("shortcut", key="x"))
     assert MoveExecutor(screen, both).act(move("shortcut", key="x")).startswith("pressed command+x")
 
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
     machine.clear()
     held["files"] = ()
     held["next"] = ("Doc01.docx", "Doc02.docx")
@@ -481,7 +479,7 @@ def test_a_cut_goes_ahead_when_the_key_the_files_or_the_clipboard_change(screen,
     held["files"] = ("Other.txt",)
     assert MoveExecutor(screen, both).act(move("shortcut", key="x")).startswith("pressed command+x")
 
-    forget_clipboard()
+    ActionPerformer.forget_clipboard()
     machine.clear()
     monkeypatch.setattr(desktop, "clipboard_files", lambda: None)
     assert "to the clipboard;" in MoveExecutor(screen, both).act(move("shortcut", key="x"))
@@ -513,11 +511,11 @@ def test_only_listed_shortcuts_are_pressed(screen, machine):
 
 def test_a_missing_achieved_flag_defaults_to_false_and_a_missing_flag_still_fails():
     props = {"reason": {"type": "string"}, "action": {"type": "string"}, "achieved": {"type": "boolean"}}
-    filled = checked({"reason": "because", "action": "wait"}, props, {"achieved": False})
+    filled = Writer.checked({"reason": "because", "action": "wait"}, props, {"achieved": False})
     assert filled["achieved"] is False
-    assert checked({"reason": "because"}, props, {"achieved": False})["action"] == ""
+    assert Writer.checked({"reason": "because"}, props, {"achieved": False})["action"] == ""
     with pytest.raises(WriterError, match="achieved"):
-        checked({"reason": "because", "action": "wait"}, props)
+        Writer.checked({"reason": "because", "action": "wait"}, props)
 
 
 def test_a_cut_is_a_clipboard_shortcut_and_an_unchanged_screen_is_not_idle(screen, machine):
@@ -546,9 +544,9 @@ def test_a_scroll_aims_at_the_named_item_and_a_missing_item_scrolls_nothing(scre
 
 
 def test_the_last_action_says_whether_it_was_refused():
-    assert _last_action([]) == {"did": "", "refused": False}
-    assert _last_action(["driver: pressed command+x"])["refused"] is False
-    assert _last_action(["driver: type refused: no text field is focused"])["refused"] is True
+    assert Writer._last_action([]) == {"did": "", "refused": False}
+    assert Writer._last_action(["driver: pressed command+x"])["refused"] is False
+    assert Writer._last_action(["driver: type refused: no text field is focused"])["refused"] is True
 
 
 def test_an_action_that_already_did_nothing_here_is_taken_with_a_note(screen, machine):
@@ -711,12 +709,12 @@ def test_the_same_action_on_the_same_screen_changes_course_at_the_third_visit(mo
 
 
 def test_run_and_start_named_as_the_action_are_pressed_as_keys(monkeypatch, tmp_path):
-    opened = _drive_step({"reason": "open notepad", "action": "run"})
+    opened = Writer._drive_step({"reason": "open notepad", "action": "run"})
     assert (opened.action, opened.key) == ("key", "run")
-    menu = _drive_step({"reason": "open the menu", "action": "Start"})
+    menu = Writer._drive_step({"reason": "open the menu", "action": "Start"})
     assert (menu.action, menu.key) == ("key", "start")
     with pytest.raises(WriterError, match="not a driver action"):
-        _drive_step({"reason": "no", "action": "run", "key": "tab"})
+        Writer._drive_step({"reason": "no", "action": "run", "key": "tab"})
 
     from world import FakeWriter, Page, World, drive
 

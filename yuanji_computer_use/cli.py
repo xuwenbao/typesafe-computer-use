@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import config
 from .actions import Context
-from .llm.writer import make_writer, provider
+from .llm.writer import Writer
 from .parse.runtime import unsupported
 from .perception.pipeline import capture, mark, perceive, start_warm_up
 from .platforms.adapter import desktop
@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.act and not desktop.accessibility_trusted():
         sys.exit("this terminal lacks Accessibility permission; grant it in System Settings > Privacy & Security")
     try:
-        writer = make_writer()
+        writer = Writer.open()
     except ValueError as e:
         sys.exit(str(e))
     if writer is None:
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
             "writer disabled: no OPENAI_API_KEY, or ANTHROPIC_API_KEY when CLICKER_WRITER_API=anthropic; type_text, writer-proposed URLs and the final answer need one"
         )
     else:
-        print(f"writer: {provider(writer)}")
+        print(f"writer: {Writer(writer).provider()}")
 
     cfg = RunConfig(
         goal=args.goal,

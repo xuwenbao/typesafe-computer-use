@@ -210,7 +210,7 @@ def test_run_goal_needs_a_typesafe_key(jev_home, fake_desk, tmp_path, monkeypatc
 
 def test_run_goal_acts_and_returns_what_the_run_recorded(jev_home, fake_desk, tmp_path, monkeypatch, clean_env):
     monkeypatch.setenv("TYPESAFE_API_KEY", "test")
-    monkeypatch.setattr(service_module, "make_writer", lambda: None)
+    monkeypatch.setattr(service_module.Writer, "open", classmethod(lambda cls: None))
     seen = {}
 
     def fake_run(cfg, ctx_factory):

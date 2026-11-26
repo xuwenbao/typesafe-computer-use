@@ -15,7 +15,7 @@ from yuanji_computer_use.browser.decide import serialize_answers
 from yuanji_computer_use.browser.perceive import Element, Page, TextBlock
 from yuanji_computer_use.browser.report import RunFolder, load_step, render_answers, render_payload
 from yuanji_computer_use.browser.runner import resolve_text
-from yuanji_computer_use.llm.writer import CREDENTIAL_HINTS, compose_browser_text, looks_credential
+from yuanji_computer_use.llm.writer import CREDENTIAL_HINTS, Writer
 
 
 def make_page(**kwargs) -> Page:
@@ -199,20 +199,20 @@ def test_render_payload_shows_state_criteria_and_elements():
     ["Password", "Enter your one-time code", "CVV", "Card number", "API key", "PIN", "seed phrase"],
 )
 def test_credential_guard_catches_dangerous_fields(label):
-    assert looks_credential(label)
+    assert Writer.looks_credential(label)
 
 
 @pytest.mark.parametrize("label", ["Search invoices", "Customer name", "PO number", "Email address"])
 def test_credential_guard_allows_ordinary_fields(label):
-    assert not looks_credential(label)
+    assert not Writer.looks_credential(label)
 
 
 def test_a_file_name_and_a_word_that_only_contains_a_hint_are_not_credentials():
-    assert not looks_credential("attrib +h secret.txt")
-    assert not looks_credential("secret.txt")
-    assert not looks_credential("spin")
-    assert looks_credential("the secret file")
-    assert looks_credential("enter the pin")
+    assert not Writer.looks_credential("attrib +h secret.txt")
+    assert not Writer.looks_credential("secret.txt")
+    assert not Writer.looks_credential("spin")
+    assert Writer.looks_credential("the secret file")
+    assert Writer.looks_credential("enter the pin")
 
 
 def test_credential_hints_cover_the_obvious_cases():
@@ -248,15 +248,15 @@ class StubWriter:
 def test_writer_refuses_credential_fields_without_calling_the_model():
     writer = StubWriter({"fill": True, "text": "hunter2", "reason": "no"})
     assert (
-        compose_browser_text(writer, "log in", field_label="Password", page_title="t", url="u", nearby_text=[], history=[]) == ""
+        Writer(writer).compose_browser_text("log in", field_label="Password", page_title="t", url="u", nearby_text=[], history=[])
+        == ""
     )
     assert writer.messages.calls == 0
 
 
 def test_writer_returns_composed_text():
     writer = StubWriter({"fill": True, "text": "invoice automation", "reason": "from the goal"})
-    got = compose_browser_text(
-        writer,
+    got = Writer(writer).compose_browser_text(
         "search for invoice automation",
         field_label="Search invoices",
         page_title="Dashboard",
@@ -270,12 +270,16 @@ def test_writer_returns_composed_text():
 
 def test_writer_declines_when_fill_is_false():
     writer = StubWriter({"fill": False, "text": "should not be used", "reason": "not my business"})
-    assert compose_browser_text(writer, "g", field_label="Search", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    assert (
+        Writer(writer).compose_browser_text("g", field_label="Search", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    )
 
 
 def test_writer_output_that_looks_like_a_secret_is_dropped():
     writer = StubWriter({"fill": True, "text": "my api key is abc123", "reason": "oops"})
-    assert compose_browser_text(writer, "g", field_label="Notes", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    assert (
+        Writer(writer).compose_browser_text("g", field_label="Notes", page_title="t", url="u", nearby_text=[], history=[]) == ""
+    )
 
 
 # ------------------------------------------------------- text provenance

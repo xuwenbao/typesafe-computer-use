@@ -8,9 +8,9 @@ from __future__ import annotations
 from dataclasses import asdict
 from types import SimpleNamespace
 
-from ...actions import perform
+from ...actions import ActionPerformer
 from ...config import settings
-from ...llm.classifier import Decision, MalformedAnswer, decide, offscreen_records
+from ...llm.classifier import Classifier, Decision, MalformedAnswer
 from ...models import Item, Screen, same_screen, signature
 from ...perception import pipeline as perception
 from ...platforms.adapter import desktop
@@ -278,7 +278,7 @@ class DecideStrategy:
             "key": decision.key.choice if decision.key else None,
             "key_confidence": decision.key.confidence if decision.key else None,
             "key_probabilities": decision.key.probabilities if decision.key else None,
-            "offscreen_controls": offscreen_records(screen.offscreen),
+            "offscreen_controls": Classifier.offscreen_records(screen.offscreen),
             "chosen": decision.chosen,
             "confidence": decision.confidence,
             "already_tried_on_this_screen": tried,
@@ -300,8 +300,7 @@ class DecideStrategy:
         candidates = shown if shown and len(shown) < len(sc.items) else None
         try:
             with phase(sc.timing, "decide"):
-                return decide(
-                    ctx.typesafe,
+                return Classifier(ctx.typesafe).decide(
                     cfg.goal,
                     sc.screen,
                     sc.items,
@@ -380,7 +379,7 @@ class ActStrategy:
             return
         state.quiet = False
         with phase(sc.timing, "act"):
-            sc.what = perform(decision, sc.screen, sc.items, ctx, method=sc.method)
+            sc.what = ActionPerformer().perform(decision, sc.screen, sc.items, ctx, method=sc.method)
         clipboard = "to the clipboard" in sc.what
         state.quiet = clipboard
         state.view = None

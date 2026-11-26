@@ -410,10 +410,10 @@ def test_an_unchanged_screen_is_neither_read_nor_detected_again(fake_models):
 
 
 def test_the_item_criteria_name_an_icon_as_one(fake_models):
-    from yuanji_computer_use.llm.classifier import item_criteria
+    from yuanji_computer_use.llm.classifier import Classifier
 
     fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
     fake_models.captions = lambda icon: "gear"
     screen = page_screen()
-    criteria = item_criteria(screen, perception.ocr(screen, 255, ""))
+    criteria = Classifier.item_criteria(screen, perception.ocr(screen, 255, ""))
     assert criteria["0"].startswith("icon 'gear' (")

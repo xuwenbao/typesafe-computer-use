@@ -10,17 +10,7 @@ import pytest
 from yuanji_computer_use.agents.driver.conversation import INSTRUCTIONS, DriverConversation
 from yuanji_computer_use.config import load_dotenv, reset_settings, settings
 from yuanji_computer_use.llm.calls import Calls, MeteredWriter
-from yuanji_computer_use.llm.writer import (
-    ANSWER_SYSTEM,
-    WriterError,
-    _structured,
-    compose_answer,
-    compose_url,
-    make_writer,
-    parse_json,
-    provider,
-    valid_url,
-)
+from yuanji_computer_use.llm.writer import ANSWER_SYSTEM, Writer, WriterError
 from yuanji_computer_use.models import AxNode, Field
 
 
@@ -98,7 +88,7 @@ def test_the_anthropic_base_url_is_left_to_the_sdk(clean_env):
 def test_an_endpoint_of_its_own_needs_no_key(clean_env, endpoint):
     clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", f"{endpoint.url}/v1/messages")
-    assert compose_url(make_writer(), "open example", []) == "https://example.com"
+    assert Writer.open().compose_url("open example", []) == "https://example.com"
     (request,) = endpoint.seen
     assert request["path"] == "/v1/messages"
     assert request["headers"]["x-api-key"] == "not-needed"
@@ -110,7 +100,7 @@ def test_the_endpoint_key_goes_to_the_endpoint_and_no_anthropic_credential_does(
     clean_env.setenv("CLICKER_WRITER_API_KEY", "proxy-key")
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-real")
     clean_env.setenv("ANTHROPIC_AUTH_TOKEN", "oauth-real")
-    compose_url(make_writer(), "open example", [])
+    Writer.open().compose_url("open example", [])
     headers = endpoint.seen[0]["headers"]
     assert headers["x-api-key"] == "proxy-key"
     assert headers["authorization"] == "Bearer proxy-key"
@@ -121,7 +111,7 @@ def test_a_bearer_token_still_goes_out_as_a_bearer_token(clean_env, endpoint):
     clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_BASE_URL", endpoint.url)
     clean_env.setenv("ANTHROPIC_AUTH_TOKEN", "oauth-real")
-    compose_url(make_writer(), "open example", [])
+    Writer.open().compose_url("open example", [])
     headers = endpoint.seen[0]["headers"]
     assert headers["authorization"] == "Bearer oauth-real"
     assert "x-api-key" not in headers
@@ -129,7 +119,7 @@ def test_a_bearer_token_still_goes_out_as_a_bearer_token(clean_env, endpoint):
 
 def test_without_credentials_or_an_endpoint_there_is_no_writer(clean_env):
     clean_env.setenv("CLICKER_WRITER_API", "anthropic")
-    assert make_writer() is None
+    assert Writer.open() is None
 
 
 def test_a_custom_endpoint_is_told_the_schema_in_the_prompt(clean_env, endpoint):
@@ -137,7 +127,7 @@ def test_a_custom_endpoint_is_told_the_schema_in_the_prompt(clean_env, endpoint)
     clean_env.setenv("CLICKER_WRITER_BASE_URL", endpoint.url)
     endpoint.state["reply"] = 'Here you go:\n```json\n{"ok": true, "url": "https://example.com", "reason": "x"}\n```'
     # Metered, as the runner hands it out.
-    assert compose_url(MeteredWriter(make_writer(), Calls()), "open example", []) == "https://example.com"
+    assert Writer(MeteredWriter(Writer.open(), Calls())).compose_url("open example", []) == "https://example.com"
     assert '"required": ["ok", "url", "reason"]' in endpoint.seen[0]["body"]["system"]
     # Thinking on by default would spend the whole 200-token budget and leave no text.
     assert endpoint.seen[0]["body"]["thinking"] == {"type": "disabled"}
@@ -161,7 +151,7 @@ def test_the_endpoint_is_custom_whichever_variable_names_it(clean_env, env, cust
 def test_anthropic_itself_gets_the_schema_only_through_output_config(clean_env, monkeypatch):
     clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    writer = make_writer()
+    writer = Writer.open()
     sent = {}
 
     def create(**kwargs):
@@ -169,7 +159,7 @@ def test_anthropic_itself_gets_the_schema_only_through_output_config(clean_env, 
         return SimpleNamespace(content=[SimpleNamespace(type="text", text='{"ok": false, "url": "", "reason": ""}')])
 
     monkeypatch.setattr(writer.messages, "create", create)
-    compose_url(writer, "open example", [])
+    Writer(writer).compose_url("open example", [])
     assert "schema" not in sent["system"]
     assert "thinking" not in sent
     assert sent["output_config"]["format"]["schema"]["required"] == ["ok", "url", "reason"]
@@ -178,7 +168,7 @@ def test_anthropic_itself_gets_the_schema_only_through_output_config(clean_env, 
 def test_the_startup_line_leaves_credentials_out_of_the_url(clean_env):
     clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("CLICKER_WRITER_BASE_URL", "https://user:secret@proxy.example.com/v1/messages")
-    line = provider(make_writer())
+    line = Writer.open().provider()
     assert line.startswith("https://proxy.example.com (anthropic API)  models:")
     assert "secret" not in line
 
@@ -192,12 +182,12 @@ def test_the_startup_line_leaves_credentials_out_of_the_url(clean_env):
     ],
 )
 def test_the_writer_reply_is_read_whether_or_not_it_came_plain(reply, expected):
-    assert parse_json(reply) == expected
+    assert Writer.parse_json(reply) == expected
 
 
 def test_a_reply_without_any_json_says_so():
     with pytest.raises(WriterError, match="without usable JSON"):
-        parse_json("I am not able to help with that.")
+        Writer.parse_json("I am not able to help with that.")
 
 
 def test_writer_clients_time_out_and_retry_once(clean_env, monkeypatch):
@@ -220,11 +210,11 @@ def test_writer_clients_time_out_and_retry_once(clean_env, monkeypatch):
 
     clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    assert make_writer() is not None
+    assert Writer.open() is not None
     clean_env.setenv("CLICKER_WRITER_BASE_URL", "http://localhost:9")
-    assert make_writer() is not None
+    assert Writer.open() is not None
     clean_env.setenv("CLICKER_WRITER_API", "openai")
-    assert make_writer() is not None
+    assert Writer.open() is not None
     assert seen == [
         {"timeout": 120.0, "max_retries": 1},
         {
@@ -265,7 +255,7 @@ def test_a_timed_out_request_is_a_writer_error(clean_env):
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
     with pytest.raises(WriterError, match="the request failed"):
-        _structured(writer, "system", {"goal": "x"}, {"reason": {"type": "string"}}, 20)
+        Writer(writer)._structured("system", {"goal": "x"}, {"reason": {"type": "string"}}, 20)
 
 
 def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env):
@@ -278,7 +268,7 @@ def test_the_screen_reads_ask_for_enough_tokens_to_finish(screen, clean_env):
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(answer))])
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
-    compose_answer(writer, "save the number", screen, [], [], "stuck")
+    Writer(writer).compose_answer("save the number", screen, [], [], "stuck")
     assert sent == [2048]
 
 
@@ -345,12 +335,12 @@ def test_a_highlighted_menu_item_is_named_and_a_plain_focus_is_not(screen, clean
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
     menu = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
     drive = DriverConversation.screen_packet("make a folder", menu, [], [], "stuck", [], [], None, 3)
-    compose_answer(writer, "make a folder", menu, [], [], "stuck")
+    Writer(writer).compose_answer("make a folder", menu, [], [], "stuck")
     assert [drive["highlighted_menu_item"], seen[0]["highlighted_menu_item"]] == ["文件夹", "文件夹"]
 
     seen.clear()
     drive = DriverConversation.screen_packet("make a folder", screen, [], [], "stuck", [], [], None, 3)
-    compose_answer(writer, "make a folder", screen, [], [], "stuck")
+    Writer(writer).compose_answer("make a folder", screen, [], [], "stuck")
     assert "highlighted_menu_item" not in drive
     assert all("highlighted_menu_item" not in packet for packet in seen)
 
@@ -368,18 +358,18 @@ def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_en
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
     drive = DriverConversation.screen_packet("set the folder", showing, [], [], "stuck", [], [], None, 3)
-    compose_answer(writer, "set the folder", showing, [], [], "stuck")
+    Writer(writer).compose_answer("set the folder", showing, [], [], "stuck")
     assert drive["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
     assert seen[0]["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
 
 
 def test_valid_url():
-    assert valid_url("https://www.cnn.com")
-    assert valid_url("https://news.ycombinator.com/newest")
-    assert not valid_url("http://www.cnn.com")
-    assert not valid_url("https://localhost")
-    assert not valid_url("https://www.cnn.com/a b")
-    assert not valid_url("")
+    assert Writer.valid_url("https://www.cnn.com")
+    assert Writer.valid_url("https://news.ycombinator.com/newest")
+    assert not Writer.valid_url("http://www.cnn.com")
+    assert not Writer.valid_url("https://localhost")
+    assert not Writer.valid_url("https://www.cnn.com/a b")
+    assert not Writer.valid_url("")
 
 
 def test_a_tunable_comes_from_its_variable(clean_env):

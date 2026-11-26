@@ -7,15 +7,7 @@ from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
 
-from .llm.classifier import (
-    SCREEN_IMAGE,
-    base_state,
-    item_criteria,
-    key_criteria,
-    kind_criteria,
-    offscreen_criteria,
-    site_criteria,
-)
+from .llm.classifier import SCREEN_IMAGE, Classifier
 from .models import Guidance, Item, Screen
 from .parse.marks import Marked, color_of
 
@@ -64,7 +56,7 @@ def render_payload(
 ) -> str:
     """Exactly what goes to TypeSafe for this screen, plus a table of every item. The picture is
     named by its reference and size; its bytes are in the run folder, never in this text."""
-    state = base_state(goal, screen, items, history, tried, guidance, subgoal)
+    state = Classifier.base_state(goal, screen, items, history, tried, guidance, subgoal)
     if picture is not None:
         state[SCREEN_IMAGE] = picture.ref
     parts = [
@@ -87,7 +79,7 @@ def render_payload(
         "QUESTION kind  (Choice criteria)",
         RULE,
         json.dumps(
-            kind_criteria(
+            Classifier.kind_criteria(
                 browser,
                 email,
                 bool(screen.offscreen),
@@ -100,12 +92,12 @@ def render_payload(
         RULE,
         "QUESTION item  (Choice criteria)",
         RULE,
-        json.dumps(item_criteria(screen, items), indent=2),
+        json.dumps(Classifier.item_criteria(screen, items), indent=2),
         "",
         RULE,
         "QUESTION site  (Choice criteria)",
         RULE,
-        json.dumps(site_criteria(), indent=2),
+        json.dumps(Classifier.site_criteria(), indent=2),
         "",
     ]
     if screen.url is None and screen.app != browser:
@@ -113,7 +105,7 @@ def render_payload(
             RULE,
             "QUESTION key  (Choice criteria)",
             RULE,
-            json.dumps(key_criteria(), indent=2),
+            json.dumps(Classifier.key_criteria(), indent=2),
             "",
         ]
     if screen.offscreen:
@@ -121,7 +113,7 @@ def render_payload(
             RULE,
             "QUESTION offscreen  (Choice criteria)",
             RULE,
-            json.dumps(offscreen_criteria(screen.offscreen), indent=2),
+            json.dumps(Classifier.offscreen_criteria(screen.offscreen), indent=2),
             "",
         ]
     parts += [

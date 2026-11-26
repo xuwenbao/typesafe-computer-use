@@ -22,8 +22,8 @@ from types import SimpleNamespace
 from PIL import Image
 from typesafe_sdk import Noul
 
-from yuanji_computer_use import actions, runner
-from yuanji_computer_use.actions import Context
+from yuanji_computer_use import runner
+from yuanji_computer_use.actions import ActionPerformer, Context
 from yuanji_computer_use.agents.driver.conversation import DriverConversation
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.llm.writer import WriterError
@@ -423,7 +423,9 @@ class World:
         monkeypatch.setattr(desktop, "open_url", self.open_url)
         # `wait` is the one action that touches no machine call, so the only way the world hears
         # about it is the handler itself. Without this a loading page would never finish loading.
-        monkeypatch.setitem(actions._HANDLERS, "wait", lambda decision, screen, items, ctx: (self.apply("wait"), "waited")[1])
+        monkeypatch.setitem(
+            ActionPerformer._HANDLERS, "wait", lambda decision, screen, items, ctx: (self.apply("wait"), "waited")[1]
+        )
 
 
 DEFAULT_CONFIDENCE = 0.9  # comfortably over the runner's 0.4 floor, so a scenario stops for a reason

@@ -27,7 +27,7 @@ from pathlib import Path
 from typesafe_sdk import TypeSafeClient
 
 from .. import config
-from ..llm.writer import make_writer, provider
+from ..llm.writer import Writer
 from . import act
 from .cdp import Chrome
 from .decide import decide
@@ -175,7 +175,7 @@ def benchmark_loop(args: argparse.Namespace) -> int:
 
     _require_key()
     try:
-        writer = make_writer()
+        writer = Writer.open()
     except ValueError as e:
         sys.exit(str(e))
     if writer is None:
@@ -183,7 +183,7 @@ def benchmark_loop(args: argparse.Namespace) -> int:
             "writer disabled: no OPENAI_API_KEY, or ANTHROPIC_API_KEY when CLICKER_WRITER_API=anthropic; type_text and navigate need one"
         )
     else:
-        print(f"writer: {provider(writer)}")
+        print(f"writer: {Writer(writer).provider()}")
 
     runfolder = RunFolder.create(args.runs) if args.runs else None
     if runfolder is not None:

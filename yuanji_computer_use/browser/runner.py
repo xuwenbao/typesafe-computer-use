@@ -22,7 +22,7 @@ from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
-from ..llm.writer import Writer, compose_browser_text, compose_url, looks_credential
+from ..llm.writer import Writer
 from . import act
 from .decide import Decision, available_actions, decide, field_context, verify_typed
 from .perceive import Element, Page, perceive
@@ -97,7 +97,7 @@ def typing_target(page: Page, chosen: int | None) -> tuple[Element | None, str]:
     target = named or next((e for e in page.items if e.field and not e.secret), None)
     if target is None:
         return None, "no field"
-    if target.secret or looks_credential(target.label()):
+    if target.secret or Writer.looks_credential(target.label()):
         return None, "refused_credential"
     return target, ""
 
@@ -111,8 +111,7 @@ def resolve_text(writer: Writer | None, goal: str, page: Page, target: Element, 
     if writer is None:
         return "", "no_writer"
     try:
-        composed = compose_browser_text(
-            writer,
+        composed = Writer(writer).compose_browser_text(
             goal,
             field_label=target.label(),
             page_title=page.title,
@@ -131,7 +130,7 @@ def resolve_url(writer: Writer | None, goal: str, history: list[str]) -> tuple[s
     if writer is None:
         return "", "no_writer"
     try:
-        url = compose_url(writer, goal, history)
+        url = Writer(writer).compose_url(goal, history)
     except Exception as exc:
         return "", f"writer_error({type(exc).__name__})"
     return (url, "writer") if url else ("", "writer_declined")

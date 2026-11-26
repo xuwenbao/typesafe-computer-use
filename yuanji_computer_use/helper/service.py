@@ -23,8 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config
-from ..actions import Context, click_item
-from ..llm.writer import make_writer
+from ..actions import ActionPerformer, Context
+from ..llm.writer import Writer
 from ..models import Abort, Item, Missed, Screen
 from ..parse.runtime import unsupported
 from ..perception.pipeline import capture, perceive
@@ -174,7 +174,7 @@ class Service:
             raise ToolFailure("not_configured", f"TYPESAFE_API_KEY is not set; put it in {home.env_file()}")
         try:
             cfg_settings = config.settings()
-            writer = make_writer()
+            writer = Writer.open()
             driver_steps = cfg_settings.driver_steps
         except ValueError as e:
             raise ToolFailure("not_configured", str(e)) from None
@@ -275,7 +275,7 @@ class Service:
         if element is not None:
             screen, item = self._element(state_id, element)
             if button == "left" and count == 1:
-                line = click_item(item, screen)
+                line = ActionPerformer().click_item(item, screen)
                 if "refused" in line:
                     raise ToolFailure("missed", line)
                 return self._acted(line)
@@ -293,7 +293,7 @@ class Service:
     def _type_text(self, caller: Caller, text: str, state_id: str = "", element: int | None = None) -> dict:
         if element is not None:
             screen, item = self._element(state_id, element)
-            line = click_item(item, screen)
+            line = ActionPerformer().click_item(item, screen)
             if "refused" in line:
                 raise ToolFailure("missed", line)
         desktop.type_text(text)

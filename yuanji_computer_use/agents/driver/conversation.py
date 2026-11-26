@@ -33,15 +33,7 @@ from PIL import Image
 
 from ...config import settings
 from ...dates import now_context
-from ...llm.writer import (
-    DriveStep,
-    _last_action,
-    _menu_highlight,
-    _offscreen_controls,
-    _on_screen,
-    _selected_files,
-    openai_credentials,
-)
+from ...llm.writer import DriveStep, Writer
 from ...models import Item, Screen
 from ...platforms.adapter import desktop
 
@@ -498,7 +490,7 @@ class DriverConversation:
     @staticmethod
     def driver_client():
         """The async client the driver's model uses, or None when the API is not OpenAI's."""
-        chosen = openai_credentials()
+        chosen = Writer.openai_credentials()
         if chosen is None:
             return None
         base_url, key, timeout = chosen
@@ -554,15 +546,15 @@ class DriverConversation:
             "actions_left": steps_left,
             "already_tried_on_this_screen": tried or [],
             **({"change_course": change_course} if change_course else {}),
-            "on_screen": _on_screen(items),
+            "on_screen": Writer._on_screen(items),
             **({"listed_names_the_previous_reply_denied": denied} if denied else {}),
-            "selected_files": _selected_files(items),
-            "last_action": _last_action(history),
+            "selected_files": Writer._selected_files(items),
+            "last_action": Writer._last_action(history),
             "frontmost_app": screen.app,
             "browser_active_tab_url": screen.url,
             "focused_field": screen.field.summary() if screen.field else None,
-            **_menu_highlight(screen),
-            "offscreen_controls": _offscreen_controls(screen),
+            **Writer._menu_highlight(screen),
+            "offscreen_controls": Writer._offscreen_controls(screen),
             "screen_items": [
                 {
                     "i": it.index,

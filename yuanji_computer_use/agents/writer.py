@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, replace
 
 from ..config import settings
-from ..llm.writer import Answer, WriterError, compose_answer, denied_listed_names, listed_but_called_absent
+from ..llm.writer import Answer, Writer, WriterError
 from ..models import Signature, same_screen, signature
 from ..perception import pipeline as perception
 from ..platforms.adapter import desktop
@@ -195,8 +195,7 @@ class WriterAgent(BaseAgent):
         memory = RunMemory(state)
         earlier = memory.earlier_screens(signature(screen, items))
         earlier_stops = memory.stops_so_far()
-        answer = compose_answer(
-            ctx.writer,
+        answer = Writer(ctx.writer).compose_answer(
             cfg.goal,
             screen,
             items,
@@ -208,14 +207,13 @@ class WriterAgent(BaseAgent):
             can_ask,
         )
         # 空白预览不能把名单上的名字说成没有。否定了它们就丢掉截图再判一次，第二次为准。
-        denied = denied_listed_names(f"{answer.text}\n{answer.focus}", answer.achieved, items)
-        for name in listed_but_called_absent(answer, items):
+        denied = Writer.denied_listed_names(f"{answer.text}\n{answer.focus}", answer.achieved, items)
+        for name in Writer.listed_but_called_absent(answer, items):
             if name not in denied:
                 denied.append(name)
         if not denied:
             return answer
-        return compose_answer(
-            ctx.writer,
+        return Writer(ctx.writer).compose_answer(
             cfg.goal,
             screen,
             items,
@@ -249,8 +247,7 @@ class WriterAgent(BaseAgent):
             screen, items = state.view
             memory = RunMemory(state)
             try:
-                answer = compose_answer(
-                    ctx.writer,
+                answer = Writer(ctx.writer).compose_answer(
                     cfg.goal,
                     screen,
                     items,

@@ -43,7 +43,7 @@ class OpenAIWriter:
         thinking=None,
         reasoning: str | None = None,
     ):
-        chat = [{"role": "system", "content": system}, *(_chat_message(m) for m in messages)]
+        chat = [{"role": "system", "content": system}, *(self._chat_message(m) for m in messages)]
         schema = output_config["format"]["schema"] if output_config else None
         while True:
             try:
@@ -51,7 +51,7 @@ class OpenAIWriter:
                     model=model,
                     messages=chat,
                     **{self._token_limit: max_tokens},
-                    **_response_format(self._formats[0], schema),
+                    **self._response_format(self._formats[0], schema),
                     **({"reasoning_effort": reasoning} if reasoning and self._reasoning else {}),
                     **({"extra_body": {"thinking": thinking}} if thinking and self._thinking else {}),
                 )
@@ -71,58 +71,60 @@ class OpenAIWriter:
                     continue
                 raise
             message = reply.choices[0].message if reply.choices else None
-            usage = _usage(getattr(reply, "usage", None))
-            return SimpleNamespace(content=[SimpleNamespace(type="text", text=_message_text(message))], usage=usage)
+            usage = self._usage(getattr(reply, "usage", None))
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=self._message_text(message))], usage=usage)
 
+    @staticmethod
+    def _message_text(message) -> str:
+        """The reply text. DeepSeek can leave `content` empty and put the JSON in `reasoning_content`."""
+        if message is None:
+            return ""
+        content = getattr(message, "content", None) or ""
+        if content.strip():
+            return content
+        extra = getattr(message, "__pydantic_extra__", None) or {}
+        reasoning = extra.get("reasoning_content") if isinstance(extra, dict) else None
+        if not reasoning:
+            reasoning = getattr(message, "reasoning_content", None)
+        return reasoning or ""
 
-def _message_text(message) -> str:
-    """The reply text. DeepSeek can leave `content` empty and put the JSON in `reasoning_content`."""
-    if message is None:
-        return ""
-    content = getattr(message, "content", None) or ""
-    if content.strip():
-        return content
-    extra = getattr(message, "__pydantic_extra__", None) or {}
-    reasoning = extra.get("reasoning_content") if isinstance(extra, dict) else None
-    if not reasoning:
-        reasoning = getattr(message, "reasoning_content", None)
-    return reasoning or ""
+    @staticmethod
+    def _usage(usage) -> SimpleNamespace | None:
+        """Chat Completions usage in the Messages API's shape: `prompt_tokens` counts the cached ones too."""
+        if usage is None:
+            return None
+        prompt = getattr(usage, "prompt_tokens", None) or 0
+        cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None) or 0
+        return SimpleNamespace(
+            input_tokens=max(prompt - cached, 0),
+            cache_read_input_tokens=cached,
+            cache_creation_input_tokens=0,
+            output_tokens=getattr(usage, "completion_tokens", None) or 0,
+        )
 
+    @staticmethod
+    def _response_format(kind: str, schema: dict | None) -> dict:
+        if kind == "json_schema" and schema is not None:
+            return {
+                "response_format": {"type": "json_schema", "json_schema": {"name": "reply", "strict": True, "schema": schema}}
+            }
+        if kind in ("json_schema", "json_object"):
+            return {"response_format": {"type": "json_object"}}
+        return {}
 
-def _usage(usage) -> SimpleNamespace | None:
-    """Chat Completions usage in the Messages API's shape: `prompt_tokens` counts the cached ones too."""
-    if usage is None:
-        return None
-    prompt = getattr(usage, "prompt_tokens", None) or 0
-    cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None) or 0
-    return SimpleNamespace(
-        input_tokens=max(prompt - cached, 0),
-        cache_read_input_tokens=cached,
-        cache_creation_input_tokens=0,
-        output_tokens=getattr(usage, "completion_tokens", None) or 0,
-    )
-
-
-def _response_format(kind: str, schema: dict | None) -> dict:
-    if kind == "json_schema" and schema is not None:
-        return {"response_format": {"type": "json_schema", "json_schema": {"name": "reply", "strict": True, "schema": schema}}}
-    if kind in ("json_schema", "json_object"):
-        return {"response_format": {"type": "json_object"}}
-    return {}
-
-
-def _chat_message(message: dict) -> dict:
-    """One Messages turn as a Chat Completions one: text parts stay text, a base64 image becomes a data URL."""
-    content = message["content"]
-    if isinstance(content, str):
-        return {"role": message["role"], "content": content}
-    parts = []
-    for block in content:
-        if block["type"] == "text":
-            parts.append({"type": "text", "text": block["text"]})
-        elif block["type"] == "image":
-            source = block["source"]
-            parts.append({"type": "image_url", "image_url": {"url": f"data:{source['media_type']};base64,{source['data']}"}})
-        else:
-            raise ValueError(f"no Chat Completions form for a {block['type']!r} block")
-    return {"role": message["role"], "content": parts}
+    @staticmethod
+    def _chat_message(message: dict) -> dict:
+        """One Messages turn as a Chat Completions one: text parts stay text, a base64 image becomes a data URL."""
+        content = message["content"]
+        if isinstance(content, str):
+            return {"role": message["role"], "content": content}
+        parts = []
+        for block in content:
+            if block["type"] == "text":
+                parts.append({"type": "text", "text": block["text"]})
+            elif block["type"] == "image":
+                source = block["source"]
+                parts.append({"type": "image_url", "image_url": {"url": f"data:{source['media_type']};base64,{source['data']}"}})
+            else:
+                raise ValueError(f"no Chat Completions form for a {block['type']!r} block")
+        return {"role": message["role"], "content": parts}

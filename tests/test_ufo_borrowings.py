@@ -14,13 +14,13 @@ from types import SimpleNamespace
 import pytest
 
 from yuanji_computer_use import cli
-from yuanji_computer_use.actions import Context, add_item, click_item, press_offscreen
+from yuanji_computer_use.actions import ActionPerformer, Context
 from yuanji_computer_use.agents.driver.conversation import TOOLS, DriverConversation
 from yuanji_computer_use.agents.driver.takeover import MoveExecutor, Takeover
 from yuanji_computer_use.agents.policy.stages import UNCHANGED, DecideStrategy, PerceiveStrategy
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.llm.classifier import Decision, kind_criteria
-from yuanji_computer_use.llm.writer import DRIVE_ACTIONS, DriveStep, WriterError, _drive_step
+from yuanji_computer_use.llm.classifier import Classifier, Decision
+from yuanji_computer_use.llm.writer import DRIVE_ACTIONS, DriveStep, Writer, WriterError
 from yuanji_computer_use.models import Abort, AxNode, ElementState, Item, signature
 from yuanji_computer_use.perception.pipeline import to_ax_items
 from yuanji_computer_use.platforms import macos, windows, windows_session
@@ -120,7 +120,7 @@ def test_click_order_uses_toggle_then_a_default_action_then_the_pointer(screen, 
     monkeypatch.setattr(desktop, "ax_press", ax_press)
     monkeypatch.setattr(desktop, "ax_operate", ax_operate)
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append(("click", args)))
-    assert click_item(item, live) == "toggled 'Sound' via accessibility"
+    assert ActionPerformer().click_item(item, live) == "toggled 'Sound' via accessibility"
     assert calls == [("press", "sound"), ("toggle", "sound")]
 
     calls.clear()
@@ -131,13 +131,13 @@ def test_click_order_uses_toggle_then_a_default_action_then_the_pointer(screen, 
 
     monkeypatch.setattr(desktop, "ax_press", default_press)
     listed = Item(0, "Report", 1.0, 0, 0, 20, 20, role="cell", source="ax")
-    assert click_item(listed, live) == "pressed 'Report' via accessibility"
+    assert ActionPerformer().click_item(listed, live) == "pressed 'Report' via accessibility"
     assert calls == [("press", "sound")]
 
     calls.clear()
     monkeypatch.setattr(desktop, "ax_press", ax_press)
     monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or False)
-    assert click_item(item, live).startswith("clicked ")
+    assert ActionPerformer().click_item(item, live).startswith("clicked ")
     names = [call if isinstance(call, str) else call[0] for call in calls]
     assert names == ["press", "toggle", "select", "expand_toggle", "click"]
     assert "scroll_into_view" not in calls
@@ -158,7 +158,7 @@ def test_a_selectable_file_is_selected_instead_of_opened(screen, monkeypatch):
     monkeypatch.setattr(desktop, "ax_press", ax_press)
     monkeypatch.setattr(desktop, "ax_operate", ax_operate)
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append("click"))
-    assert click_item(item, live) == "selected 'Doc01.docx' via accessibility"
+    assert ActionPerformer().click_item(item, live) == "selected 'Doc01.docx' via accessibility"
     assert calls == ["toggle", "select"]
 
 
@@ -178,12 +178,12 @@ def test_adding_a_file_uses_add_to_selection_and_not_invoke(screen, monkeypatch)
     monkeypatch.setattr(desktop, "ax_operate", ax_operate)
     monkeypatch.setattr(desktop, "ax_focus", lambda ref: calls.append(("focus", ref)) or True)
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append(("click", kwargs.get("modifier"))))
-    assert add_item(item, live) == "clicked 'Doc02.docx' with add"
+    assert ActionPerformer().add_item(item, live) == "clicked 'Doc02.docx' with add"
     assert calls == ["add_select", ("focus", live.ax_refs[0])]
 
     calls.clear()
     monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or False)
-    assert add_item(item, live) == "clicked 'Doc02.docx' with add"
+    assert ActionPerformer().add_item(item, live) == "clicked 'Doc02.docx' with add"
     assert calls == ["add_select", ("click", "add")]
     assert "AddToSelection" in _operate_element("Doc02.docx", None, "add_select", None)
 
@@ -226,7 +226,7 @@ def test_a_radio_button_is_clicked_because_select_does_not_change_it(screen, mon
     monkeypatch.setattr(desktop, "ax_press", ax_press)
     monkeypatch.setattr(desktop, "ax_operate", ax_operate)
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append(("click", args)))
-    assert click_item(item, live) == "clicked 'All'"
+    assert ActionPerformer().click_item(item, live) == "clicked 'All'"
     assert [name for name, _ in calls] == ["press", "toggle", "expand_toggle", "click"]
 
 
@@ -244,14 +244,14 @@ def test_offscreen_scrolls_and_an_onscreen_click_does_not(screen, monkeypatch):
     monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or False)
     monkeypatch.setattr(desktop, "ax_press", lambda ref: calls.append("press") or True)
     node = AxNode("AXButton", "Save", 0, -40, 20, 20, True, ref="save")
-    assert "pressed" in press_offscreen("0", replace(screen, offscreen=[node]))
+    assert "pressed" in ActionPerformer().press_offscreen("0", replace(screen, offscreen=[node]))
     assert calls[0] == "scroll_into_view"
 
     calls.clear()
     monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: calls.append(operation) or False)
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append("click"))
     item = Item(0, "Save", 1.0, 0, 0, 20, 20, source="ax")
-    click_item(item, replace(screen, ax_refs={0: "save"}))
+    ActionPerformer().click_item(item, replace(screen, ax_refs={0: "save"}))
     assert "scroll_into_view" not in calls
 
 
@@ -261,24 +261,27 @@ def test_a_disabled_control_is_clicked_with_a_note_and_an_unknown_one_without(sc
     monkeypatch.setattr(desktop, "ax_press", lambda ref: False)
     monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: False)
     disabled = Item(0, "Save", 1.0, 0, 0, 20, 20, enabled=False)
-    assert click_item(disabled, replace(screen, ax_refs={0: "save"})) == "clicked 'Save' (note: the tree says 'Save' is disabled)"
+    assert (
+        ActionPerformer().click_item(disabled, replace(screen, ax_refs={0: "save"}))
+        == "clicked 'Save' (note: the tree says 'Save' is disabled)"
+    )
     unknown = Item(0, "Save", 1.0, 0, 0, 20, 20, enabled=None)
-    assert click_item(unknown, replace(screen, ax_refs={0: "save"})) == "clicked 'Save'"
+    assert ActionPerformer().click_item(unknown, replace(screen, ax_refs={0: "save"})) == "clicked 'Save'"
     assert clicks == ["click", "click"]
 
 
 def test_a_reply_is_one_action_and_one_without_an_action_name_quotes_the_reply():
-    move = _drive_step({"reason": " next ", "action": "wait"})
+    move = Writer._drive_step({"reason": " next ", "action": "wait"})
     assert (move.reason, move.action) == ("next", "wait")
     raw = {"reason": "next", "item": "3", "label": "Save"}
     with pytest.raises(WriterError, match="action name") as caught:
-        _drive_step(raw)
+        Writer._drive_step(raw)
     assert json.dumps(raw) in str(caught.value)
-    named = _drive_step({"reason": "next", "type": "click", "item": "3", "target": "  Save  "})
+    named = Writer._drive_step({"reason": "next", "type": "click", "item": "3", "target": "  Save  "})
     assert (named.action, named.item, named.target) == ("click", "3", "Save")
-    assert _drive_step({"reason": "next", "name": "give_up"}).action == "give_up"
+    assert Writer._drive_step({"reason": "next", "name": "give_up"}).action == "give_up"
     with pytest.raises(WriterError, match="not a driver action"):
-        _drive_step({"reason": "next", "action": "hover"})
+        Writer._drive_step({"reason": "next", "action": "hover"})
 
 
 def test_the_takeover_tools_name_one_action_each():
@@ -297,7 +300,7 @@ def test_the_model_sees_controls_and_the_classifier_does_not_gain_set_value(scre
     assert seen["screen_items"][0]["controls"] == ["range_value"]
     assert seen["screen_items"][0]["value"] == "10"
     assert "batch_size" not in seen and "change_course" not in seen
-    assert "set_value" not in kind_criteria("Google Chrome", None)
+    assert "set_value" not in Classifier.kind_criteria("Google Chrome", None)
 
 
 def _file_row(index: int, text: str, selected: bool = False) -> Item:
