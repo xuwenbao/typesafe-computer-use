@@ -1470,17 +1470,17 @@ try:
     stamp("full_speed")
     # Importing perception before the bind fails SetThreadDesktop: the import opens the desktop
     # the thread is already on, and a thread that has opened one cannot switch.
-    from yuanji_computer_use.perception.pipeline import adopt_start, mark, snapshot_session_cpu, start_warm_up
+    from yuanji_computer_use.perception.pipeline import Capture
 
-    adopt_start(born, stamps)
-    snapshot_session_cpu("at_start")
-    start_warm_up()
+    Capture.adopt_start(born, stamps)
+    Capture.snapshot_session_cpu("at_start")
+    Capture.start_warm_up()
     with open(pid_path, "w", encoding="utf-8") as handle:
         handle.write(str(os.getpid()))
     sys.argv = [sys.argv[0], "--act"]
     from yuanji_computer_use.cli import main
 
-    mark("cli_imported")
+    Capture.mark("cli_imported")
     main()
 except BaseException:
     with open(pid_path + ".log", "w", encoding="utf-8") as handle:

@@ -185,11 +185,13 @@ class WriterAgent(BaseAgent):
         cfg, ctx, state = session.cfg, session.ctx, session
         if state.view is None:
             desktop.check_abort()
-            screen = perception.capture(cfg.image, cfg.app, cfg.url, ctx.browser)
+            screen = perception.Capture.capture(cfg.image, cfg.app, cfg.url, ctx.browser)
             screen.image.save(cfg.out / "answer-raw.png")
             state.view = (
                 screen,
-                perception.perceive(screen, settings().max_options, cfg.goal, cache=None if cfg.replay else state.parse_cache),
+                perception.Perceiver.perceive(
+                    screen, settings().max_options, cfg.goal, cache=None if cfg.replay else state.parse_cache
+                ),
             )
         screen, items = state.view
         memory = RunMemory(state)

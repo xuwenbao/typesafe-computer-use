@@ -31,7 +31,7 @@ from ..actions import Context
 from ..llm.classifier import Decision
 from ..llm.writer import Writer
 from ..models import Abort
-from ..parse.runtime import unsupported
+from ..parse.runtime import Runtime
 from ..platforms.adapter import using
 from ..runner import RunConfig
 from . import tree
@@ -99,7 +99,7 @@ class JevAgent:
     ) -> None:
         if max_steps < 1:
             raise ValueError(f"max_steps must be at least 1, not {max_steps}")
-        reason = unsupported()
+        reason = Runtime.unsupported()
         if reason is not None:
             raise RuntimeError(reason)
         self.max_steps = max_steps

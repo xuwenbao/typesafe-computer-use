@@ -63,7 +63,7 @@ def test_a_stuck_focused_field_still_returns_the_screen(monkeypatch):
 
     _quiet_desktop(monkeypatch, lambda: image, field=stuck)
     timing: dict[str, float] = {}
-    screen = perception.capture(browser="", timing=timing)
+    screen = perception.Capture.capture(browser="", timing=timing)
     assert screen.image is image
     assert screen.field is None
     assert screen.app == "notepad.exe"
@@ -80,7 +80,7 @@ def test_a_stuck_address_bar_leaves_the_page_without_a_url(monkeypatch):
 
     _quiet_desktop(monkeypatch, lambda: image, url=stuck)
     timing: dict[str, float] = {}
-    screen = perception.capture(browser="Google Chrome", timing=timing)
+    screen = perception.Capture.capture(browser="Google Chrome", timing=timing)
     assert screen.url is None
     assert timing["url_timeout"] == 1.0
     assert "field_timeout" not in timing
@@ -98,7 +98,7 @@ def test_a_screenshot_that_waits_for_the_machine_is_not_cut_off(monkeypatch):
     monkeypatch.setattr(desktop, "screenshot_waits", True, raising=False)
     timing: dict[str, float] = {}
     try:
-        screen = perception.capture(browser="", timing=timing)
+        screen = perception.Capture.capture(browser="", timing=timing)
     finally:
         monkeypatch.delattr(desktop, "screenshot_waits", raising=False)
     assert screen.image is image

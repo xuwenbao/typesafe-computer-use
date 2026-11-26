@@ -38,8 +38,8 @@ def screen_reader(monkeypatch):
         screen.ax_refs[1] = "save-ref"
         return list(ITEMS)
 
-    monkeypatch.setattr(service_module, "capture", capture)
-    monkeypatch.setattr(service_module, "perceive", perceive)
+    monkeypatch.setattr(service_module.Capture, "capture", staticmethod(capture))
+    monkeypatch.setattr(service_module.Perceiver, "perceive", staticmethod(perceive))
     return looks
 
 

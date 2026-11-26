@@ -22,7 +22,7 @@ from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.llm.classifier import Classifier, Decision
 from yuanji_computer_use.llm.writer import DRIVE_ACTIONS, DriveStep, Writer, WriterError
 from yuanji_computer_use.models import Abort, AxNode, ElementState, Item, signature
-from yuanji_computer_use.perception.pipeline import to_ax_items
+from yuanji_computer_use.perception.pipeline import Perceiver
 from yuanji_computer_use.platforms import macos, windows, windows_session
 from yuanji_computer_use.platforms.adapter import desktop
 from yuanji_computer_use.platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
@@ -52,7 +52,7 @@ def test_a_toggle_on_a_node_is_a_control_on_its_item():
         return AxFacts((AX_PRESS, "toggle"), enabled=True, checked=True)
 
     found, _, _ = walk_actionable(node, lambda raw: [], attrs, actions, 100, 100)
-    item = to_ax_items(found, 1.0)[0]
+    item = Perceiver.to_ax_items(found, 1.0)[0]
     assert item.controls == ("toggle",)
     assert item.checked is True
 

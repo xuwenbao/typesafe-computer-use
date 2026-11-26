@@ -10,7 +10,7 @@ from world import FakeTypeSafe, Page, World, drive, scripted
 
 from yuanji_computer_use.llm.classifier import IMAGES_HEADER, SCREEN_IMAGE, Classifier
 from yuanji_computer_use.models import Field
-from yuanji_computer_use.parse.marks import marks
+from yuanji_computer_use.parse.marks import Marker
 
 
 def answer(choice, confidence=0.9):
@@ -39,7 +39,7 @@ def refusal(status: int, message: str) -> TypeSafeAPIError:
 @pytest.fixture
 def scene(screen, make_item):
     items = [make_item(0, "Sign in")]
-    return screen, items, marks(screen.image, items, (0, 0, *screen.image.size))
+    return screen, items, Marker.marks(screen.image, items, (0, 0, *screen.image.size))
 
 
 def ask(client, scene, picture=True):
@@ -66,7 +66,8 @@ def test_the_picture_goes_as_an_asset_the_state_names(scene):
 def test_every_picture_has_its_own_reference(scene):
     screen, items, _ = scene
     assert (
-        marks(screen.image, items, (0, 0, *screen.image.size)).ref != marks(screen.image, items, (0, 0, *screen.image.size)).ref
+        Marker.marks(screen.image, items, (0, 0, *screen.image.size)).ref
+        != Marker.marks(screen.image, items, (0, 0, *screen.image.size)).ref
     )
 
 

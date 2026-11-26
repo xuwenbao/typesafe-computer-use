@@ -399,8 +399,8 @@ class World:
 
     def install(self, monkeypatch) -> None:
         """Replace the two outer seams: the screen the loop reads and the machine it drives."""
-        monkeypatch.setattr(perception, "capture", lambda *a, **k: self.capture())
-        monkeypatch.setattr(perception, "perceive", lambda screen, *a, **k: self.perceive(screen))
+        monkeypatch.setattr(perception.Capture, "capture", lambda *a, **k: self.capture())
+        monkeypatch.setattr(perception.Perceiver, "perceive", lambda screen, *a, **k: self.perceive(screen))
         monkeypatch.setattr(desktop, "check_abort", lambda: None)
         monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
         monkeypatch.setattr(desktop, "click_at", self.click_at)
@@ -621,7 +621,7 @@ def drive(
     """
     world.install(monkeypatch)
     if capture is not None:
-        monkeypatch.setattr(perception, "capture", capture)
+        monkeypatch.setattr(perception.Capture, "capture", capture)
     fake = FakeTypeSafe(policy, noul)
     world.fake = fake
     monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)

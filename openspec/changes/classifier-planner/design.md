@@ -55,6 +55,7 @@
 ```python
 class Agent(Protocol):
     name: str
+
     def handle(self, session: Session) -> Status: ...
 ```
 

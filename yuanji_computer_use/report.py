@@ -9,7 +9,7 @@ from PIL import ImageDraw, ImageFont
 
 from .llm.classifier import SCREEN_IMAGE, Classifier
 from .models import Guidance, Item, Screen
-from .parse.marks import Marked, color_of
+from .parse.marks import Marked, Marker
 
 FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 RULE = "=" * 78
@@ -155,7 +155,7 @@ def annotate(screen: Screen, items: list[Item], chosen: str, out: Path) -> None:
         font = ImageFont.load_default()
     for it in items:
         hit = str(it.index) == chosen
-        color = (255, 0, 0) if hit else color_of(it)
+        color = (255, 0, 0) if hit else Marker.color_of(it)
         draw.rectangle((it.x1, it.y1, it.x2, it.y2), outline=color, width=3 if hit else 1)
         draw.text((it.x1, max(0, it.y1 - 12 * screen.scale)), str(it.index), fill=color, font=font)
     f = screen.field

@@ -54,8 +54,10 @@ class DriverAgent(BaseAgent):
         识别沿用这次运行的缓存，只重读变过的区域，图标说明也不重算。
         """
         cfg, ctx, log = session.cfg, session.ctx, session.log
-        screen = perception.capture(cfg.image, cfg.app, cfg.url, ctx.browser)
-        items = perception.perceive(screen, settings().max_options, cfg.goal, cache=None if cfg.replay else session.parse_cache)
+        screen = perception.Capture.capture(cfg.image, cfg.app, cfg.url, ctx.browser)
+        items = perception.Perceiver.perceive(
+            screen, settings().max_options, cfg.goal, cache=None if cfg.replay else session.parse_cache
+        )
         session.view = (screen, items)
         return (screen, items) if PerceiveStrategy().screen_moved(session, screen, items, log) else None
 

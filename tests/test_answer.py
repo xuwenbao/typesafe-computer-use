@@ -194,7 +194,7 @@ def test_without_a_writer_the_run_says_why_there_is_no_answer(tmp_path, screen):
 
 
 def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path, screen, make_item, monkeypatch):
-    monkeypatch.setattr(perception, "capture", lambda *a, **k: pytest.fail("captured again"))
+    monkeypatch.setattr(perception.Capture, "capture", lambda *a, **k: pytest.fail("captured again"))
     fake = FakeWriter({"achieved": True, "answer": "Sep 19, 2026 in Miami."})
     state = Session(outcome="done", view=(screen, [make_item(0, "SEP 19, 2026")]))
     lines, log = logged()
@@ -209,8 +209,8 @@ def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path,
 
 def test_the_screen_is_captured_again_when_an_action_made_the_last_capture_stale(tmp_path, screen, make_item, monkeypatch):
     monkeypatch.setattr(desktop, "check_abort", lambda: None)
-    monkeypatch.setattr(perception, "capture", lambda *a, **k: screen)
-    monkeypatch.setattr(perception, "perceive", lambda *a, **k: [make_item(0, "TICKETS")])
+    monkeypatch.setattr(perception.Capture, "capture", lambda *a, **k: screen)
+    monkeypatch.setattr(perception.Perceiver, "perceive", lambda *a, **k: [make_item(0, "TICKETS")])
     fake = FakeWriter({"achieved": False, "answer": "No dates on screen."})
     state = Session(outcome="step limit", view=None)
     lines, log = logged()

@@ -9,9 +9,9 @@ import json
 import time
 from typing import Protocol
 
-from ...parse.marks import marks
+from ...parse.marks import Marker
 from ...perception import pipeline as perception
-from ...perception.pipeline import ocr_region
+from ...perception.pipeline import Perceiver
 from ...platforms.windows_session import report_action
 from ...report import annotate, render_payload
 from ...timing import format_timing
@@ -67,7 +67,7 @@ class StepFiles:
 
     def open_request(self, cfg, ctx, session: Session, sc: StepContext) -> None:
         screen = sc.screen
-        sc.picture = marks(screen.image, sc.items, ocr_region(screen))
+        sc.picture = Marker.marks(screen.image, sc.items, Perceiver.ocr_region(screen))
         screen.image.save(sc.prefix.with_name(sc.prefix.name + "-raw.png"))
         sent = sc.prefix.with_name(sc.prefix.name + "-sent.png")
         sent.write_bytes(sc.picture.png)
@@ -165,7 +165,7 @@ class StepPipeline:
         for mw in reversed(self.middleware):
             mw.after(session, sc, log)
         if session.view is None:
-            perception.settle(sc.screen.image, cfg.delay)
+            perception.Capture.settle(sc.screen.image, cfg.delay)
         return sc.keep_going
 
     def _files(self) -> StepFiles:

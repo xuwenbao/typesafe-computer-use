@@ -55,8 +55,8 @@ def jev(monkeypatch, tmp_path):
 
     def make(policy, *, lines=(), **kwargs) -> JevAgent:
         monkeypatch.setattr(runner, "TypeSafeClient", lambda: FakeTypeSafe(policy))
-        monkeypatch.setattr(parse_ocr, "recognize_text", lambda image: list(lines))
-        monkeypatch.setattr(parse_detect, "detect", lambda image, *args, **kwargs: [])
+        monkeypatch.setattr(parse_ocr.Ocr, "recognize_text", staticmethod(lambda image: list(lines)))
+        monkeypatch.setattr(parse_detect.Detector, "detect", staticmethod(lambda image, *args, **kwargs: []))
         kwargs.setdefault("writer", None)
         agent = JevAgent(out_root=tmp_path, step_seconds=STEP_SECONDS, **kwargs)
         made.append(agent)

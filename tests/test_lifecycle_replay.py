@@ -120,7 +120,11 @@ def _snapshot(out: Path, state) -> dict:
 
 
 def _freeze_clock(monkeypatch) -> None:
-    for module in ("yuanji_computer_use.llm.classifier", "yuanji_computer_use.llm.writer", "yuanji_computer_use.agents.driver.conversation"):
+    for module in (
+        "yuanji_computer_use.llm.classifier",
+        "yuanji_computer_use.llm.writer",
+        "yuanji_computer_use.agents.driver.conversation",
+    ):
         monkeypatch.setattr(f"{module}.now_context", lambda: dict(FIXED_NOW))
     # `dates.now_context` itself, in case a later import reads it from there.
     monkeypatch.setattr("yuanji_computer_use.dates.now_context", lambda: dict(FIXED_NOW))

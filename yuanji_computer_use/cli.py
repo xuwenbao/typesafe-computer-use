@@ -11,8 +11,8 @@ from pathlib import Path
 from . import config
 from .actions import Context
 from .llm.writer import Writer
-from .parse.runtime import unsupported
-from .perception.pipeline import capture, mark, perceive, start_warm_up
+from .parse.runtime import Runtime
+from .perception.pipeline import Capture, Perceiver
 from .platforms.adapter import desktop
 from .report import annotate, ax_count, icon_count, render_payload
 from .runner import RunConfig, run
@@ -22,7 +22,7 @@ DOTENV = Path.cwd() / ".env"
 
 
 def _require_perception() -> None:
-    reason = unsupported()
+    reason = Runtime.unsupported()
     if reason:
         sys.exit(reason)
 
@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> None:
         goal, session_ask, session_done = child_startup()
         extra = list(sys.argv[1:] if argv is None else argv)
         argv = child_argv(goal, extra)
-    mark("main")
+    Capture.mark("main")
     config.load_dotenv(DOTENV)
     try:
         options = config.settings()
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
 
     _require_perception()
     _prepare()
-    start_warm_up()
+    Capture.start_warm_up()
     if args.act and not desktop.accessibility_trusted():
         sys.exit("this terminal lacks Accessibility permission; grant it in System Settings > Privacy & Security")
     try:
@@ -174,8 +174,8 @@ def inspect(argv: list[str] | None = None) -> None:
 
     browser = options.browser
     timing: dict[str, float] = {}
-    screen = capture(browser=browser, timing=timing)
-    items = perceive(screen, options.max_options, args.goal, timing)
+    screen = Capture.capture(browser=browser, timing=timing)
+    items = Perceiver.perceive(screen, options.max_options, args.goal, timing)
     annotated = args.out / "annotated.png"
     text = args.out / "state.txt"
     screen.image.save(args.out / "raw.png")

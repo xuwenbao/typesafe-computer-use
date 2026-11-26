@@ -23,7 +23,7 @@ from .agents.status import Status, allows
 from .config import settings
 from .llm.calls import Calls, MeteredClassifier, MeteredWriter
 from .models import Abort
-from .perception.pipeline import pipeline_record, snapshot_session_cpu, startup_report
+from .perception.pipeline import Capture
 from .platforms.adapter import desktop
 from .report import Log
 from .timing import summarize
@@ -70,7 +70,7 @@ def run(cfg: RunConfig, ctx_factory) -> Session:
 
     state = Session(cfg=cfg, log=log)
     started = time.time()
-    snapshot_session_cpu("at_run")
+    Capture.snapshot_session_cpu("at_run")
     try:
         with TypeSafeClient() as typesafe:
             state.ctx = metered(ctx_factory(typesafe, state.history), state.calls)
@@ -90,7 +90,7 @@ def run(cfg: RunConfig, ctx_factory) -> Session:
         state.outcome = f"aborted ({e or 'Ctrl-C'})"
         log(f"\n{state.outcome} after {len(state.history)} actions")
     finally:
-        started_up = startup_report()
+        started_up = Capture.startup_report()
         summary = {
             "goal": cfg.goal,
             "act": cfg.act,
@@ -107,7 +107,7 @@ def run(cfg: RunConfig, ctx_factory) -> Session:
             "startup": started_up["marks"],
             "warm_up": started_up["stages"],
             "session_cpu": started_up["session_cpu"],
-            "perception": pipeline_record(),
+            "perception": Capture.pipeline_record(),
             "image_refusals": state.image_refusals,
             "driver_error": state.driver_error,
             "driver_actions": state.driver_actions,

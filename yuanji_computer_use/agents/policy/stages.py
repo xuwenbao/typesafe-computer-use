@@ -38,7 +38,7 @@ class PerceiveStrategy:
         cache = None if cfg.replay else state.parse_cache
         try:
             with phase(sc.timing, "capture"):
-                screen = perception.capture(
+                screen = perception.Capture.capture(
                     cfg.image, cfg.app, cfg.url, ctx.browser, sc.timing, ahead=cache if cfg.read_ahead else None
                 )
         except CaptureTimeout:
@@ -47,7 +47,7 @@ class PerceiveStrategy:
             state.outcome = "capture timed out"
             sc.keep_going = False
             return
-        items = perception.perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
+        items = perception.Perceiver.perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
         state.view = (screen, items)
         sc.screen = screen
         sc.items = items

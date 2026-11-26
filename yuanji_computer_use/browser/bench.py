@@ -57,7 +57,7 @@ def ocr_perception(session, *, budget: int = 120) -> dict:
     """The desktop path's reading, isolated and timed: screenshot -> RapidOCR -> blocks."""
     from PIL import Image
 
-    from ..parse.ocr import recognize_text
+    from ..parse.ocr import Ocr
 
     t0 = time.perf_counter()
     shot = session.call("Page.captureScreenshot", {"format": "png"})
@@ -65,14 +65,14 @@ def ocr_perception(session, *, budget: int = 120) -> dict:
     image = Image.open(io.BytesIO(base64.b64decode(shot["data"]))).convert("RGB")
 
     t0 = time.perf_counter()
-    raw = recognize_text(image)
+    raw = Ocr.recognize_text(image)
     ocr_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
-    from ..perception.pipeline import merge_blocks, to_items
+    from ..perception.pipeline import ItemFilter
 
     lines = [(t.strip(), c, b) for t, c, b in raw if t.strip() and c >= 0.0]
-    items = to_items(merge_blocks(lines), budget)
+    items = ItemFilter.to_items(ItemFilter.merge_blocks(lines), budget)
     post_ms = (time.perf_counter() - t0) * 1000
 
     return {

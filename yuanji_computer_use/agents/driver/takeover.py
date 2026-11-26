@@ -16,9 +16,9 @@ from ...config import settings
 from ...llm.calls import DRIVER
 from ...llm.writer import DriveStep, Writer
 from ...models import AxNode, Item, Missed, Screen, same_screen, signature
-from ...parse.marks import marks
+from ...parse.marks import Marker
 from ...perception import pipeline as perception
-from ...perception.pipeline import ocr_region
+from ...perception.pipeline import Perceiver
 from ...platforms.adapter import desktop
 from ..base import BaseAgent
 from ..outcomes import CLASSIFIER_STOPPED as classifier_stopped
@@ -157,7 +157,7 @@ class Takeover(BaseAgent):
             seen = state.view
         self._mark_tried()
         screen, items = seen
-        picture = marks(screen.image, items, ocr_region(screen))
+        picture = Marker.marks(screen.image, items, Perceiver.ocr_region(screen))
         prefix = self.cfg.out / f"step-{self.cursor:03d}"
         prefix.with_name(prefix.name + "-sent.png").write_bytes(picture.png)
         memory = RunMemory(state)
@@ -286,7 +286,7 @@ class Takeover(BaseAgent):
                 if self._loop(f"the same action was taken {MAX_SAME_ACTION} times in a row", sig):
                     return "stop"
                 self.same_streak, self.same_sig = 0, None
-        perception.settle(screen.image, self.cfg.delay)
+        perception.Capture.settle(screen.image, self.cfg.delay)
         return "next"
 
     @staticmethod

@@ -26,8 +26,8 @@ from .. import config
 from ..actions import ActionPerformer, Context
 from ..llm.writer import Writer
 from ..models import Abort, Item, Missed, Screen
-from ..parse.runtime import unsupported
-from ..perception.pipeline import capture, perceive
+from ..parse.runtime import Runtime
+from ..perception.pipeline import Capture, Perceiver
 from ..platforms.adapter import current, desktop, using
 from ..report import annotate
 from ..runner import RunConfig, run
@@ -167,7 +167,7 @@ class Service:
         handoffs: int = _HANDOFFS,
         min_confidence: float = _MIN_CONFIDENCE,
     ) -> dict:
-        reason = unsupported()
+        reason = Runtime.unsupported()
         if reason:
             raise ToolFailure("not_supported", reason)
         if not os.environ.get("TYPESAFE_API_KEY"):
@@ -215,8 +215,8 @@ class Service:
 
     def _see(self, goal: str) -> dict:
         tuned = config.settings()
-        screen = capture(browser=tuned.browser)
-        items = perceive(screen, tuned.max_options, goal)
+        screen = Capture.capture(browser=tuned.browser)
+        items = Perceiver.perceive(screen, tuned.max_options, goal)
         look = Look(secrets.token_hex(4), screen, items)
         self._look = look
         shot = home.state_dir() / "look.png"

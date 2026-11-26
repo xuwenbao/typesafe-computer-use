@@ -195,9 +195,9 @@ def no_real_machine(monkeypatch):
 
         return call
 
-    monkeypatch.setattr(parse_detect, "load_model", refuse_model("the icon detector"))
-    monkeypatch.setattr(parse_caption, "load_model", refuse_model("the icon captioner"))
-    monkeypatch.setattr(parse_ocr, "_engine", refuse_model("the OCR engine"))
+    monkeypatch.setattr(parse_detect.Detector, "load_model", staticmethod(refuse_model("the icon detector")))
+    monkeypatch.setattr(parse_caption.Captioner, "load_model", staticmethod(refuse_model("the icon captioner")))
+    monkeypatch.setattr(parse_ocr.Ocr, "_engine", staticmethod(refuse_model("the OCR engine")))
 
 
 @pytest.fixture
@@ -222,9 +222,9 @@ def fake_models(monkeypatch):
         fake.calls["caption"] += 1
         return [fake.captions(icon) for icon in icons]
 
-    monkeypatch.setattr(parse_ocr, "recognize_text", recognize)
-    monkeypatch.setattr(parse_detect, "detect", find)
-    monkeypatch.setattr(parse_caption, "generate_captions", describe)
+    monkeypatch.setattr(parse_ocr.Ocr, "recognize_text", staticmethod(recognize))
+    monkeypatch.setattr(parse_detect.Detector, "detect", staticmethod(find))
+    monkeypatch.setattr(parse_caption.Captioner, "generate_captions", staticmethod(describe))
     return fake
 
 
