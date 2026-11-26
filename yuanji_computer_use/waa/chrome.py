@@ -35,15 +35,34 @@ def chrome_cdp_config(config: list) -> list:
     return rewritten
 
 
+def bookmarks_file_script(private_root: str = CHROME_USER_DATA) -> str:
+    """Python the VM runs to print the Bookmarks file Chrome is actually using.
+
+    A CDP launch cannot use the default profile, so a bookmark lands under `private_root`. The
+    evaluator otherwise reads the default profile and reports the file missing.
+    """
+    return (
+        "import os; "
+        f"private = os.path.join({private_root!r}, 'Default', 'Bookmarks'); "
+        "default = os.path.join(os.environ.get('LOCALAPPDATA') or '', 'Google', 'Chrome', 'User Data', 'Default', 'Bookmarks'); "
+        "print(private if os.path.isfile(private) else default)"
+    )
+
+
 def install_chrome_setup() -> None:
     """Open the task's tabs without closing Chrome's first one.
 
     Closing that tab deadlocks the debugging socket: the client and Chrome both wait, and the
-    task never starts. The first tab stays. The pages the task named are still opened.
+    task never starts. The first tab stays. The pages the task named are still opened. Bookmark
+    checks read the private profile when that launch created it.
     """
     from desktop_env.controllers.setup import SetupController
+    from desktop_env.evaluators import getters
 
     SetupController._chrome_open_tabs_setup = _open_chrome_tabs
+    if getters.get_bookmarks is not _bookmarks:
+        _bookmarks.original = getters.get_bookmarks
+        getters.get_bookmarks = _bookmarks
 
 
 def _open_chrome_tabs(self, urls_to_open: list[str]):
@@ -70,6 +89,7 @@ def _open_chrome_tabs(self, urls_to_open: list[str]):
                 raise
             logger.info("Opening %s...", urls_to_open)
             context = browser.contexts[0]
+            page = None
             for index, url in enumerate(urls_to_open):
                 page = context.new_page()
                 try:
@@ -77,7 +97,24 @@ def _open_chrome_tabs(self, urls_to_open: list[str]):
                 except Exception:
                     logger.warning("Opening %s exceeds time limit", url)
                 logger.info("Opened tab %s: %s", index + 1, url)
+            # The task's page has to be the window in front. Another browser left on the
+            # desktop is what the agent would bookmark instead.
+            if page is not None:
+                page.bring_to_front()
             return browser, context
+
+
+def _bookmarks(env, config):
+    """The upstream bookmark read, with the private profile preferred on Windows."""
+    if getattr(env, "vm_platform", None) == "Windows":
+        import json
+
+        path = env.controller.execute_python_command(bookmarks_file_script())["output"].strip()
+        content = env.controller.get_file(path)
+        if not content:
+            return []
+        return json.loads(content).get("roots", {})
+    return _bookmarks.original(env, config)
 
 
 def _debug_command(step: object) -> list[str] | None:

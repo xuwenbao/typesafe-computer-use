@@ -472,11 +472,12 @@ def test_only_listed_shortcuts_are_pressed(screen, machine):
     assert act(move("shortcut", key="x"), screen, ITEMS) == "pressed command+x (to the clipboard; the screen need not change)"
     assert act(move("shortcut", key="p"), screen, ITEMS) == "pressed command+p"
     assert act(move("shortcut", key="e"), screen, ITEMS) == "pressed command+e"
+    assert act(move("shortcut", key="tab"), screen, ITEMS) == "pressed command+tab"
     assert act(move("shortcut", key="q"), screen, ITEMS).startswith("shortcut refused: 'q'")  # Quit
     assert act(move("shortcut", key="w"), screen, ITEMS).startswith("shortcut refused: 'w'")  # Close
     assert act(move("shortcut", key="h"), screen, ITEMS).startswith("shortcut refused: 'h'")  # Hide on a Mac
     assert act(move("shortcut", key="m"), screen, ITEMS).startswith("shortcut refused: 'm'")  # Minimize
-    assert machine == [("press", "x", True), ("press", "p", True), ("press", "e", True)]
+    assert machine == [("press", "x", True), ("press", "p", True), ("press", "e", True), ("press", "tab", True)]
 
 
 def test_a_missing_achieved_flag_defaults_to_false_and_a_missing_flag_still_fails():

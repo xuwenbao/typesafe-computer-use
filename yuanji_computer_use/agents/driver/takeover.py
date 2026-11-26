@@ -64,8 +64,11 @@ MAX_SAME_ACTION = 4  # 同一个动作连续这么多次就停下，不论这几
 MAX_REVISITS = 3  # 这次接管里，同一屏幕上同一个动作累计这么多次就换路，中间夹了别的动作也算
 DENIED_SHORTCUTS = ("q", "w", "h", "m")  # 这四个快捷键会退出、关闭、隐藏或最小化窗口，所以不让模型按
 QUIET_SHORTCUTS = ("c", "x")  # 复制和剪切只改剪贴板。屏幕可以不变，不能据此说这一步没效果
-# 允许的 Cmd/Ctrl 组合：小写字母和数字，去掉上面四个。
-SHORTCUTS = tuple(ch for ch in string.ascii_lowercase + string.digits if ch not in DENIED_SHORTCUTS)
+# 允许的 Cmd/Ctrl 组合：小写字母和数字，去掉上面四个，再加上 tab（Ctrl+Tab 切到下一个标签）。
+SHORTCUTS = (
+    *(ch for ch in string.ascii_lowercase + string.digits if ch not in DENIED_SHORTCUTS),
+    "tab",
+)
 
 # 点击和拖动的限制。模型只能点已经标出的项，拖动也不能一下离开屏幕。
 MODIFIERS = ("", "add", "range")  # 普通点、追加到已有选择、从锚点延伸到这一项

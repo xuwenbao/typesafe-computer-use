@@ -347,7 +347,7 @@ async def press_key(ctx: RunContextWrapper[Turn], reason: str, key: str) -> str:
 
 @function_tool(strict_mode=False)
 async def shortcut(ctx: RunContextWrapper[Turn], reason: str, key: str) -> str:
-    """Press `key` with the platform's command key. Never q, w, h, or m."""
+    """Press `key` with the platform's command key. Never q, w, h, or m. tab switches to the next tab."""
     step = DriveStep(reason=reason, action="shortcut", key=key)
     return _accept(ctx, step, {"reason": reason, "key": key})
 

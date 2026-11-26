@@ -1,10 +1,18 @@
 """The Chrome debugging launch a WAA task is handed, rewritten before the VM sees it."""
 
+import builtins
 import inspect
 import json
+import os
 from pathlib import Path
 
-from yuanji_computer_use.waa.chrome import CHROME_USER_DATA, _open_chrome_tabs, chrome_cdp_config
+from yuanji_computer_use.waa.chrome import (
+    CHROME_USER_DATA,
+    _bookmarks,
+    _open_chrome_tabs,
+    bookmarks_file_script,
+    chrome_cdp_config,
+)
 
 EXAMPLES = (
     Path(__file__).resolve().parent.parent
@@ -31,7 +39,54 @@ def test_a_cdp_task_kills_chrome_and_uses_a_private_profile():
 def test_opening_tabs_leaves_the_first_one_which_deadlocks_the_connection():
     source = inspect.getsource(_open_chrome_tabs)
     assert "connect_over_cdp" in source
+    assert "bring_to_front" in source
     assert ".close(" not in source
+
+
+def _run_probe(script: str, local: str) -> str:
+    previous = os.environ.get("LOCALAPPDATA")
+    os.environ["LOCALAPPDATA"] = local
+    try:
+        printed: list[str] = []
+        exec(script, {"__builtins__": builtins, "print": lambda line: printed.append(str(line))})
+    finally:
+        if previous is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = previous
+    return printed[-1]
+
+
+def test_the_bookmarks_script_reads_the_private_profile_when_that_file_exists(tmp_path):
+    root = tmp_path / "profile"
+    (root / "Default").mkdir(parents=True)
+    mark = root / "Default" / "Bookmarks"
+    mark.write_text("{}", encoding="utf-8")
+    assert _run_probe(bookmarks_file_script(str(root)), str(tmp_path / "absent")) == str(mark)
+    fallback = tmp_path / "local" / "Google" / "Chrome" / "User Data" / "Default" / "Bookmarks"
+    assert _run_probe(bookmarks_file_script(str(tmp_path / "missing")), str(tmp_path / "local")) == str(fallback)
+
+
+def test_windows_bookmarks_come_from_the_probe_and_other_platforms_stay_upstream():
+    seen = {}
+
+    class Controller:
+        def execute_python_command(self, command):
+            seen["command"] = command
+            return {"output": r"C:\private\Default\Bookmarks"}
+
+        def get_file(self, path):
+            seen["path"] = path
+            return '{"roots": {"bookmark_bar": {"children": []}}}'
+
+    env = type("Env", (), {"vm_platform": "Windows", "controller": Controller()})()
+    assert _bookmarks(env, {})["bookmark_bar"]["children"] == []
+    assert "jev-chrome-cdp" in seen["command"]
+    assert seen["path"].endswith("Bookmarks")
+
+    _bookmarks.original = lambda env, config: {"kept": True}
+    other = type("Env", (), {"vm_platform": "Linux"})()
+    assert _bookmarks(other, {}) == {"kept": True}
 
 
 def test_a_profile_task_keeps_the_default_chrome_profile():
