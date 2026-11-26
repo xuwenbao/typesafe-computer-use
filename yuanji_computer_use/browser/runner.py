@@ -24,9 +24,9 @@ from typesafe_sdk import TypeSafeClient
 
 from ..llm.writer import Writer
 from . import act
-from .decide import Decision, available_actions, decide, field_context, verify_typed
-from .perceive import Element, Page, perceive
-from .report import RunFolder, render_payload
+from .decide import Decider, Decision
+from .perceive import Dom, Element, Page
+from .report import Report, RunFolder
 
 
 @dataclass
@@ -85,261 +85,276 @@ class RunResult:
         }
 
 
-def typing_target(page: Page, chosen: int | None) -> tuple[Element | None, str]:
-    """The field to type into, or None and why not.
+class GoalRunner:
+    """The browser step loop: perceive, decide, act, and save the run."""
 
-    The field the classifier named, when it named one; otherwise the first field on
-    the page. A credential field is refused whichever way it was reached: the
-    classifier naming it does not make it safe, and falling back to another field
-    would put the text somewhere the classifier did not choose.
-    """
-    named = next((e for e in page.items if e.index == chosen and e.field), None)
-    target = named or next((e for e in page.items if e.field and not e.secret), None)
-    if target is None:
-        return None, "no field"
-    if target.secret or Writer.looks_credential(target.label()):
-        return None, "refused_credential"
-    return target, ""
+    @staticmethod
+    def typing_target(page: Page, chosen: int | None) -> tuple[Element | None, str]:
+        """The field to type into, or None and why not.
 
+        The field the classifier named, when it named one; otherwise the first field on
+        the page. A credential field is refused whichever way it was reached: the
+        classifier naming it does not make it safe, and falling back to another field
+        would put the text somewhere the classifier did not choose.
+        """
+        named = next((e for e in page.items if e.index == chosen and e.field), None)
+        target = named or next((e for e in page.items if e.field and not e.secret), None)
+        if target is None:
+            return None, "no field"
+        if target.secret or Writer.looks_credential(target.label()):
+            return None, "refused_credential"
+        return target, ""
 
-def resolve_text(writer: Writer | None, goal: str, page: Page, target: Element, history: list[str]) -> tuple[str, str]:
-    """Free text for a field, and where it came from. Only the writer composes it.
+    @staticmethod
+    def resolve_text(writer: Writer | None, goal: str, page: Page, target: Element, history: list[str]) -> tuple[str, str]:
+        """Free text for a field, and where it came from. Only the writer composes it.
 
-    The provenance is recorded per step, so a run folder shows whether the writer
-    filled the field, declined, or failed.
-    """
-    if writer is None:
-        return "", "no_writer"
-    try:
-        composed = Writer(writer).compose_browser_text(
-            goal,
-            field_label=target.label(),
-            page_title=page.title,
-            url=page.url,
-            nearby_text=field_context(page, int(target.index)),
-            history=history,
-        )
-    except Exception as exc:
-        return "", f"writer_error({type(exc).__name__})"
-    return (composed, "writer") if composed else ("", "writer_declined")
-
-
-def resolve_url(writer: Writer | None, goal: str, history: list[str]) -> tuple[str, str]:
-    """The address to open for this goal, and where it came from. Only the writer proposes one,
-    and `compose_url` returns only a valid https URL."""
-    if writer is None:
-        return "", "no_writer"
-    try:
-        url = Writer(writer).compose_url(goal, history)
-    except Exception as exc:
-        return "", f"writer_error({type(exc).__name__})"
-    return (url, "writer") if url else ("", "writer_declined")
-
-
-def run_goal(
-    session,
-    client: TypeSafeClient,
-    goal: str,
-    *,
-    start_url: str | None = None,
-    max_steps: int = 12,
-    min_confidence: float = 0.3,
-    allow_type: bool = True,
-    change_timeout_ms: int = 300,
-    verbose: bool = True,
-    model: str | None = None,
-    writer: Writer | None = None,
-    runfolder: RunFolder | None = None,
-) -> RunResult:
-    result = RunResult(goal=goal, url=str(session.evaluate("location.href") or ""), outcome="incomplete")
-    if start_url:
-        act.navigate(session, start_url)
-        act.wait_for_load(session)
-        result.url = start_url
-
-    pending: Page | None = None
-    history: list[str] = []
-    noops = 0
-    started = time.perf_counter()
-
-    for n in range(1, max_steps + 1):
-        step_started = time.perf_counter()
-
-        if pending is None:
-            t0 = time.perf_counter()
-            page: Page = perceive(session)
-            perceive_ms = (time.perf_counter() - t0) * 1000
-        else:
-            page, perceive_ms = pending, 0.0
-            pending = None
-
-        # Typing and opening an address need free text, which only the writer composes.
-        can_write = writer is not None
-        action_criteria = available_actions(page, allow_type=allow_type, can_write=can_write)
-        element_criteria_map = {str(e.index): e.label() for e in page.items}
-
-        t0 = time.perf_counter()
-        decision: Decision = decide(
-            client,
-            goal,
-            page,
-            history,
-            allow_type=allow_type,
-            can_write=can_write,
-            model=model,
-        )
-        decide_ms = (time.perf_counter() - t0) * 1000
-
-        if runfolder is not None:
-            runfolder.step_payload(
-                n,
-                render_payload(
-                    goal=goal,
-                    page=page,
-                    history=history,
-                    state=decision.state,
-                    actions=action_criteria,
-                    elements=element_criteria_map,
-                ),
+        The provenance is recorded per step, so a run folder shows whether the writer
+        filled the field, declined, or failed.
+        """
+        if writer is None:
+            return "", "no_writer"
+        try:
+            composed = Writer(writer).compose_browser_text(
+                goal,
+                field_label=target.label(),
+                page_title=page.title,
+                url=page.url,
+                nearby_text=Decider.field_context(page, int(target.index)),
+                history=history,
             )
-            runfolder.step_history(n, history)
-            runfolder.step_state(n, decision.state)
-            runfolder.step_answers(n, decision.answers)
-            runfolder.step_elements(n, page, can_write=can_write)
+        except Exception as exc:
+            return "", f"writer_error({type(exc).__name__})"
+        return (composed, "writer") if composed else ("", "writer_declined")
 
-        fp_before = act.fingerprint(page)
-        kind = decision.kind.choice
-        detail = ""
-        changed = False
-        text_source = ""
+    @staticmethod
+    def resolve_url(writer: Writer | None, goal: str, history: list[str]) -> tuple[str, str]:
+        """The address to open for this goal, and where it came from. Only the writer proposes one,
+        and `compose_url` returns only a valid https URL."""
+        if writer is None:
+            return "", "no_writer"
+        try:
+            url = Writer(writer).compose_url(goal, history)
+        except Exception as exc:
+            return "", f"writer_error({type(exc).__name__})"
+        return (url, "writer") if url else ("", "writer_declined")
 
-        t0 = time.perf_counter()
-        touched = kind in {"click", "type_text", "press_enter", "press_escape", "back", "navigate", "scroll_down", "scroll_up"}
-        if kind == "click":
-            idx = decision.chosen_element
-            element = next((e for e in page.items if e.index == idx), None)
-            if element is None:
-                detail = f"click {idx} -> element missing"
-                noops += 1
+    @staticmethod
+    def run_goal(
+        session,
+        client: TypeSafeClient,
+        goal: str,
+        *,
+        start_url: str | None = None,
+        max_steps: int = 12,
+        min_confidence: float = 0.3,
+        allow_type: bool = True,
+        change_timeout_ms: int = 300,
+        verbose: bool = True,
+        model: str | None = None,
+        writer: Writer | None = None,
+        runfolder: RunFolder | None = None,
+    ) -> RunResult:
+        result = RunResult(goal=goal, url=str(session.evaluate("location.href") or ""), outcome="incomplete")
+        if start_url:
+            act.Actions.navigate(session, start_url)
+            act.Actions.wait_for_load(session)
+            result.url = start_url
+
+        pending: Page | None = None
+        history: list[str] = []
+        noops = 0
+        started = time.perf_counter()
+
+        for n in range(1, max_steps + 1):
+            step_started = time.perf_counter()
+
+            if pending is None:
+                t0 = time.perf_counter()
+                page: Page = Dom.perceive(session)
+                perceive_ms = (time.perf_counter() - t0) * 1000
             else:
-                detail = act.click(session, int(element.index), element, page)
-        elif kind == "type_text":
-            # The classifier picked the action and the field; the writer supplies the
-            # text. The field is checked before the writer is asked, so a credential
-            # field is refused whatever the text would have been.
-            target, refusal = typing_target(page, decision.chosen_element)
-            text, text_source = ("", refusal) if target is None else resolve_text(writer, goal, page, target, history)
-            if target is None or not text:
-                detail = f"type -> {text_source}"
-                noops += 1
-                touched = False
-            else:
-                act.type_text(session, int(target.index), text)
-                value_now = act.field_value(session, int(target.index))
-                ok = verify_typed(client, goal, target.label(), text, value_now, model=model)
-                if ok < 0.5:
-                    act.clear_field(session, int(target.index))
-                    detail = f"type {text!r} -> verify {ok:.2f}, cleared"
+                page, perceive_ms = pending, 0.0
+                pending = None
+
+            # Typing and opening an address need free text, which only the writer composes.
+            can_write = writer is not None
+            action_criteria = Decider.available_actions(page, allow_type=allow_type, can_write=can_write)
+            element_criteria_map = {str(e.index): e.label() for e in page.items}
+
+            t0 = time.perf_counter()
+            decision: Decision = Decider.decide(
+                client,
+                goal,
+                page,
+                history,
+                allow_type=allow_type,
+                can_write=can_write,
+                model=model,
+            )
+            decide_ms = (time.perf_counter() - t0) * 1000
+
+            if runfolder is not None:
+                runfolder.step_payload(
+                    n,
+                    Report.render_payload(
+                        goal=goal,
+                        page=page,
+                        history=history,
+                        state=decision.state,
+                        actions=action_criteria,
+                        elements=element_criteria_map,
+                    ),
+                )
+                runfolder.step_history(n, history)
+                runfolder.step_state(n, decision.state)
+                runfolder.step_answers(n, decision.answers)
+                runfolder.step_elements(n, page, can_write=can_write)
+
+            fp_before = act.Actions.fingerprint(page)
+            kind = decision.kind.choice
+            detail = ""
+            changed = False
+            text_source = ""
+
+            t0 = time.perf_counter()
+            touched = kind in {
+                "click",
+                "type_text",
+                "press_enter",
+                "press_escape",
+                "back",
+                "navigate",
+                "scroll_down",
+                "scroll_up",
+            }
+            if kind == "click":
+                idx = decision.chosen_element
+                element = next((e for e in page.items if e.index == idx), None)
+                if element is None:
+                    detail = f"click {idx} -> element missing"
                     noops += 1
                 else:
-                    detail = f"type {text!r} -> verify {ok:.2f}"
-        elif kind == "press_enter":
-            detail = act.press(session, "enter")
-        elif kind == "press_escape":
-            detail = act.press(session, "escape")
-        elif kind == "scroll_down":
-            detail = act.scroll(session, 3, page)
-        elif kind == "scroll_up":
-            detail = act.scroll(session, -3, page)
-        elif kind == "back":
-            detail = act.go_back(session)
-        elif kind == "navigate":
-            target_url, text_source = resolve_url(writer, goal, history)
-            if target_url:
-                detail = act.navigate(session, target_url)
-            else:
-                detail = f"navigate -> {text_source}"
+                    detail = act.Actions.click(session, int(element.index), element, page)
+            elif kind == "type_text":
+                # The classifier picked the action and the field; the writer supplies the
+                # text. The field is checked before the writer is asked, so a credential
+                # field is refused whatever the text would have been.
+                target, refusal = GoalRunner.typing_target(page, decision.chosen_element)
+                text, text_source = (
+                    ("", refusal) if target is None else GoalRunner.resolve_text(writer, goal, page, target, history)
+                )
+                if target is None or not text:
+                    detail = f"type -> {text_source}"
+                    noops += 1
+                    touched = False
+                else:
+                    act.Actions.type_text(session, int(target.index), text)
+                    value_now = act.Actions.field_value(session, int(target.index))
+                    ok = Decider.verify_typed(client, goal, target.label(), text, value_now, model=model)
+                    if ok < 0.5:
+                        act.Actions.clear_field(session, int(target.index))
+                        detail = f"type {text!r} -> verify {ok:.2f}, cleared"
+                        noops += 1
+                    else:
+                        detail = f"type {text!r} -> verify {ok:.2f}"
+            elif kind == "press_enter":
+                detail = act.Actions.press(session, "enter")
+            elif kind == "press_escape":
+                detail = act.Actions.press(session, "escape")
+            elif kind == "scroll_down":
+                detail = act.Actions.scroll(session, 3, page)
+            elif kind == "scroll_up":
+                detail = act.Actions.scroll(session, -3, page)
+            elif kind == "back":
+                detail = act.Actions.go_back(session)
+            elif kind == "navigate":
+                target_url, text_source = GoalRunner.resolve_url(writer, goal, history)
+                if target_url:
+                    detail = act.Actions.navigate(session, target_url)
+                else:
+                    detail = f"navigate -> {text_source}"
+                    noops += 1
+                    touched = False
+            elif kind == "wait":
+                detail = "waited"
                 noops += 1
                 touched = False
-        elif kind == "wait":
-            detail = "waited"
-            noops += 1
-            touched = False
+            else:
+                detail = kind
+                touched = False
+
+            if touched:
+                # The wait for this action and the observation for the next decision
+                # are the same call, so this costs nothing extra.
+                next_page, _, changed = act.Actions.observe_until_changed(session, fp_before, timeout_ms=change_timeout_ms)
+                pending = next_page
+            act_ms = (time.perf_counter() - t0) * 1000
+
+            total_ms = (time.perf_counter() - step_started) * 1000
+            step = Step(
+                n=n,
+                action=kind,
+                detail=detail,
+                confidence=round(decision.confidence, 3),
+                satisfied=round(float(decision.satisfied.noul), 3),
+                elements=len(page.items),
+                changed=changed,
+                perceive_ms=perceive_ms,
+                decide_ms=decide_ms,
+                act_ms=act_ms,
+                total_ms=total_ms,
+                text_source=text_source,
+            )
+            result.steps.append(step)
+            if verbose:
+                print(step.line(), flush=True)
+            history.append(f"{kind}: {detail}" + ("" if changed else " (page unchanged)"))
+
+            if kind == "done" or decision.satisfied.noul >= 0.5:
+                result.outcome = "done"
+                break
+            if kind == "none":
+                result.outcome = "blocked"
+                break
+            if decision.confidence < min_confidence:
+                result.outcome = f"low_confidence({decision.confidence:.2f})"
+                break
+            if noops >= 2:
+                result.outcome = "stuck"
+                break
         else:
-            detail = kind
-            touched = False
+            result.outcome = "max_steps"
 
-        if touched:
-            # The wait for this action and the observation for the next decision
-            # are the same call, so this costs nothing extra.
-            next_page, _, changed = act.observe_until_changed(session, fp_before, timeout_ms=change_timeout_ms)
-            pending = next_page
-        act_ms = (time.perf_counter() - t0) * 1000
+        result.wall_ms = (time.perf_counter() - started) * 1000
+        result.url_after = str(session.evaluate("location.href") or "")
+        if runfolder is not None:
+            runfolder.finish(
+                {
+                    "goal": goal,
+                    "outcome": result.outcome,
+                    "url": result.url,
+                    "url_after": result.url_after,
+                    "wall_ms": result.wall_ms,
+                    "summary": result.summary(),
+                    "steps": [asdict(s) for s in result.steps],
+                }
+            )
+        return result
 
-        total_ms = (time.perf_counter() - step_started) * 1000
-        step = Step(
-            n=n,
-            action=kind,
-            detail=detail,
-            confidence=round(decision.confidence, 3),
-            satisfied=round(float(decision.satisfied.noul), 3),
-            elements=len(page.items),
-            changed=changed,
-            perceive_ms=perceive_ms,
-            decide_ms=decide_ms,
-            act_ms=act_ms,
-            total_ms=total_ms,
-            text_source=text_source,
+    @staticmethod
+    def save(result: RunResult, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "goal": result.goal,
+                    "outcome": result.outcome,
+                    "url_after": result.url_after,
+                    "wall_ms": result.wall_ms,
+                    "summary": result.summary(),
+                    "steps": [asdict(s) for s in result.steps],
+                },
+                indent=2,
+            )
         )
-        result.steps.append(step)
-        if verbose:
-            print(step.line(), flush=True)
-        history.append(f"{kind}: {detail}" + ("" if changed else " (page unchanged)"))
-
-        if kind == "done" or decision.satisfied.noul >= 0.5:
-            result.outcome = "done"
-            break
-        if kind == "none":
-            result.outcome = "blocked"
-            break
-        if decision.confidence < min_confidence:
-            result.outcome = f"low_confidence({decision.confidence:.2f})"
-            break
-        if noops >= 2:
-            result.outcome = "stuck"
-            break
-    else:
-        result.outcome = "max_steps"
-
-    result.wall_ms = (time.perf_counter() - started) * 1000
-    result.url_after = str(session.evaluate("location.href") or "")
-    if runfolder is not None:
-        runfolder.finish(
-            {
-                "goal": goal,
-                "outcome": result.outcome,
-                "url": result.url,
-                "url_after": result.url_after,
-                "wall_ms": result.wall_ms,
-                "summary": result.summary(),
-                "steps": [asdict(s) for s in result.steps],
-            }
-        )
-    return result
-
-
-def save(result: RunResult, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "goal": result.goal,
-                "outcome": result.outcome,
-                "url_after": result.url_after,
-                "wall_ms": result.wall_ms,
-                "summary": result.summary(),
-                "steps": [asdict(s) for s in result.steps],
-            },
-            indent=2,
-        )
-    )

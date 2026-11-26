@@ -16,10 +16,10 @@ from types import SimpleNamespace
 
 from typesafe_sdk import Choice, ChoiceAnswer, Noul, NoulAnswer
 
-from yuanji_computer_use.browser.decide import base_state, decide, element_criteria
-from yuanji_computer_use.browser.perceive import INTERACTIVE_JS, perceive, to_json
-from yuanji_computer_use.browser.report import RunFolder, load_step
-from yuanji_computer_use.browser.runner import run_goal, typing_target
+from yuanji_computer_use.browser.decide import Decider
+from yuanji_computer_use.browser.perceive import INTERACTIVE_JS, Dom
+from yuanji_computer_use.browser.report import Report, RunFolder
+from yuanji_computer_use.browser.runner import GoalRunner
 
 SECRET = "hunter2-do-not-leak"
 
@@ -189,7 +189,7 @@ class FakeWriter:
 
 def run(browser, client, tmp_path: Path, writer=None, steps: int = 3):
     folder = RunFolder.create(tmp_path)
-    result = run_goal(
+    result = GoalRunner.run_goal(
         browser,
         client,
         "sign in as alice",
@@ -214,11 +214,11 @@ def test_a_password_value_never_leaves_the_page(tmp_path):
     client = FakeTypeSafe(("click", "1"))
     result, folder = run(browser, client, tmp_path)
 
-    page = perceive(FakeBrowser(login_page()))
+    page = Dom.perceive(FakeBrowser(login_page()))
     assert SECRET not in repr(page.items)
-    assert SECRET not in to_json(page)
-    assert SECRET not in json.dumps(element_criteria(page))
-    assert SECRET not in json.dumps(base_state("g", page, [], url_catalog=None))
+    assert SECRET not in Dom.to_json(page)
+    assert SECRET not in json.dumps(Decider.element_criteria(page))
+    assert SECRET not in json.dumps(Decider.base_state("g", page, [], url_catalog=None))
     assert SECRET not in client.sent()
     assert SECRET not in folder_text(folder)
     assert SECRET not in "\n".join(s.line() for s in result.steps)
@@ -233,9 +233,9 @@ def test_the_page_script_never_reads_what_was_typed():
 
 
 def test_a_credential_field_is_marked_in_what_the_classifier_reads():
-    page = perceive(FakeBrowser(login_page()))
-    assert "credential field" in element_criteria(page)["1"]
-    assert base_state("g", page, [], url_catalog=None)["elements"][1]["credential_field"] is True
+    page = Dom.perceive(FakeBrowser(login_page()))
+    assert "credential field" in Decider.element_criteria(page)["1"]
+    assert Decider.base_state("g", page, [], url_catalog=None)["elements"][1]["credential_field"] is True
 
 
 # ------------------------------------------------------------- typing guard
@@ -265,20 +265,20 @@ def test_the_named_password_field_is_refused_before_the_writer_is_asked(tmp_path
 def test_a_password_field_is_never_the_fallback_target():
     """With no field named, typing goes to the first field that is not a credential field,
     and a page whose only field asks for a password gets nothing."""
-    page = perceive(FakeBrowser(login_page()))
-    target, _ = typing_target(page, None)
+    page = Dom.perceive(FakeBrowser(login_page()))
+    target, _ = GoalRunner.typing_target(page, None)
     assert target is not None and target.name == "Username"
 
     only_password = login_page()
     only_password["items"] = [only_password["items"][1]]
-    target, why = typing_target(perceive(FakeBrowser(only_password)), None)
+    target, why = GoalRunner.typing_target(Dom.perceive(FakeBrowser(only_password)), None)
     assert target is None and why == "no field"
 
 
 def test_a_field_labelled_like_a_credential_is_refused_even_when_not_a_password_input():
     page = login_page()
     page["items"][0] = item(0, "One-time code", role="text")
-    target, why = typing_target(perceive(FakeBrowser(page)), 0)
+    target, why = GoalRunner.typing_target(Dom.perceive(FakeBrowser(page)), 0)
     assert target is None and why == "refused_credential"
 
 
@@ -291,7 +291,7 @@ def test_the_writer_types_into_an_ordinary_field_and_the_step_says_so(tmp_path):
     assert browser.typed == ["alice"]
     assert result.steps[0].text_source == "writer"
     assert "text=writer" in result.steps[0].line()
-    assert load_step(folder.root, 1)["can_write"] is True
+    assert Report.load_step(folder.root, 1)["can_write"] is True
 
 
 def test_navigate_opens_only_the_writers_https_address(tmp_path):
@@ -318,7 +318,7 @@ def test_decide_survives_an_answer_without_a_satisfied_noul():
             assert isinstance(questions["kind"], Choice) and isinstance(questions["satisfied"], Noul)
             return SimpleNamespace(answers={"kind": choice("wait"), "satisfied": None})
 
-    decision = decide(Partial(), "g", perceive(FakeBrowser(login_page())), [])
+    decision = Decider.decide(Partial(), "g", Dom.perceive(FakeBrowser(login_page())), [])
     assert decision.satisfied.noul == 0.0 and decision.kind.choice == "wait"
 
 
@@ -335,7 +335,7 @@ def test_an_answer_that_lives_only_in_plain_text_reaches_done(tmp_path):
     assert ANSWER not in json.dumps(state["elements"])
     assert result.outcome == "done"
     # The step payload and the saved state in the run folder show the new text.
-    assert ANSWER in load_step(folder.root, 1)["payload"]
+    assert ANSWER in Report.load_step(folder.root, 1)["payload"]
     saved = json.loads((folder.root / "step-01-state.json").read_text())
     assert any(ANSWER in text for text in saved["page_text"])
 
@@ -343,12 +343,12 @@ def test_an_answer_that_lives_only_in_plain_text_reaches_done(tmp_path):
 def test_page_text_is_evidence_separate_from_click_targets():
     """Text blocks go in their own list, in reading order: nothing in the element question
     or the elements list can point the loop at one."""
-    page = perceive(FakeBrowser(listing_page()))
-    criteria = element_criteria(page)
+    page = Dom.perceive(FakeBrowser(listing_page()))
+    criteria = Decider.element_criteria(page)
     assert set(criteria) == {"0", "1"}
     assert ANSWER not in json.dumps(criteria)
 
-    state = base_state("g", page, [], url_catalog=None)
+    state = Decider.base_state("g", page, [], url_catalog=None)
     assert [el["i"] for el in state["elements"]] == [0, 1]
     assert ANSWER not in json.dumps(state["elements"])
     assert state["page_text"] == [
@@ -362,23 +362,23 @@ def test_a_page_with_no_text_sends_no_page_text():
     """Pages without readable text keep the lean payload: no empty list in the state."""
     page = login_page()
     del page["items"][1]  # drop the password field, keep username + button
-    state = base_state("g", perceive(FakeBrowser(page)), [], url_catalog=None)
+    state = Decider.base_state("g", Dom.perceive(FakeBrowser(page)), [], url_catalog=None)
     assert state["page_text"] is None
 
 
 def test_page_text_is_capped():
     page = listing_page(text=[text_block(f"block number {i} of the page") for i in range(300)])
-    assert len(perceive(FakeBrowser(page)).text) == 120
+    assert len(Dom.perceive(FakeBrowser(page)).text) == 120
 
 
 def test_a_password_value_stays_out_of_the_state_when_text_is_collected():
     """Done-when two, with text collection on: the field's value reaches nothing, while
     ordinary page text around the form does."""
-    page = perceive(FakeBrowser(login_page(text=[text_block("Sign in to continue"), text_block("Welcome back")])))
-    blob = json.dumps(base_state("g", page, [], url_catalog=None))
+    page = Dom.perceive(FakeBrowser(login_page(text=[text_block("Sign in to continue"), text_block("Welcome back")])))
+    blob = json.dumps(Decider.base_state("g", page, [], url_catalog=None))
     assert SECRET not in blob
     assert "Welcome back" in blob
-    assert SECRET not in json.dumps([tb.__dict__ for tb in page.text]) and SECRET not in to_json(page)
+    assert SECRET not in json.dumps([tb.__dict__ for tb in page.text]) and SECRET not in Dom.to_json(page)
 
 
 def test_the_page_script_never_collects_what_was_typed_or_drafted():

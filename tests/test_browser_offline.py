@@ -9,9 +9,9 @@ from __future__ import annotations
 import pytest
 
 from yuanji_computer_use.browser import act
-from yuanji_computer_use.browser.cdp import CDPError, local_debugger_url
-from yuanji_computer_use.browser.decide import available_actions
-from yuanji_computer_use.browser.perceive import INTERACTIVE_JS, Element, perceive
+from yuanji_computer_use.browser.cdp import CDPError, Chrome
+from yuanji_computer_use.browser.decide import Decider
+from yuanji_computer_use.browser.perceive import INTERACTIVE_JS, Dom, Element
 
 
 def page_dict(*, items=(), scroll_y=0, can_scroll=True, history_len=1, fields=0):
@@ -71,7 +71,7 @@ class StubSession:
 # ------------------------------------------------------------------ parsing
 def test_perceive_parses_page_facts():
     session = StubSession([page_dict(items=[element_dict(0), element_dict(1, "Search", "button")], fields=1)])
-    page = perceive(session)
+    page = Dom.perceive(session)
     assert [e.name for e in page.items] == ["Sign in", "Search"]
     assert page.field_count == 1 and page.has_field
     assert page.can_scroll and page.history_len == 1
@@ -81,7 +81,7 @@ def test_perceive_parses_page_facts():
 def test_perceive_honours_budget():
     items = [element_dict(i, f"item {i}") for i in range(50)]
     session = StubSession([page_dict(items=items)])
-    assert len(perceive(session, budget=10).items) == 10
+    assert len(Dom.perceive(session, budget=10).items) == 10
 
 
 def test_element_label_carries_the_context_that_matters():
@@ -96,13 +96,13 @@ def test_element_label_carries_the_context_that_matters():
 
 
 def test_perceive_handles_active_element_absent():
-    assert perceive(StubSession([None])).items == []
+    assert Dom.perceive(StubSession([None])).items == []
 
 
 # ------------------------------------------------------- action availability
 def test_type_text_not_offered_without_a_field():
-    page = perceive(StubSession([page_dict(items=[element_dict()], fields=0)]))
-    actions = available_actions(page, can_write=True)
+    page = Dom.perceive(StubSession([page_dict(items=[element_dict()], fields=0)]))
+    actions = Decider.available_actions(page, can_write=True)
     assert "type_text" not in actions
     assert "press_enter" not in actions
     assert "click" in actions
@@ -111,54 +111,54 @@ def test_type_text_not_offered_without_a_field():
 def test_free_text_actions_need_a_writer():
     """Typed text and an address to open only come from the writer, so without one neither
     action is offered: an action the caller cannot execute is a guaranteed stall."""
-    page = perceive(StubSession([page_dict(items=[element_dict()], fields=1)]))
-    without = available_actions(page, can_write=False)
+    page = Dom.perceive(StubSession([page_dict(items=[element_dict()], fields=1)]))
+    without = Decider.available_actions(page, can_write=False)
     assert "type_text" not in without and "navigate" not in without
-    with_writer = available_actions(page, can_write=True)
+    with_writer = Decider.available_actions(page, can_write=True)
     assert "type_text" in with_writer and "navigate" in with_writer
 
 
 def test_scroll_and_back_are_offered_only_when_they_can_do_something():
-    flat_start = perceive(StubSession([page_dict(items=[element_dict()], can_scroll=False, history_len=1)]))
-    actions = available_actions(flat_start)
+    flat_start = Dom.perceive(StubSession([page_dict(items=[element_dict()], can_scroll=False, history_len=1)]))
+    actions = Decider.available_actions(flat_start)
     assert "scroll_down" not in actions and "scroll_up" not in actions
     assert "back" not in actions
 
-    rich = perceive(StubSession([page_dict(items=[element_dict()], can_scroll=True, history_len=4)]))
-    actions = available_actions(rich)
+    rich = Dom.perceive(StubSession([page_dict(items=[element_dict()], can_scroll=True, history_len=4)]))
+    actions = Decider.available_actions(rich)
     assert "scroll_down" in actions and "back" in actions
 
 
 def test_no_click_when_there_is_nothing_to_click():
-    empty = perceive(StubSession([page_dict(items=[])]))
-    assert "click" not in available_actions(empty)
+    empty = Dom.perceive(StubSession([page_dict(items=[])]))
+    assert "click" not in Decider.available_actions(empty)
 
 
 def test_action_terminators_always_present():
-    empty = perceive(StubSession([page_dict(items=[])]))
-    actions = available_actions(empty)
+    empty = Dom.perceive(StubSession([page_dict(items=[])]))
+    actions = Decider.available_actions(empty)
     for key in ("done", "none", "wait"):
         assert key in actions
 
 
 def test_option_count_stays_under_the_api_limit():
     items = [element_dict(i, f"link {i}") for i in range(120)]
-    page = perceive(StubSession([page_dict(items=items, fields=1)]))
-    assert len(page.items) + len(available_actions(page)) < 255
+    page = Dom.perceive(StubSession([page_dict(items=items, fields=1)]))
+    assert len(page.items) + len(Decider.available_actions(page)) < 255
 
 
 # ------------------------------------------------------------ change detection
 def test_fingerprint_tracks_scroll_position():
-    a = perceive(StubSession([page_dict(items=[element_dict()], scroll_y=0)]))
-    b = perceive(StubSession([page_dict(items=[element_dict()], scroll_y=600)]))
-    assert act.fingerprint(a) != act.fingerprint(b)
+    a = Dom.perceive(StubSession([page_dict(items=[element_dict()], scroll_y=0)]))
+    b = Dom.perceive(StubSession([page_dict(items=[element_dict()], scroll_y=600)]))
+    assert act.Actions.fingerprint(a) != act.Actions.fingerprint(b)
 
 
 def test_observe_until_changed_returns_as_soon_as_the_page_moves():
     """First poll shows the new page, so the wait costs one round trip."""
     session = StubSession([page_dict(items=[element_dict(0, "after")])])
-    fps = act.fingerprint(perceive(StubSession([page_dict(items=[element_dict(0, "before")])])))
-    page, ms, changed = act.observe_until_changed(session, fps, timeout_ms=200, poll_ms=1)
+    fps = act.Actions.fingerprint(Dom.perceive(StubSession([page_dict(items=[element_dict(0, "before")])])))
+    page, ms, changed = act.Actions.observe_until_changed(session, fps, timeout_ms=200, poll_ms=1)
     assert changed and page.items[0].name == "after"
     assert session.evaluates == 1
     assert ms < 200
@@ -167,22 +167,22 @@ def test_observe_until_changed_returns_as_soon_as_the_page_moves():
 def test_observe_until_changed_times_out_when_nothing_moves():
     same = page_dict(items=[element_dict(0, "same")])
     session = StubSession([page_dict(items=[element_dict(0, "same")]) for _ in range(80)])
-    fps = act.fingerprint(perceive(StubSession([same])))
-    _, ms, changed = act.observe_until_changed(session, fps, timeout_ms=60, poll_ms=5)
+    fps = act.Actions.fingerprint(Dom.perceive(StubSession([same])))
+    _, ms, changed = act.Actions.observe_until_changed(session, fps, timeout_ms=60, poll_ms=5)
     assert not changed
     assert 55 <= ms < 400
 
 
 def test_observe_with_no_baseline_just_perceives():
     session = StubSession([page_dict(items=[element_dict()])])
-    page, _, changed = act.observe_until_changed(session, None)
+    page, _, changed = act.Actions.observe_until_changed(session, None)
     assert changed and page.items
 
 
 # ------------------------------------------------------------------ cdp
 def test_the_session_only_connects_to_this_chromes_loopback_port():
     url = "ws://127.0.0.1:9222/devtools/page/ABC"
-    assert local_debugger_url(url, 9222) == url
+    assert Chrome.local_debugger_url(url, 9222) == url
     for other in (
         "ws://127.0.0.1:9333/devtools/page/ABC",
         "ws://10.0.0.5:9222/devtools/page/ABC",
@@ -190,15 +190,15 @@ def test_the_session_only_connects_to_this_chromes_loopback_port():
         "wss://127.0.0.1:9222/devtools/page/ABC",
     ):
         with pytest.raises(CDPError):
-            local_debugger_url(other, 9222)
+            Chrome.local_debugger_url(other, 9222)
 
 
 def test_fingerprint_catches_a_text_only_change():
     """A form error or a freshly loaded price can leave every element untouched; the
     change must still register, or the loop would decide against the stale page."""
     base = page_dict(items=[element_dict(0, "Buy")])
-    before = perceive(StubSession([base]))
+    before = Dom.perceive(StubSession([base]))
     errored = page_dict(items=[element_dict(0, "Buy")])
     errored["text"] = [{"text": "Payment failed: card declined", "x": 10, "y": 300, "w": 300, "h": 20}]
-    after = perceive(StubSession([errored]))
-    assert act.fingerprint(before) != act.fingerprint(after)
+    after = Dom.perceive(StubSession([errored]))
+    assert act.Actions.fingerprint(before) != act.Actions.fingerprint(after)

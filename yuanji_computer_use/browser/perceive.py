@@ -235,68 +235,72 @@ class Page:
         return self.field_count > 0
 
 
-def perceive(session: Any, *, budget: int = 120, text_budget: int = 120) -> Page:
-    """One CDP round trip -> an ordered, labelled element list, plus the page's visible
-    text as evidence blocks. No pixels."""
-    start = time.perf_counter()
-    data = session.evaluate(INTERACTIVE_JS) or {}
-    elapsed = (time.perf_counter() - start) * 1000
-    items = [
-        Element(
-            index=int(it.get("index", i)),
-            tag=str(it.get("tag", "")),
-            role=str(it.get("role", "")),
-            name=str(it.get("name", "")),
-            x=int(it.get("x", 0)),
-            y=int(it.get("y", 0)),
-            w=int(it.get("w", 0)),
-            h=int(it.get("h", 0)),
-            in_view=bool(it.get("in_view", True)),
-            covered=bool(it.get("covered", False)),
-            href=str(it.get("href", "")),
-            field=bool(it.get("field", False)),
-            secret=bool(it.get("secret", False)),
-        )
-        for i, it in enumerate((data.get("items") or [])[:budget])
-    ]
-    text = [
-        TextBlock(
-            text=str(tb.get("text", "")),
-            x=int(tb.get("x", 0)),
-            y=int(tb.get("y", 0)),
-            w=int(tb.get("w", 0)),
-            h=int(tb.get("h", 0)),
-        )
-        for tb in (data.get("text") or [])[:text_budget]
-        if str(tb.get("text", "")).strip()
-    ]
-    return Page(
-        url=str(data.get("url", "")),
-        title=str(data.get("title", "")),
-        vw=int(data.get("vw", 0)),
-        vh=int(data.get("vh", 0)),
-        items=items,
-        elapsed_ms=elapsed,
-        raw_count=int(data.get("count", len(items))),
-        can_scroll=bool(data.get("can_scroll", True)),
-        history_len=int(data.get("history_len", 1)),
-        field_count=int(data.get("fields", 0)),
-        scroll_y=int(data.get("scroll_y", 0)),
-        scroll_max=int(data.get("scroll_max", 0)),
-        candidates=int(data.get("candidates", 0)),
-        below_fold=int(data.get("below_fold", 0)),
-        text=text,
-    )
+class Dom:
+    """Read the DOM into a Page, and serialize one."""
 
+    @staticmethod
+    def perceive(session: Any, *, budget: int = 120, text_budget: int = 120) -> Page:
+        """One CDP round trip -> an ordered, labelled element list, plus the page's visible
+        text as evidence blocks. No pixels."""
+        start = time.perf_counter()
+        data = session.evaluate(INTERACTIVE_JS) or {}
+        elapsed = (time.perf_counter() - start) * 1000
+        items = [
+            Element(
+                index=int(it.get("index", i)),
+                tag=str(it.get("tag", "")),
+                role=str(it.get("role", "")),
+                name=str(it.get("name", "")),
+                x=int(it.get("x", 0)),
+                y=int(it.get("y", 0)),
+                w=int(it.get("w", 0)),
+                h=int(it.get("h", 0)),
+                in_view=bool(it.get("in_view", True)),
+                covered=bool(it.get("covered", False)),
+                href=str(it.get("href", "")),
+                field=bool(it.get("field", False)),
+                secret=bool(it.get("secret", False)),
+            )
+            for i, it in enumerate((data.get("items") or [])[:budget])
+        ]
+        text = [
+            TextBlock(
+                text=str(tb.get("text", "")),
+                x=int(tb.get("x", 0)),
+                y=int(tb.get("y", 0)),
+                w=int(tb.get("w", 0)),
+                h=int(tb.get("h", 0)),
+            )
+            for tb in (data.get("text") or [])[:text_budget]
+            if str(tb.get("text", "")).strip()
+        ]
+        return Page(
+            url=str(data.get("url", "")),
+            title=str(data.get("title", "")),
+            vw=int(data.get("vw", 0)),
+            vh=int(data.get("vh", 0)),
+            items=items,
+            elapsed_ms=elapsed,
+            raw_count=int(data.get("count", len(items))),
+            can_scroll=bool(data.get("can_scroll", True)),
+            history_len=int(data.get("history_len", 1)),
+            field_count=int(data.get("fields", 0)),
+            scroll_y=int(data.get("scroll_y", 0)),
+            scroll_max=int(data.get("scroll_max", 0)),
+            candidates=int(data.get("candidates", 0)),
+            below_fold=int(data.get("below_fold", 0)),
+            text=text,
+        )
 
-def to_json(page: Page) -> str:
-    return json.dumps(
-        {
-            "url": page.url,
-            "title": page.title,
-            "elapsed_ms": round(page.elapsed_ms, 2),
-            "items": [it.__dict__ for it in page.items],
-            "text": [tb.__dict__ for tb in page.text],
-        },
-        indent=2,
-    )
+    @staticmethod
+    def to_json(page: Page) -> str:
+        return json.dumps(
+            {
+                "url": page.url,
+                "title": page.title,
+                "elapsed_ms": round(page.elapsed_ms, 2),
+                "items": [it.__dict__ for it in page.items],
+                "text": [tb.__dict__ for tb in page.text],
+            },
+            indent=2,
+        )

@@ -44,44 +44,44 @@ class CDPError(RuntimeError):
     pass
 
 
-def find_chrome() -> str:
-    for path in CHROME_CANDIDATES:
-        if Path(path).exists():
-            return path
-    found = shutil.which("google-chrome") or shutil.which("chromium")
-    if found:
-        return found
-    raise CDPError("no Chrome/Chromium binary found")
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
-def local_debugger_url(url: str, port: int) -> str:
-    """A page's debugger URL, only when it points back at this Chrome's own loopback port.
-
-    The port was free when it was picked, but another process could take it before Chrome
-    does and answer /json/list itself. The session then connects nowhere but here.
-    """
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "ws" or parsed.hostname != "127.0.0.1" or parsed.port != port:
-        raise CDPError(f"debugger URL is not this Chrome's loopback port {port}: {url!r}")
-    return url
-
-
-def _get_json(url: str, timeout: float = 5.0) -> Any:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read())
-
-
 class Chrome:
     """A dedicated Chrome instance. Never touches the user's own profile."""
 
+    @staticmethod
+    def find_chrome() -> str:
+        for path in CHROME_CANDIDATES:
+            if Path(path).exists():
+                return path
+        found = shutil.which("google-chrome") or shutil.which("chromium")
+        if found:
+            return found
+        raise CDPError("no Chrome/Chromium binary found")
+
+    @staticmethod
+    def free_port() -> int:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            return int(s.getsockname()[1])
+
+    @staticmethod
+    def local_debugger_url(url: str, port: int) -> str:
+        """A page's debugger URL, only when it points back at this Chrome's own loopback port.
+
+        The port was free when it was picked, but another process could take it before Chrome
+        does and answer /json/list itself. The session then connects nowhere but here.
+        """
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != "ws" or parsed.hostname != "127.0.0.1" or parsed.port != port:
+            raise CDPError(f"debugger URL is not this Chrome's loopback port {port}: {url!r}")
+        return url
+
+    @staticmethod
+    def _get_json(url: str, timeout: float = 5.0) -> Any:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return json.loads(resp.read())
+
     def __init__(self, *, port: int | None = None, headed: bool = False, profile: str | None = None):
-        self.port = port or free_port()
+        self.port = port or Chrome.free_port()
         self.headed = headed
         self.profile = profile or tempfile.mkdtemp(prefix="tscu-chrome-")
         self._ephemeral = profile is None
@@ -93,7 +93,7 @@ class Chrome:
 
     def start(self, *, window: tuple[int, int] = (1440, 900), timeout: float = 25.0) -> Chrome:
         args = [
-            find_chrome(),
+            Chrome.find_chrome(),
             # The debugging socket listens on the loopback address (Chrome's default;
             # --remote-debugging-address is never passed), and accepts a websocket from
             # one origin, which `attach` sends. Chrome 111+ refuses every other origin,
@@ -117,7 +117,7 @@ class Chrome:
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                _get_json(f"http://127.0.0.1:{self.port}/json/version", timeout=1.0)
+                Chrome._get_json(f"http://127.0.0.1:{self.port}/json/version", timeout=1.0)
                 return self
             except (urllib.error.URLError, OSError, json.JSONDecodeError):
                 time.sleep(0.1)
@@ -127,9 +127,9 @@ class Chrome:
     def page_target(self, timeout: float = 10.0) -> str:
         deadline = time.time() + timeout
         while time.time() < deadline:
-            for target in _get_json(f"http://127.0.0.1:{self.port}/json/list"):
+            for target in Chrome._get_json(f"http://127.0.0.1:{self.port}/json/list"):
                 if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
-                    return local_debugger_url(str(target["webSocketDebuggerUrl"]), self.port)
+                    return Chrome.local_debugger_url(str(target["webSocketDebuggerUrl"]), self.port)
             time.sleep(0.1)
         raise CDPError("no page target available")
 

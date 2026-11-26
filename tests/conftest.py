@@ -178,8 +178,8 @@ def no_real_machine(monkeypatch):
     for name in ("system", "posix_spawn", "posix_spawnp"):
         if hasattr(os, name):
             monkeypatch.setattr(os, name, refuse(f"os.{name}"))
-    monkeypatch.setattr(cdp, "find_chrome", refuse("cdp.find_chrome"))
-    monkeypatch.setattr(cdp, "_get_json", refuse("the CDP HTTP endpoint"))
+    monkeypatch.setattr(cdp.Chrome, "find_chrome", staticmethod(refuse("cdp.find_chrome")))
+    monkeypatch.setattr(cdp.Chrome, "_get_json", staticmethod(refuse("the CDP HTTP endpoint")))
     monkeypatch.setattr(cdp.websocket, "create_connection", refuse("a CDP websocket"))
     _loopback_only(monkeypatch, refuse)
 

@@ -105,8 +105,8 @@ def test_an_unpatched_session_call_refuses_instead_of_opening_one():
     "touch",
     [
         lambda tmp: Chrome(port=9, profile=str(tmp)).start(),
-        lambda tmp: cdp.find_chrome(),
-        lambda tmp: cdp._get_json("http://127.0.0.1:9/json/version"),
+        lambda tmp: cdp.Chrome.find_chrome(),
+        lambda tmp: cdp.Chrome._get_json("http://127.0.0.1:9/json/version"),
         lambda tmp: Session("ws://127.0.0.1:9/devtools/page/X", origin="http://127.0.0.1:9"),
         lambda tmp: subprocess.Popen(["true"]),
         lambda tmp: subprocess.run(["true"]),
