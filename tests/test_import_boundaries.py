@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 PACKAGE = Path(__file__).resolve().parent.parent / "yuanji_computer_use"
-PLATFORM = {"platform_adapter", "macos", "windows", "perception"}
+PLATFORM = {"platforms.adapter", "platforms.macos", "platforms.windows", "perception", "perception.pipeline"}
 # The desktop perception's models: the browser path reads the DOM and must not pull in PyTorch.
 MODELS = {"parse.ocr", "parse.detect", "parse.caption", "parse.fuse", "parse.marks", "parse.weights", "parse.runtime"}
 
@@ -51,7 +51,7 @@ def module_file(name: str) -> Path | None:
 
 def test_uia_roles_imports_nothing_but_the_standard_library():
     """The VM walk concatenates this file into a script that cannot import jev or anything installed."""
-    tree = ast.parse((PACKAGE / "uia_roles.py").read_text())
+    tree = ast.parse((PACKAGE / "platforms" / "uia_roles.py").read_text())
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -110,7 +110,7 @@ def test_the_setup_command_imports_only_the_guide():
 
 def test_uia_patterns_imports_nothing_but_the_standard_library():
     """The same script concatenates this file, so it stays free of jev and of Windows libraries."""
-    tree = ast.parse((PACKAGE / "uia_patterns.py").read_text())
+    tree = ast.parse((PACKAGE / "platforms" / "uia_patterns.py").read_text())
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -125,9 +125,9 @@ def test_uia_patterns_imports_nothing_but_the_standard_library():
 
 def test_the_session_controller_is_not_on_the_macos_import_path():
     """clicker on macOS never loads the child-session module, and that module never loads the adapter."""
-    assert "windows_session" not in imports_of(PACKAGE / "cli.py")
-    assert "windows_session" not in imports_of(PACKAGE / "windows.py")
-    assert "platform_adapter" not in imports_of(PACKAGE / "windows_session.py")
+    assert "platforms.windows_session" not in imports_of(PACKAGE / "cli.py")
+    assert "platforms.windows_session" not in imports_of(PACKAGE / "platforms" / "windows.py")
+    assert "platforms.adapter" not in imports_of(PACKAGE / "platforms" / "windows_session.py")
 
 
 @pytest.mark.parametrize("start", ["browser", "waa.tree", "waa.results", "helper.front", "helper.setup"])
@@ -144,5 +144,5 @@ def test_never_reaches_the_desktop_adapter(start):
         if path.name == "__init__.py":
             todo.extend(f"{name}.{p.stem}" for p in path.parent.glob("*.py") if p.stem != "__init__")
         todo.extend(imports_of(path))
-    assert not {name.split(".")[-1] for name in seen} & PLATFORM, sorted(seen)
+    assert not seen & PLATFORM, sorted(seen)
     assert not seen & MODELS, sorted(seen)

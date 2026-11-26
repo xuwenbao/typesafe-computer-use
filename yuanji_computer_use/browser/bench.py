@@ -27,7 +27,7 @@ from pathlib import Path
 from typesafe_sdk import TypeSafeClient
 
 from .. import config
-from ..writer import make_writer, provider
+from ..llm.writer import make_writer, provider
 from . import act
 from .cdp import Chrome
 from .decide import decide
@@ -69,7 +69,7 @@ def ocr_perception(session, *, budget: int = 120) -> dict:
     ocr_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
-    from ..perception import merge_blocks, to_items
+    from ..perception.pipeline import merge_blocks, to_items
 
     lines = [(t.strip(), c, b) for t, c, b in raw if t.strip() and c >= 0.0]
     items = to_items(merge_blocks(lines), budget)

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
-from yuanji_computer_use.bound import CaptureTimeout
+from yuanji_computer_use.platforms.bound import CaptureTimeout
 
 FIX = Path(__file__).parent / "fixtures" / "lifecycle"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -120,7 +120,7 @@ def _snapshot(out: Path, state) -> dict:
 
 
 def _freeze_clock(monkeypatch) -> None:
-    for module in ("yuanji_computer_use.decide", "yuanji_computer_use.writer", "yuanji_computer_use.driver_agent"):
+    for module in ("yuanji_computer_use.llm.classifier", "yuanji_computer_use.llm.writer", "yuanji_computer_use.agents.driver.conversation"):
         monkeypatch.setattr(f"{module}.now_context", lambda: dict(FIXED_NOW))
     # `dates.now_context` itself, in case a later import reads it from there.
     monkeypatch.setattr("yuanji_computer_use.dates.now_context", lambda: dict(FIXED_NOW))

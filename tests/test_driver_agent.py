@@ -11,11 +11,8 @@ from agents.tracing import get_trace_provider
 from PIL import Image
 from scripted_driver import ScriptedModel
 
-from yuanji_computer_use import driver_agent, macos
-from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.config import reset_settings
-from yuanji_computer_use.driver import load_driver_record, take_over
-from yuanji_computer_use.driver_agent import (
+from yuanji_computer_use.agents.driver import conversation as driver_agent
+from yuanji_computer_use.agents.driver.conversation import (
     INSTRUCTIONS,
     KEEP_SCREENS,
     TOOLS,
@@ -26,10 +23,14 @@ from yuanji_computer_use.driver_agent import (
     screen_message,
     screen_packet,
 )
+from yuanji_computer_use.agents.driver.takeover import load_driver_record, take_over
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.config import reset_settings
+from yuanji_computer_use.llm.writer import PLACEHOLDER_KEY
 from yuanji_computer_use.models import Abort, Item
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.platforms import macos
+from yuanji_computer_use.platforms.adapter import desktop
 from yuanji_computer_use.runner import RunConfig
-from yuanji_computer_use.writer import PLACEHOLDER_KEY
 
 _MAC_ELEMENT_TEXT = macos.element_text
 LARGE = (Path(__file__).parent / "fixtures" / "largefile.txt").read_text(encoding="utf-8")
@@ -40,7 +41,7 @@ def _request():
 
 
 def test_importing_the_driver_disables_tracing():
-    import yuanji_computer_use.driver  # noqa: F401
+    import yuanji_computer_use.agents.driver.conversation  # noqa: F401
 
     assert get_trace_provider()._disabled is True
 
@@ -211,13 +212,13 @@ def _drive(monkeypatch, tmp_path, screen, scripts):
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     clicks = []
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: clicks.append(args))
-    from yuanji_computer_use import runner
+    from yuanji_computer_use.agents import driver as driver_role
 
-    def look(cfg, ctx, state, log):
+    def look(state):
         state.view = (screen, [])
         return (screen, [])
 
-    monkeypatch.setattr(runner, "look", look)
+    monkeypatch.setattr(driver_role, "look", look)
     monkeypatch.setattr(driver_agent, "model_for", lambda: ScriptedModel(list(scripts)))
     lines = []
     state = Session(outcome="nothing helps")
@@ -344,7 +345,7 @@ def test_an_offline_takeover_records_the_read_the_count_and_the_action(monkeypat
 def test_a_takeover_records_the_seconds_the_driver_spent(monkeypatch, tmp_path):
     from world import FakeWriter, Page, World, drive
 
-    from yuanji_computer_use import driver
+    from yuanji_computer_use.agents.driver import takeover as driver
 
     clock = {"t": 0.0}
 

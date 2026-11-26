@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .models import Abort
+from ..models import Abort
 
 KINDS = ("task", "log", "progress", "question", "answer", "cancel", "done")
 PIPE_NAME = "jev-session"
@@ -991,7 +991,7 @@ def _session_logon() -> tuple[str, str] | None:
     """The configured child-session logon, or None when no password is set."""
     from pathlib import Path
 
-    from . import config
+    from .. import config
 
     options = config.settings()
     if not options.session_password:
@@ -1462,7 +1462,7 @@ try:
     os.environ["JEV_SESSION_PIPE"] = sys.argv[1]
     os.chdir(sys.argv[2])
     sys.path.insert(0, sys.argv[2])
-    from yuanji_computer_use.windows_session import attach_input_desktop, run_at_full_speed
+    from yuanji_computer_use.platforms.windows_session import attach_input_desktop, run_at_full_speed
 
     attach_input_desktop()
     stamp("desktop")
@@ -1470,7 +1470,7 @@ try:
     stamp("full_speed")
     # Importing perception before the bind fails SetThreadDesktop: the import opens the desktop
     # the thread is already on, and a thread that has opened one cannot switch.
-    from yuanji_computer_use.perception import adopt_start, mark, snapshot_session_cpu, start_warm_up
+    from yuanji_computer_use.perception.pipeline import adopt_start, mark, snapshot_session_cpu, start_warm_up
 
     adopt_start(born, stamps)
     snapshot_session_cpu("at_start")

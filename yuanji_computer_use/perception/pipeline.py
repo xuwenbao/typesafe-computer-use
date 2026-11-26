@@ -19,16 +19,16 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
-from .bound import CaptureTimeout, call_within
-from .config import settings
-from .models import MENU_BAR_PT, AxNode, Box, Item, Screen
-from .parse import caption as parse_caption
-from .parse import detect as parse_detect
-from .parse import ocr as parse_ocr
-from .parse import weights as parse_weights
-from .parse.fuse import fuse
-from .platform_adapter import desktop
-from .timing import FIELD_TIMEOUT, OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, SCREENSHOT_TIMEOUT, URL_TIMEOUT, phase
+from ..config import settings
+from ..models import MENU_BAR_PT, AxNode, Box, Item, Screen
+from ..parse import caption as parse_caption
+from ..parse import detect as parse_detect
+from ..parse import ocr as parse_ocr
+from ..parse import weights as parse_weights
+from ..parse.fuse import fuse
+from ..platforms.adapter import desktop
+from ..platforms.bound import CaptureTimeout, call_within
+from ..timing import FIELD_TIMEOUT, OCR_AHEAD, OCR_RECTS, OCR_REGION_PCT, SCREENSHOT_TIMEOUT, URL_TIMEOUT, phase
 
 # A control that does not answer is treated as absent. A screenshot that does not return ends the step.
 FIELD_WAIT = 2.0

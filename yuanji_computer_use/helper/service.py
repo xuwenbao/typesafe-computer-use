@@ -24,13 +24,13 @@ from pathlib import Path
 
 from .. import config
 from ..actions import Context, click_item
+from ..llm.writer import make_writer
 from ..models import Abort, Item, Missed, Screen
 from ..parse.runtime import unsupported
-from ..perception import capture, perceive
-from ..platform_adapter import current, desktop, using
+from ..perception.pipeline import capture, perceive
+from ..platforms.adapter import current, desktop, using
 from ..report import annotate
 from ..runner import RunConfig, run
-from ..writer import make_writer
 from . import home
 from .approvals import Denied, Gate
 from .guard import GuardedDesktop

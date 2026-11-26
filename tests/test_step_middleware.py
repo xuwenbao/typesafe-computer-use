@@ -5,10 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 from yuanji_computer_use.actions import Context
-from yuanji_computer_use.agents.middleware import SessionReport, StepFiles, StepLog, StepPipeline, Timing
+from yuanji_computer_use.agents.policy.pipeline import SessionReport, StepFiles, StepLog, StepPipeline, Timing
+from yuanji_computer_use.agents.policy.stages import ActStrategy, DecideStrategy, MemoryStrategy, PerceiveStrategy
 from yuanji_computer_use.agents.session import Session, StepContext
-from yuanji_computer_use.agents.strategies import ActStrategy, DecideStrategy, MemoryStrategy, PerceiveStrategy
-from yuanji_computer_use.decide import Decision
+from yuanji_computer_use.llm.classifier import Decision
 from yuanji_computer_use.runner import RunConfig
 
 
@@ -54,7 +54,7 @@ class _Boom:
 
 def test_one_step_writes_the_five_files_and_reports_the_action(monkeypatch, tmp_path, screen):
     reported = []
-    monkeypatch.setattr("yuanji_computer_use.agents.middleware.report_action", reported.append)
+    monkeypatch.setattr("yuanji_computer_use.agents.policy.pipeline.report_action", reported.append)
     decision = _decision()
     state = Session()
     sc = StepContext(step=1, screen=screen, items=[])

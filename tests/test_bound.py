@@ -6,12 +6,19 @@ import time
 import pytest
 from PIL import Image
 
-from yuanji_computer_use import perception
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.policy.stages import run_step
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.strategies import run_step
-from yuanji_computer_use.bound import CaptureLines, CaptureTimeout, SilentEvent, assemble_capture, await_capture, call_within
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.platforms.adapter import desktop
+from yuanji_computer_use.platforms.bound import (
+    CaptureLines,
+    CaptureTimeout,
+    SilentEvent,
+    assemble_capture,
+    await_capture,
+    call_within,
+)
 from yuanji_computer_use.report import Log
 from yuanji_computer_use.runner import RunConfig
 

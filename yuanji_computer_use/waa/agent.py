@@ -28,12 +28,12 @@ import requests
 
 from .. import config, runner
 from ..actions import Context
-from ..decide import Decision
+from ..llm.classifier import Decision
+from ..llm.writer import Writer, make_writer
 from ..models import Abort
 from ..parse.runtime import unsupported
-from ..platform_adapter import using
+from ..platforms.adapter import using
 from ..runner import RunConfig
-from ..writer import Writer, make_writer
 from . import tree
 from .desktop import WAADesktop
 

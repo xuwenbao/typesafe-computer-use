@@ -6,9 +6,9 @@ import pytest
 
 from yuanji_computer_use import actions
 from yuanji_computer_use.actions import click_item, fill_field, press_offscreen
+from yuanji_computer_use.llm.writer import Fill, make_writer
 from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Missed, Popup
-from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.writer import Fill, make_writer
+from yuanji_computer_use.platforms.adapter import desktop
 
 
 @pytest.fixture

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Score the desktop perception on saved captures. Reads image files only; see perception_eval.py.
+# Score the desktop perception on saved captures. Reads image files only; see perception/eval.py.
 #
 #   scripts/perception-eval check DIR              validate labels and coverage, reading no image
 #   scripts/perception-eval run DIR [--out FILE]   score the current pipeline on DIR

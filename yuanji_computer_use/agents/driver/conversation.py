@@ -31,11 +31,9 @@ from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.run_config import CallModelData, ModelInputData
 from PIL import Image
 
-from .config import settings
-from .dates import now_context
-from .models import Item, Screen
-from .platform_adapter import desktop
-from .writer import (
+from ...config import settings
+from ...dates import now_context
+from ...llm.writer import (
     DriveStep,
     _last_action,
     _menu_highlight,
@@ -44,6 +42,8 @@ from .writer import (
     _selected_files,
     openai_credentials,
 )
+from ...models import Item, Screen
+from ...platforms.adapter import desktop
 
 set_tracing_disabled(True)
 

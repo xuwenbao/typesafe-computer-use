@@ -11,7 +11,7 @@ from world import FakeTypeSafe, scripted
 from yuanji_computer_use import runner
 from yuanji_computer_use.parse import detect as parse_detect
 from yuanji_computer_use.parse import ocr as parse_ocr
-from yuanji_computer_use.platform_adapter import current, host
+from yuanji_computer_use.platforms.adapter import current, host
 from yuanji_computer_use.waa import agent as agent_module
 from yuanji_computer_use.waa.agent import JevAgent, browser_for
 

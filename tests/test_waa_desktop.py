@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import busy_page
 
-from yuanji_computer_use.uia_patterns import PATTERN_IDS
+from yuanji_computer_use.platforms.uia_patterns import PATTERN_IDS
 from yuanji_computer_use.waa import tree
 from yuanji_computer_use.waa.desktop import WAADesktop
 

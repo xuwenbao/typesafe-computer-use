@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
-from yuanji_computer_use.calls import Calls, MeteredClassifier, MeteredWriter, Usage
+from yuanji_computer_use.llm.calls import Calls, MeteredClassifier, MeteredWriter, Usage
 
 
 def test_no_request_yet_has_no_share():

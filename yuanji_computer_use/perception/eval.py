@@ -35,7 +35,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .models import Item
+from ..models import Item
 
 KINDS = ("text", "icon")
 COVERAGE = ("zh", "retina-small-text", "icon-toolbar", "waa", "windows")
@@ -201,10 +201,10 @@ def summarize(images: list[dict]) -> dict:
 
 def current_pipeline(image: Image.Image) -> tuple[list[Item], dict[str, float]]:
     """The desktop perception's text and icons on one capture, without an accessibility tree."""
-    from .config import settings
-    from .models import Screen
-    from .perception import ocr
-    from .timing import EXTRAS, phase
+    from ..config import settings
+    from ..models import Screen
+    from ..timing import EXTRAS, phase
+    from .pipeline import ocr
 
     timing: dict[str, float] = {}
     screen = Screen(image=image, scale=1.0, app="", field=None, url=None)
@@ -214,7 +214,7 @@ def current_pipeline(image: Image.Image) -> tuple[list[Item], dict[str, float]]:
 
 
 def pipeline_info() -> dict:
-    from .perception import pipeline_record
+    from .pipeline import pipeline_record
 
     return {**pipeline_record(), "platform": sys.platform}
 

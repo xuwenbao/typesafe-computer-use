@@ -13,7 +13,7 @@ _spec.loader.exec_module(entry)
 def test_import_check_is_its_own_command():
     assert entry.is_import_check(["clicker.exe", "import-check"]) is True
     assert entry.is_import_check(["clicker.exe", "status"]) is False
-    assert entry.IMPORT_CHECK == ("yuanji_computer_use.driver", "yuanji_computer_use.helper.service")
+    assert entry.IMPORT_CHECK == ("yuanji_computer_use.agents.driver.takeover", "yuanji_computer_use.helper.service")
 
 
 def test_capture_proc_arguments_drop_the_dispatch_word():

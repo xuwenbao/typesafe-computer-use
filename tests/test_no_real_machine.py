@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from yuanji_computer_use import macos, windows
 from yuanji_computer_use.browser import cdp
 from yuanji_computer_use.browser.cdp import Chrome, Session
 from yuanji_computer_use.helper import desk_lock as helper_desk
+from yuanji_computer_use.platforms import macos, windows
 
 
 @pytest.mark.parametrize(
@@ -81,7 +81,7 @@ def test_the_windows_pointer_reads_as_mid_screen_too():
 
 
 def test_an_unpatched_session_call_refuses_instead_of_opening_one():
-    from yuanji_computer_use import windows_session
+    from yuanji_computer_use.platforms import windows_session
 
     for touch in (
         windows_session.enable_child_session,

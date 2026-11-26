@@ -11,7 +11,7 @@ from yuanji_computer_use.helper import service as service_module
 from yuanji_computer_use.helper.approvals import Gate
 from yuanji_computer_use.helper.service import Caller, Service, ToolFailure
 from yuanji_computer_use.models import Item, Missed, Screen
-from yuanji_computer_use.platform_adapter import desktop, using
+from yuanji_computer_use.platforms.adapter import desktop, using
 
 
 @pytest.fixture

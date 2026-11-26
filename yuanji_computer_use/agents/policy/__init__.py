@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from .base import register
-from .status import Status
-from .strategies import run_step
+from ..base import register
+from ..status import Status
+from .stages import run_step
 
 
 @register("policy")

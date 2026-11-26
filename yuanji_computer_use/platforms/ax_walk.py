@@ -13,7 +13,7 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from typing import NamedTuple
 
-from .models import AxNode
+from ..models import AxNode
 
 AX_PRESS = "AXPress"  # sentinel an actions() callable emits when a node accepts a press/invoke
 

@@ -2,7 +2,7 @@
 stand-ins for the platform-only modules.
 
 The suite is pure logic and should run on any OS. The platform adapters
-(`yuanji_computer_use.macos`, `yuanji_computer_use.windows`) import their
+(`yuanji_computer_use.platforms.macos`, `yuanji_computer_use.platforms.windows`) import their
 platform's packages at module scope, but the tests only ever import them -- they
 call nothing but the pure rules -- so a stand-in that exists and raises on any
 real use is enough to run the whole suite anywhere. Where a real module is
@@ -75,13 +75,14 @@ for _windows_module in (
 import pytest  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from yuanji_computer_use import config, macos, windows, windows_session  # noqa: E402
+from yuanji_computer_use import config  # noqa: E402
 from yuanji_computer_use.browser import cdp  # noqa: E402
 from yuanji_computer_use.helper import desk_lock as helper_desk  # noqa: E402
 from yuanji_computer_use.models import Item, Screen  # noqa: E402
 from yuanji_computer_use.parse import caption as parse_caption  # noqa: E402
 from yuanji_computer_use.parse import detect as parse_detect  # noqa: E402
 from yuanji_computer_use.parse import ocr as parse_ocr  # noqa: E402
+from yuanji_computer_use.platforms import macos, windows, windows_session  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

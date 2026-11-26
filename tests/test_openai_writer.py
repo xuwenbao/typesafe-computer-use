@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from yuanji_computer_use.calls import Calls, MeteredWriter
 from yuanji_computer_use.config import settings
-from yuanji_computer_use.writer import WriterError, compose_answer, compose_url, make_writer, parse_json
+from yuanji_computer_use.llm.calls import Calls, MeteredWriter
+from yuanji_computer_use.llm.writer import WriterError, compose_answer, compose_url, make_writer, parse_json
 
 ANSWER = '{"achieved": true, "answer": "Sep 19 in Miami.", "focus": "", "question": ""}'
 

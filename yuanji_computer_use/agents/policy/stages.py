@@ -8,23 +8,16 @@ from __future__ import annotations
 from dataclasses import asdict
 from types import SimpleNamespace
 
-from ..actions import perform
-from ..bound import CaptureTimeout
-from ..config import settings
-from ..decide import Decision, MalformedAnswer, decide, offscreen_records
-from ..models import Item, Screen, same_screen, signature
-from ..platform_adapter import desktop
-from ..report import Log, ax_count, top
-from ..timing import phase
-from .session import Session, StepContext
-
-
-def _runner():
-    """用到时再取主循环模块。截屏和识别都从它上面找，测试打的补丁才盖得住。"""
-    from .. import runner
-
-    return runner
-
+from ...actions import perform
+from ...config import settings
+from ...llm.classifier import Decision, MalformedAnswer, decide, offscreen_records
+from ...models import Item, Screen, same_screen, signature
+from ...perception import pipeline as perception
+from ...platforms.adapter import desktop
+from ...platforms.bound import CaptureTimeout
+from ...report import Log, ax_count, top
+from ...timing import phase
+from ..session import Session, StepContext
 
 MAX_IDLE = 3  # 连续 3 次动作后屏幕都没变化，就判定卡住
 MAX_REPEATS = 2  # 在同一个屏幕上连续 2 次重复以前做过的动作，就判定卡住
@@ -45,7 +38,7 @@ class PerceiveStrategy:
         cache = None if cfg.replay else state.parse_cache
         try:
             with phase(sc.timing, "capture"):
-                screen = _runner().capture(
+                screen = perception.capture(
                     cfg.image, cfg.app, cfg.url, ctx.browser, sc.timing, ahead=cache if cfg.read_ahead else None
                 )
         except CaptureTimeout:
@@ -54,7 +47,7 @@ class PerceiveStrategy:
             state.outcome = "capture timed out"
             sc.keep_going = False
             return
-        items = _runner().perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
+        items = perception.perceive(screen, settings().max_options, cfg.goal, sc.timing, cache)
         state.view = (screen, items)
         sc.screen = screen
         sc.items = items
@@ -116,7 +109,7 @@ class MemoryStrategy:
 
 def run_step(cfg, ctx, state: Session, step: int, log: Log) -> bool:
     """分类器的一步：感知 → 决策 → 执行 → 记忆。写文件、计时和上报在中间件里。"""
-    from .middleware import StepPipeline
+    from .pipeline import StepPipeline
 
     pipeline = StepPipeline(PerceiveStrategy(), DecideStrategy(), ActStrategy(), MemoryStrategy())
     return pipeline.run(cfg, ctx, state, StepContext(step=step), log)

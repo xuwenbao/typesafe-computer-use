@@ -7,11 +7,10 @@ import httpx
 import openai
 import pytest
 
-from yuanji_computer_use.calls import Calls, MeteredWriter
+from yuanji_computer_use.agents.driver.conversation import INSTRUCTIONS, screen_packet
 from yuanji_computer_use.config import load_dotenv, reset_settings, settings
-from yuanji_computer_use.driver_agent import INSTRUCTIONS, screen_packet
-from yuanji_computer_use.models import AxNode, Field
-from yuanji_computer_use.writer import (
+from yuanji_computer_use.llm.calls import Calls, MeteredWriter
+from yuanji_computer_use.llm.writer import (
     ANSWER_SYSTEM,
     WriterError,
     _structured,
@@ -22,6 +21,7 @@ from yuanji_computer_use.writer import (
     provider,
     valid_url,
 )
+from yuanji_computer_use.models import AxNode, Field
 
 
 def test_dotenv_sets_only_missing_keys(tmp_path, monkeypatch):
@@ -215,8 +215,8 @@ def test_writer_clients_time_out_and_retry_once(clean_env, monkeypatch):
             seen.append(kwargs)
             self.base_url = kwargs["base_url"]
 
-    monkeypatch.setattr("yuanji_computer_use.writer.anthropic.Anthropic", FakeAnthropic)
-    monkeypatch.setattr("yuanji_computer_use.openai_writer.openai.OpenAI", FakeOpenAI)
+    monkeypatch.setattr("yuanji_computer_use.llm.writer.anthropic.Anthropic", FakeAnthropic)
+    monkeypatch.setattr("yuanji_computer_use.llm.openai_writer.openai.OpenAI", FakeOpenAI)
 
     clean_env.setenv("CLICKER_WRITER_API", "anthropic")
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")

@@ -11,8 +11,7 @@ import string
 import time
 from dataclasses import asdict
 
-from . import driver_agent
-from .actions import (
+from ...actions import (
     WAIT_SECONDS,
     _paste_note,
     _return_note,
@@ -23,16 +22,19 @@ from .actions import (
     focus_landed,
     noted,
 )
-from .agents.strategies import MAX_IDLE, MAX_REPEATS, UNCHANGED, tried_here
-from .calls import DRIVER
-from .config import settings
-from .models import AxNode, Item, Missed, Screen, same_screen, signature
-from .parse.marks import marks
-from .perception import ocr_region, settle
-from .platform_adapter import desktop
-from .runner import STOPPED as classifier_stopped
-from .runner import earlier_screens, stops_so_far
-from .writer import DriveStep, denied_listed_names, looks_credential
+from ...config import settings
+from ...llm.calls import DRIVER
+from ...llm.writer import DriveStep, denied_listed_names, looks_credential
+from ...models import AxNode, Item, Missed, Screen, same_screen, signature
+from ...parse.marks import marks
+from ...perception import pipeline as perception
+from ...perception.pipeline import ocr_region
+from ...platforms.adapter import desktop
+from ..outcomes import CLASSIFIER_STOPPED as classifier_stopped
+from ..outcomes import DRIVER_STOPPED as STOPPED  # noqa: F401  the writer reads this after a takeover
+from ..policy.stages import MAX_IDLE, MAX_REPEATS, UNCHANGED, tried_here
+from ..writer import earlier_screens, stops_so_far
+from . import conversation as driver_agent
 
 # 模型可以按的单个键。名单以外的按键直接拒绝。start 在 Windows 上打开开始菜单，在 Mac 上打开 Spotlight。
 # run 在 Windows 上打开运行对话框（Win+R），在 Mac 上同样打开 Spotlight。
@@ -89,25 +91,15 @@ DONE_BEFORE = "this did nothing on this screen before"  # 这个动作在当前�
 BANNED = "refused: this is the way that just looped; try another way"  # 换路之后，打转的动作在那一屏上不再执行
 MAX_REROUTES = 1  # 一次接管里止损最多逼它换几次路；再触发就停
 
-# 接管结束时告诉写手的英文说明。写手用它向用户解释这次是怎么停的，所以保持英文。
-TOOK_OVER = "the classifier stopped short of the goal for good, a stronger model took over the actions, and "
-STOPPED = {
-    "driver done": TOOK_OVER + "it judged the goal reached on this screen",
-    "driver gave up": TOOK_OVER + "it found no action that would get closer to the goal",
-    "driver stalled": TOOK_OVER + "its last actions changed nothing",
-    "driver step limit": TOOK_OVER + "it used every action it was allowed",
-    "driver failed": TOOK_OVER + "the model it asks could not be reached",
-}
-
 
 def take_over(cfg, ctx, state, log, first: int) -> bool:
     """从第 `first` 步开始接管，直到模型说完成、放弃、卡住，或把自己的步数用完。
 
     返回 False 表示根本没开始：接管关着（步数为 0），或者没有写手可问。
     步数是接管自己的 `driver_steps`，不从分类器剩下的 `--steps` 里扣。每一步只问一个动作，做完再看新截图。
-    真正开始之后，`state.outcome` 会改成上面 STOPPED 里的一种，做过的动作都在 `state.history` 里，每行以 `driver: ` 开头。
+    真正开始之后，`state.outcome` 会改成 STOPPED 里的一种，做过的动作都在 `state.history` 里，每行以 `driver: ` 开头。
     """
-    from .runner import look
+    from . import look
 
     # 目标：确认这次接管可以开始。完成：步数为 0 或没有写手时返回 False，后面的循环不会跑。
     budget = cfg.driver_steps
@@ -135,13 +127,14 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
     same_sig: str | None = None
     last_sig = ""
     started = len(state.seen)  # 累计重复只数这次接管做的动作，分类器做过的不算
+    state.cfg, state.ctx, state.log = cfg, ctx, log
 
     try:
         while cursor < first + budget:
             desktop.check_abort()
 
             # 目标：拿到这一步要看的屏幕。完成：连续没变化时第一次逼模型换路，第二次定为卡住并返回。
-            seen = look(cfg, ctx, state, log)
+            seen = look(state)
             if seen is None:
                 if _loop(state, f"the last {MAX_IDLE} actions changed nothing on screen", last_sig, log):
                     return True
@@ -298,7 +291,7 @@ def take_over(cfg, ctx, state, log, first: int) -> bool:
                     if _loop(state, f"the same action was taken {MAX_SAME_ACTION} times in a row", sig, log):
                         return True
                     same_streak, same_sig = 0, None
-            settle(screen.image, cfg.delay)
+            perception.settle(screen.image, cfg.delay)
 
         # 目标：步数用完时收尾。完成：保留一开始写下的 driver step limit，并返回 True。
         log(f"  the driver used all {budget} of its actions")
@@ -347,7 +340,7 @@ def _banned_here(state, sig: str) -> bool:
 def _record(state, line: str) -> None:
     """记进历史，并在子会话里把这一行送到画中画蒙板上。"""
     state.history.append(line)
-    from .windows_session import report_action
+    from ...platforms.windows_session import report_action
 
     report_action(line)
 

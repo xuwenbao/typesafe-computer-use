@@ -5,9 +5,9 @@ import pytest
 from conftest import busy_page
 from PIL import Image, ImageDraw
 
-from yuanji_computer_use import perception
 from yuanji_computer_use.models import AxNode, Field, Item, Popup, Screen
-from yuanji_computer_use.perception import (
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.perception.pipeline import (
     drawn,
     goal_echoes,
     is_echo,
@@ -16,7 +16,7 @@ from yuanji_computer_use.perception import (
     order_items,
     to_items,
 )
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.platforms.adapter import desktop
 
 
 def line(text, x1, y1, x2, y2, conf=1.0):
@@ -410,7 +410,7 @@ def test_an_unchanged_screen_is_neither_read_nor_detected_again(fake_models):
 
 
 def test_the_item_criteria_name_an_icon_as_one(fake_models):
-    from yuanji_computer_use.decide import item_criteria
+    from yuanji_computer_use.llm.classifier import item_criteria
 
     fake_models.icons = [((300.0, 20.0, 340.0, 60.0), 0.6)]
     fake_models.captions = lambda icon: "gear"

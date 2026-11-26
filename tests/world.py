@@ -22,13 +22,15 @@ from types import SimpleNamespace
 from PIL import Image
 from typesafe_sdk import Noul
 
-from yuanji_computer_use import actions, driver_agent, runner
+from yuanji_computer_use import actions, runner
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.driver import conversation as driver_agent
 from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.llm.writer import WriterError
 from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.platforms.adapter import desktop
 from yuanji_computer_use.runner import RunConfig, run
-from yuanji_computer_use.writer import WriterError
 
 CAPTURE = (2000, 1200)
 SCALE = 2.0
@@ -397,8 +399,8 @@ class World:
 
     def install(self, monkeypatch) -> None:
         """Replace the two outer seams: the screen the loop reads and the machine it drives."""
-        monkeypatch.setattr(runner, "capture", lambda *a, **k: self.capture())
-        monkeypatch.setattr(runner, "perceive", lambda screen, *a, **k: self.perceive(screen))
+        monkeypatch.setattr(perception, "capture", lambda *a, **k: self.capture())
+        monkeypatch.setattr(perception, "perceive", lambda screen, *a, **k: self.perceive(screen))
         monkeypatch.setattr(desktop, "check_abort", lambda: None)
         monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
         monkeypatch.setattr(desktop, "click_at", self.click_at)
@@ -617,7 +619,7 @@ def drive(
     """
     world.install(monkeypatch)
     if capture is not None:
-        monkeypatch.setattr(runner, "capture", capture)
+        monkeypatch.setattr(perception, "capture", capture)
     fake = FakeTypeSafe(policy, noul)
     world.fake = fake
     monkeypatch.setattr(runner, "TypeSafeClient", lambda: fake)

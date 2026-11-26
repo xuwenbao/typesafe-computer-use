@@ -18,8 +18,8 @@ import ApplicationServices as AS
 import Quartz
 from PIL import Image
 
+from ..models import AxNode, ElementState, Field
 from .ax_walk import AX_PRESS, AxAttrs, Frame, walk_actionable
-from .models import AxNode, ElementState, Field
 
 # ANSI key codes. `delete` and `backspace` are the same key: on a Mac the key labeled Delete
 # erases backward. Digits are the number row, not the keypad.

@@ -21,9 +21,9 @@ from PIL import Image
 
 from ..config import settings
 from ..models import AxNode, ElementState, Field
-from ..uia_patterns import ID_TO_NAME, OPERATION_PATTERN, OPERATIONS, PATTERN_IDS, VALUE
-from ..uia_roles import ROLE_TO_CONTROL_TYPE_ID
-from ..wheel import wheel_delta
+from ..platforms.uia_patterns import ID_TO_NAME, OPERATION_PATTERN, OPERATIONS, PATTERN_IDS, VALUE
+from ..platforms.uia_roles import ROLE_TO_CONTROL_TYPE_ID
+from ..platforms.wheel import wheel_delta
 from . import tree
 
 NextObs = Callable[[list[str]], dict]

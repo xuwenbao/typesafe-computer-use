@@ -4,9 +4,9 @@ import ctypes
 
 import pytest
 
-from yuanji_computer_use import windows
 from yuanji_computer_use.models import ROLE_WORDS, TEXT_ROLES, Missed
-from yuanji_computer_use.windows import (
+from yuanji_computer_use.platforms import windows
+from yuanji_computer_use.platforms.windows import (
     KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
@@ -90,7 +90,7 @@ def test_a_checkout_starts_the_capture_module(monkeypatch):
     assert windows.capture_command("shot.png", "") == [
         r"C:\Python\python.exe",
         "-m",
-        "yuanji_computer_use.capture_proc",
+        "yuanji_computer_use.platforms.capture_proc",
         "shot.png",
         "",
     ]

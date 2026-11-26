@@ -1,11 +1,11 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+from yuanji_computer_use.agents.policy.stages import MAX_REPEATS, answers, repeating, tried_here
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.strategies import MAX_REPEATS, answers, repeating, tried_here
-from yuanji_computer_use.decide import Decision
+from yuanji_computer_use.agents.writer import earlier_screens
+from yuanji_computer_use.llm.classifier import Decision
 from yuanji_computer_use.models import LINES_PER_DIFFERENCE, Field, Item, same_screen, signature
-from yuanji_computer_use.runner import earlier_screens
 
 
 def texts(*words: str):

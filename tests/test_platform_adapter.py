@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuanji_computer_use import macos, windows
-from yuanji_computer_use.platform_adapter import Desktop, NoDesktop, current, desktop, host, pick_host, using
+from yuanji_computer_use.platforms import macos, windows
+from yuanji_computer_use.platforms.adapter import Desktop, NoDesktop, current, desktop, host, pick_host, using
 from yuanji_computer_use.waa.desktop import WAADesktop
 
 SURFACE = sorted(name for name, value in vars(Desktop).items() if callable(value) and not name.startswith("_"))
@@ -48,7 +48,7 @@ def test_macos_is_the_adapter_off_windows():
 
 
 def test_off_macos_a_host_without_the_mac_packages_has_no_desktop(monkeypatch):
-    monkeypatch.setitem(sys.modules, "yuanji_computer_use.macos", None)  # as on Linux, where Quartz is absent
+    monkeypatch.setitem(sys.modules, "yuanji_computer_use.platforms.macos", None)  # as on Linux, where Quartz is absent
     monkeypatch.setattr(sys, "platform", "linux")
     picked = pick_host()
     assert isinstance(picked, NoDesktop)
@@ -57,7 +57,7 @@ def test_off_macos_a_host_without_the_mac_packages_has_no_desktop(monkeypatch):
 
 
 def test_on_macos_a_missing_mac_package_is_an_error(monkeypatch):
-    monkeypatch.setitem(sys.modules, "yuanji_computer_use.macos", None)
+    monkeypatch.setitem(sys.modules, "yuanji_computer_use.platforms.macos", None)
     monkeypatch.setattr(sys, "platform", "darwin")
     with pytest.raises(ImportError):
         pick_host()

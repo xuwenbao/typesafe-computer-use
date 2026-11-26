@@ -5,11 +5,11 @@ import threading
 import pytest
 from helper_fakes import FakeDesktop
 
-from yuanji_computer_use import windows
 from yuanji_computer_use.helper import approvals
 from yuanji_computer_use.helper.approvals import Denied, Gate, app_key, host_apps
 from yuanji_computer_use.helper.guard import CANCELLED, GuardedDesktop
 from yuanji_computer_use.models import Abort
+from yuanji_computer_use.platforms import windows
 
 
 def test_the_browser_names_are_the_windows_adapters():

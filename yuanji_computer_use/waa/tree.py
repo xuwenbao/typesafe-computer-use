@@ -17,9 +17,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
 from ..models import AxNode, Field
-from ..uia_patterns import ID_TO_NAME
+from ..platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
+from ..platforms.uia_patterns import ID_TO_NAME
 
 WALK_SECONDS = 8.0  # the script stops itself here
 GRACE_SECONDS = 2.0  # how long the client waits after that before giving up
@@ -38,8 +38,8 @@ def script() -> str:
     Only the first file may carry `from __future__ import annotations`. A later copy is a
     syntax error, because that import has to be the first statement of the whole script.
     """
-    roles = (PACKAGE / "uia_roles.py").read_text(encoding="utf-8")
-    patterns = _without_future((PACKAGE / "uia_patterns.py").read_text(encoding="utf-8"))
+    roles = (PACKAGE / "platforms" / "uia_roles.py").read_text(encoding="utf-8")
+    patterns = _without_future((PACKAGE / "platforms" / "uia_patterns.py").read_text(encoding="utf-8"))
     walk = _without_future((PACKAGE / "waa" / "walk_vm.py").read_text(encoding="utf-8"))
     return f"{roles}\n{patterns}\n{walk}\nmain()\n"
 

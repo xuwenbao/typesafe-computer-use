@@ -12,7 +12,7 @@ from yuanji_computer_use.helper import desk_lock, front
 from yuanji_computer_use.helper.approvals import Gate, host_apps
 from yuanji_computer_use.helper.service import Caller, Service
 from yuanji_computer_use.models import Abort
-from yuanji_computer_use.platform_adapter import desktop, using
+from yuanji_computer_use.platforms.adapter import desktop, using
 
 TOOLS = {
     "run_goal",

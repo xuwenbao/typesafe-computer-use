@@ -7,7 +7,15 @@ from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
 
-from .decide import SCREEN_IMAGE, base_state, item_criteria, key_criteria, kind_criteria, offscreen_criteria, site_criteria
+from .llm.classifier import (
+    SCREEN_IMAGE,
+    base_state,
+    item_criteria,
+    key_criteria,
+    kind_criteria,
+    offscreen_criteria,
+    site_criteria,
+)
 from .models import Guidance, Item, Screen
 from .parse.marks import Marked, color_of
 

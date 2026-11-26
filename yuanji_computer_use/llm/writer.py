@@ -13,9 +13,9 @@ import anthropic
 import openai
 from PIL import Image
 
-from .config import OPENAI_HOST, settings
-from .dates import now_context
-from .models import Guidance, Item, Screen
+from ..config import OPENAI_HOST, settings
+from ..dates import now_context
+from ..models import Guidance, Item, Screen
 from .openai_writer import OpenAIWriter
 
 ANSWER_IMAGE_EDGE = 1568  # the longest edge a vision model reads without shrinking the image itself

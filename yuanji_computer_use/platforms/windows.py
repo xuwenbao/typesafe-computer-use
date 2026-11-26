@@ -31,8 +31,8 @@ import win32gui
 import win32process
 from PIL import Image, ImageGrab
 
+from ..models import Abort, AxNode, ElementState, Field, Missed
 from .ax_walk import AX_PRESS, AxAttrs, AxFacts, Frame, walk_actionable
-from .models import Abort, AxNode, ElementState, Field, Missed
 from .uia_patterns import OPERATION_PATTERN, PATTERN_IDS
 from .uia_roles import CONTROL_TYPE_TO_ROLE as CONTROL_TYPE_TO_ROLE
 from .uia_roles import focused_role, pressable, role_for
@@ -658,7 +658,7 @@ def capture_command(png: str, browser: str) -> list[str]:
     """The screenshot child. A frozen `clicker.exe` has no Python `-m`, so it restarts itself."""
     if getattr(sys, "frozen", False):
         return [sys.executable, "capture-proc", png, browser]
-    return [sys.executable, "-m", "yuanji_computer_use.capture_proc", png, browser]
+    return [sys.executable, "-m", "yuanji_computer_use.platforms.capture_proc", png, browser]
 
 
 def read_capture(browser: str, shot_wait: float, detail_wait: float, timing: dict | None = None):

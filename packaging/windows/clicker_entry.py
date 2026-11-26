@@ -32,7 +32,7 @@ if getattr(sys, "frozen", False):
     use_bundled_models(Path(sys.executable))
 
 
-IMPORT_CHECK = ("yuanji_computer_use.driver", "yuanji_computer_use.helper.service")
+IMPORT_CHECK = ("yuanji_computer_use.agents.driver.takeover", "yuanji_computer_use.helper.service")
 
 
 def is_import_check(argv: list[str]) -> bool:
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     child = capture_arguments(sys.argv)
     if child is not None:
         sys.argv = child
-        from yuanji_computer_use.capture_proc import main as capture_main
+        from yuanji_computer_use.platforms.capture_proc import main as capture_main
 
         capture_main()
     else:

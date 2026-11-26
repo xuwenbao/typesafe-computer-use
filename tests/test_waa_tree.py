@@ -5,8 +5,8 @@ import json
 import time
 from pathlib import Path
 
-from yuanji_computer_use import uia_roles, windows
 from yuanji_computer_use.models import Field
+from yuanji_computer_use.platforms import uia_roles, windows
 from yuanji_computer_use.waa import tree
 from yuanji_computer_use.waa.walk_vm import INVOKE, LEGACY, VALUE, LiveElement, empty, walk
 
@@ -238,7 +238,7 @@ def test_an_editable_document_is_a_text_area_and_a_web_page_is_not():
 
 def test_the_script_embeds_the_one_role_table_and_fits_a_windows_command():
     source = tree.script()
-    assert (tree.PACKAGE / "uia_roles.py").read_text(encoding="utf-8") in source
+    assert (tree.PACKAGE / "platforms" / "uia_roles.py").read_text(encoding="utf-8") in source
     compile(source, "<waa-tree>", "exec")
     assert windows.CONTROL_TYPE_TO_ROLE == uia_roles.CONTROL_TYPE_TO_ROLE
     assert windows.pressable is uia_roles.pressable

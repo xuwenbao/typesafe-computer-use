@@ -10,13 +10,13 @@ from pathlib import Path
 
 from . import config
 from .actions import Context
+from .llm.writer import make_writer, provider
 from .parse.runtime import unsupported
-from .perception import capture, mark, perceive, start_warm_up
-from .platform_adapter import desktop
+from .perception.pipeline import capture, mark, perceive, start_warm_up
+from .platforms.adapter import desktop
 from .report import annotate, ax_count, icon_count, render_payload
 from .runner import RunConfig, run
 from .timing import format_timing
-from .writer import make_writer, provider
 
 DOTENV = Path.cwd() / ".env"
 
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> None:
         if sys.platform != "win32":
             sys.exit("clicker session only runs on Windows")
         config.load_dotenv(DOTENV)
-        from .windows_session import run_controller
+        from .platforms.windows_session import run_controller
 
         run_controller(args[1:])
         return
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> None:
     session_ask = None
     session_done = None
     if os.environ.get("JEV_SESSION") == "1":
-        from .windows_session import child_startup, end_child, refuse_if_console
+        from .platforms.windows_session import child_startup, end_child, refuse_if_console
 
         refuse_if_console()
         goal, session_ask, session_done = child_startup()

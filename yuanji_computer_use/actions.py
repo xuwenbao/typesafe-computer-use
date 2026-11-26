@@ -9,10 +9,10 @@ from dataclasses import dataclass, field
 from typesafe_sdk import TypeSafeClient
 
 from .config import SITES
-from .decide import OFFSCREEN_PREFIX, SHORTCUT_KEYS, Decision, row_mates, verify_typed
+from .llm.classifier import OFFSCREEN_PREFIX, SHORTCUT_KEYS, Decision, row_mates, verify_typed
+from .llm.writer import Writer, WriterError, compose_text, compose_url
 from .models import AxNode, Field, Guidance, Item, Missed, Popup, Screen
-from .platform_adapter import desktop
-from .writer import Writer, WriterError, compose_text, compose_url
+from .platforms.adapter import desktop
 
 VERIFY_THRESHOLD = 0.5
 WAIT_SECONDS = 3.0  # what a wait adds to the settle delay every step already gets; three of them cover a slow page

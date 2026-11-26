@@ -8,13 +8,37 @@ import anthropic
 import pytest
 from PIL import Image
 
-from yuanji_computer_use import runner, writer
 from yuanji_computer_use.actions import Context
+from yuanji_computer_use.agents.driver import wants
+from yuanji_computer_use.agents.outcomes import CLASSIFIER_STOPPED
+from yuanji_computer_use.agents.policy.stages import resolve
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.strategies import resolve
+from yuanji_computer_use.agents.writer import WriterAgent
+from yuanji_computer_use.llm import writer
+from yuanji_computer_use.llm.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
 from yuanji_computer_use.models import Field, Guidance, Item, Popup
-from yuanji_computer_use.runner import RunConfig, answer_last, hand_off, wants_driver
-from yuanji_computer_use.writer import ANSWER_IMAGE_EDGE, Answer, Fill, compose_answer
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.platforms.adapter import desktop
+from yuanji_computer_use.runner import RunConfig
+
+
+def hand_off(cfg, ctx, state, step, log):
+    """Fill the session the way the loop does, then let the writer decide whether to continue."""
+    state.cfg, state.ctx, state.step, state.log = cfg, ctx, step, log
+    return WriterAgent().hand_off(state)
+
+
+def answer_last(cfg, ctx, state, log):
+    state.cfg, state.ctx, state.log = cfg, ctx, log
+    WriterAgent().conclude(state)
+
+
+def wants_driver(cfg, ctx, state, log=None):
+    state.cfg, state.ctx = cfg, ctx
+    if log is not None:
+        state.log = log
+    return wants(state)
+
 
 GOAL = "find the next upcoming bruno mars concert"
 
@@ -36,7 +60,7 @@ def context(writer=None) -> Context:
     return Context(goal=GOAL, browser="Google Chrome", email=None, typesafe=None, writer=writer, history=[])
 
 
-def logged() -> tuple[list[str], runner.Log]:
+def logged():
     lines: list[str] = []
     return lines, lambda msg="", echo=True: lines.append(msg)
 
@@ -171,7 +195,7 @@ def test_without_a_writer_the_run_says_why_there_is_no_answer(tmp_path, screen):
 
 
 def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path, screen, make_item, monkeypatch):
-    monkeypatch.setattr(runner, "capture", lambda *a, **k: pytest.fail("captured again"))
+    monkeypatch.setattr(perception, "capture", lambda *a, **k: pytest.fail("captured again"))
     fake = FakeWriter({"achieved": True, "answer": "Sep 19, 2026 in Miami."})
     state = Session(outcome="done", view=(screen, [make_item(0, "SEP 19, 2026")]))
     lines, log = logged()
@@ -185,9 +209,9 @@ def test_the_last_capture_is_answered_from_when_nothing_acted_after_it(tmp_path,
 
 
 def test_the_screen_is_captured_again_when_an_action_made_the_last_capture_stale(tmp_path, screen, make_item, monkeypatch):
-    monkeypatch.setattr(runner.desktop, "check_abort", lambda: None)
-    monkeypatch.setattr(runner, "capture", lambda *a, **k: screen)
-    monkeypatch.setattr(runner, "perceive", lambda *a, **k: [make_item(0, "TICKETS")])
+    monkeypatch.setattr(desktop, "check_abort", lambda: None)
+    monkeypatch.setattr(perception, "capture", lambda *a, **k: screen)
+    monkeypatch.setattr(perception, "perceive", lambda *a, **k: [make_item(0, "TICKETS")])
     fake = FakeWriter({"achieved": False, "answer": "No dates on screen."})
     state = Session(outcome="step limit", view=None)
     lines, log = logged()
@@ -244,7 +268,7 @@ def test_every_stop_names_its_outcome(kind, confidence, outcome, tmp_path, scree
 
     assert not keep_going
     assert state.outcome == outcome
-    assert (outcome in runner.STOPPED) == (outcome != "dry run")
+    assert (outcome in CLASSIFIER_STOPPED) == (outcome != "dry run")
 
 
 class Replies:
@@ -565,7 +589,7 @@ def test_a_second_stop_on_the_same_page_is_handed_back_when_the_driver_is_off(tm
 
 
 def test_an_action_makes_the_last_capture_stale(tmp_path, screen, monkeypatch):
-    monkeypatch.setattr("yuanji_computer_use.agents.strategies.perform", lambda *a, **_k: "scrolled down")
+    monkeypatch.setattr("yuanji_computer_use.agents.policy.stages.perform", lambda *a, **_k: "scrolled down")
     state = Session(view=(screen, []))
     _, log = logged()
 

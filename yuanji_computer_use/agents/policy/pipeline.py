@@ -9,14 +9,14 @@ import json
 import time
 from typing import Protocol
 
-from .. import runner as loop
-from ..parse.marks import marks
-from ..perception import ocr_region
-from ..report import annotate, render_payload
-from ..timing import format_timing
-from ..windows_session import report_action
-from .session import Session, StepContext
-from .strategies import answers
+from ...parse.marks import marks
+from ...perception import pipeline as perception
+from ...perception.pipeline import ocr_region
+from ...platforms.windows_session import report_action
+from ...report import annotate, render_payload
+from ...timing import format_timing
+from ..session import Session, StepContext
+from .stages import answers
 
 
 class StepMiddleware(Protocol):
@@ -165,7 +165,7 @@ class StepPipeline:
         for mw in reversed(self.middleware):
             mw.after(session, sc, log)
         if session.view is None:
-            loop.settle(sc.screen.image, cfg.delay)
+            perception.settle(sc.screen.image, cfg.delay)
         return sc.keep_going
 
     def _files(self) -> StepFiles:

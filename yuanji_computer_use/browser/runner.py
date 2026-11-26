@@ -22,7 +22,7 @@ from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
-from ..writer import Writer, compose_browser_text, compose_url, looks_credential
+from ..llm.writer import Writer, compose_browser_text, compose_url, looks_credential
 from . import act
 from .decide import Decision, available_actions, decide, field_context, verify_typed
 from .perceive import Element, Page, perceive

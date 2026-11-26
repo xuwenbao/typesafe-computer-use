@@ -7,10 +7,13 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from yuanji_computer_use import perception, runner, windows_session
+from yuanji_computer_use.agents.driver import look
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.perception import SETTLE_POLL, SETTLE_QUIET, settle
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.agents.writer import WriterAgent
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.perception.pipeline import SETTLE_POLL, SETTLE_QUIET, settle
+from yuanji_computer_use.platforms import windows_session
+from yuanji_computer_use.platforms.adapter import desktop
 from yuanji_computer_use.runner import RunConfig
 
 BEFORE = Image.new("RGB", (512, 512), "white")
@@ -119,24 +122,29 @@ def test_reading_a_screen_waits_for_a_warm_up_still_loading(fake_models, monkeyp
 
 
 def test_the_driver_reads_with_the_runs_parse_cache(monkeypatch, tmp_path, screen):
-    state = Session()
+    state = Session(cfg=RunConfig(goal="save", out=tmp_path), ctx=SimpleNamespace(browser=""), log=lambda line: None)
     seen = []
-    monkeypatch.setattr(runner, "capture", lambda *args, **kwargs: screen)
-    monkeypatch.setattr(runner, "perceive", lambda *args, **kwargs: seen.append(kwargs.get("cache")) or [])
-    runner.look(RunConfig(goal="save", out=tmp_path), SimpleNamespace(browser=""), state, lambda line: None)
+    monkeypatch.setattr(perception, "capture", lambda *args, **kwargs: screen)
+    monkeypatch.setattr(perception, "perceive", lambda *args, **kwargs: seen.append(kwargs.get("cache")) or [])
+    look(state)
     assert seen == [state.parse_cache]
 
 
 def test_the_answer_reads_with_the_runs_parse_cache(monkeypatch, tmp_path, screen):
-    state = Session()
+    state = Session(
+        cfg=RunConfig(goal="save", out=tmp_path),
+        ctx=SimpleNamespace(browser="", writer=None, guidance=None),
+        log=lambda line: None,
+    )
     seen = []
     monkeypatch.setattr(desktop, "check_abort", lambda: None)
-    monkeypatch.setattr(runner, "capture", lambda *args, **kwargs: screen)
-    monkeypatch.setattr(runner, "perceive", lambda *args, **kwargs: seen.append(kwargs.get("cache")) or [])
+    monkeypatch.setattr(perception, "capture", lambda *args, **kwargs: screen)
+    monkeypatch.setattr(perception, "perceive", lambda *args, **kwargs: seen.append(kwargs.get("cache")) or [])
     monkeypatch.setattr(
-        runner, "compose_answer", lambda *args, **kwargs: SimpleNamespace(text="", focus="", achieved=True, missing=[])
+        "yuanji_computer_use.agents.writer.compose_answer",
+        lambda *args, **kwargs: SimpleNamespace(text="", focus="", achieved=True, missing=[]),
     )
-    runner.review(RunConfig(goal="save", out=tmp_path), SimpleNamespace(browser="", writer=None, guidance=None), state, "", False)
+    WriterAgent().review(state, "", False)
     assert seen == [state.parse_cache]
 
 

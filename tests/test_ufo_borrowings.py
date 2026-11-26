@@ -13,28 +13,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuanji_computer_use import cli, macos, windows, windows_session
+from yuanji_computer_use import cli
 from yuanji_computer_use.actions import Context, add_item, click_item, press_offscreen
+from yuanji_computer_use.agents.driver.conversation import TOOLS, screen_packet
+from yuanji_computer_use.agents.driver.takeover import act, load_driver_record, take_over
+from yuanji_computer_use.agents.policy.stages import UNCHANGED, resolve, screen_moved
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.strategies import UNCHANGED, resolve, screen_moved
-from yuanji_computer_use.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
-from yuanji_computer_use.decide import Decision, kind_criteria
-from yuanji_computer_use.driver import act, load_driver_record, take_over
-from yuanji_computer_use.driver_agent import TOOLS, screen_packet
+from yuanji_computer_use.llm.classifier import Decision, kind_criteria
+from yuanji_computer_use.llm.writer import DRIVE_ACTIONS, DriveStep, WriterError, _drive_step
 from yuanji_computer_use.models import Abort, AxNode, ElementState, Item, signature
-from yuanji_computer_use.perception import to_ax_items
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.perception.pipeline import to_ax_items
+from yuanji_computer_use.platforms import macos, windows, windows_session
+from yuanji_computer_use.platforms.adapter import desktop
+from yuanji_computer_use.platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
+from yuanji_computer_use.platforms.uia_patterns import PATTERN_IDS
 from yuanji_computer_use.runner import RunConfig
-from yuanji_computer_use.uia_patterns import PATTERN_IDS
 from yuanji_computer_use.waa import tree
 from yuanji_computer_use.waa.desktop import WAADesktop, _operate_element
 from yuanji_computer_use.waa.walk_vm import LiveElement, walk
-from yuanji_computer_use.writer import (
-    DRIVE_ACTIONS,
-    DriveStep,
-    WriterError,
-    _drive_step,
-)
 
 PACKAGE = Path(__file__).resolve().parent.parent / "yuanji_computer_use"
 # Captured before the machine guard replaces it, so the test can drive the real function
@@ -330,17 +326,17 @@ def _run_steps(monkeypatch, tmp_path, screen, items, moves, steps: int = 5):
     looks = []
     from scripted_driver import ScriptedModel
 
-    from yuanji_computer_use import driver_agent
+    from yuanji_computer_use.agents.driver import conversation as driver_agent
 
     monkeypatch.setattr(driver_agent, "model_for", lambda: ScriptedModel(planned))
-    from yuanji_computer_use import runner
+    from yuanji_computer_use.agents import driver as driver_role
 
-    def look(cfg, ctx, state, log):
+    def look(state):
         looks.append(len(state.history))
         state.view = (screen, items)
-        return (screen, items) if screen_moved(state, screen, items, log) else None
+        return (screen, items) if screen_moved(state, screen, items, state.log) else None
 
-    monkeypatch.setattr(runner, "look", look)
+    monkeypatch.setattr(driver_role, "look", look)
     state = Session(outcome="nothing helps")
     take_over(
         RunConfig(goal="save", out=tmp_path, driver_steps=steps), SimpleNamespace(writer=object()), state, lambda *a: None, 0
@@ -434,14 +430,14 @@ def _ask_the_driver(monkeypatch, tmp_path, screen, items, script, steps: int):
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     pressed = []
     monkeypatch.setattr(desktop, "press", lambda key, command=False: pressed.append((key, command)))
-    from yuanji_computer_use import runner
+    from yuanji_computer_use.agents import driver as driver_role
 
-    def look(cfg, ctx, state, log):
+    def look(state):
         state.view = (screen, items)
-        return (screen, items) if screen_moved(state, screen, items, log) else None
+        return (screen, items) if screen_moved(state, screen, items, state.log) else None
 
-    monkeypatch.setattr(runner, "look", look)
-    from yuanji_computer_use import driver_agent
+    monkeypatch.setattr(driver_role, "look", look)
+    from yuanji_computer_use.agents.driver import conversation as driver_agent
 
     monkeypatch.setattr(driver_agent, "model_for", lambda: script)
     state = Session(outcome="nothing helps")
@@ -524,7 +520,7 @@ def test_pattern_ids_are_shared_and_not_copied_into_either_walker():
         "range_value": 10003,
         "value": 10002,
     }
-    windows_text = (PACKAGE / "windows.py").read_text()
+    windows_text = (PACKAGE / "platforms" / "windows.py").read_text()
     walk_text = (PACKAGE / "waa" / "walk_vm.py").read_text()
     for number in PATTERN_IDS.values():
         assert str(number) not in windows_text

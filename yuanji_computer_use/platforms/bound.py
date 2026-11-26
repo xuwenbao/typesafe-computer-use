@@ -14,7 +14,7 @@ import threading
 from collections.abc import Callable
 from ctypes import wintypes
 
-from .timing import FIELD_TIMEOUT, URL_TIMEOUT
+from ..timing import FIELD_TIMEOUT, URL_TIMEOUT
 
 
 class CaptureTimeout(Exception):

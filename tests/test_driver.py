@@ -5,12 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuanji_computer_use import config, macos, windows
+from yuanji_computer_use import config
 from yuanji_computer_use.actions import Context, perform
-from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.strategies import UNCHANGED, screen_moved
-from yuanji_computer_use.decide import Decision
-from yuanji_computer_use.driver import (
+from yuanji_computer_use.agents.driver.takeover import (
     BANNED,
     DONE_BEFORE,
     KEYS,
@@ -22,9 +19,13 @@ from yuanji_computer_use.driver import (
     _take,
     act,
 )
+from yuanji_computer_use.agents.policy.stages import UNCHANGED, screen_moved
+from yuanji_computer_use.agents.session import Session
+from yuanji_computer_use.llm.classifier import Decision
+from yuanji_computer_use.llm.writer import DriveStep, WriterError, _drive_step, _last_action, checked
 from yuanji_computer_use.models import AxNode, Field, Item, signature
-from yuanji_computer_use.platform_adapter import desktop
-from yuanji_computer_use.writer import DriveStep, WriterError, _drive_step, _last_action, checked
+from yuanji_computer_use.platforms import macos, windows
+from yuanji_computer_use.platforms.adapter import desktop
 
 
 @pytest.fixture

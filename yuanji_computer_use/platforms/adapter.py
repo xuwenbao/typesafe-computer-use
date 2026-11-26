@@ -28,7 +28,7 @@ from typing import Protocol
 
 from PIL import Image
 
-from .models import AxNode, ElementState, Field
+from ..models import AxNode, ElementState, Field
 
 
 class Desktop(Protocol):

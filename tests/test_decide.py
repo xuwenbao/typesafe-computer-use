@@ -3,10 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from yuanji_computer_use.agents.policy.stages import resolve
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.strategies import resolve
 from yuanji_computer_use.config import SITES
-from yuanji_computer_use.decide import (
+from yuanji_computer_use.llm.classifier import (
     Decision,
     MalformedAnswer,
     base_state,

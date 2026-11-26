@@ -3,10 +3,10 @@ from dataclasses import replace
 import pytest
 from conftest import busy_page
 
-from yuanji_computer_use import perception
-from yuanji_computer_use.ax_walk import AxAttrs, walk_actionable
 from yuanji_computer_use.models import AxNode, Item
-from yuanji_computer_use.platform_adapter import desktop
+from yuanji_computer_use.perception import pipeline as perception
+from yuanji_computer_use.platforms.adapter import desktop
+from yuanji_computer_use.platforms.ax_walk import AxAttrs, walk_actionable
 
 DISPLAY = (1728.0, 1117.0)
 
