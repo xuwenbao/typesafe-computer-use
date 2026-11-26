@@ -200,65 +200,164 @@ class Segment:
     elapsed: float = 0.0  # wall seconds this segment took, including a reasoning retry
 
 
-def driver_client():
-    """The async client the driver's model uses, or None when the API is not OpenAI's."""
-    chosen = openai_credentials()
-    if chosen is None:
-        return None
-    base_url, key, timeout = chosen
-    return openai.AsyncOpenAI(base_url=base_url, api_key=key, timeout=timeout, max_retries=1)
+class DriverTools:
+    """一次屏幕对话里，工具能读到的回合，以及它们记下的那一个动作。"""
 
+    def __init__(self, turn: Turn) -> None:
+        self.turn = turn
 
-def model_for():
-    """The chat-completions model the takeover asks. None when there is no OpenAI endpoint."""
-    client = driver_client()
-    if client is None:
-        return None
-    return OpenAIChatCompletionsModel(model=settings().resolved_driver_model, openai_client=client)
+    def item(self, number: str) -> Item | None:
+        turn = self.turn
+        return next((it for it in turn.items if str(it.index) == str(number)), None)
 
+    def record(self, name: str, arguments: dict, result: str) -> str:
+        turn = self.turn
+        turn.tools.append({"name": name, "arguments": arguments, "result": result[:TOOL_RESULT_LIMIT]})
+        return result
 
-def _item(turn: Turn, number: str) -> Item | None:
-    return next((it for it in turn.items if str(it.index) == str(number)), None)
+    def accept(self, step: DriveStep, arguments: dict) -> str:
+        turn = self.turn
+        if turn.move is not None:
+            return self.record(step.action, arguments, ONE_ACTION)
+        turn.move = step
+        return self.record(step.action, arguments, "accepted")
 
+    def read(self, number: int) -> tuple[str, str] | str:
+        """An element's text and its source, or a refused line when the number is not on the screen."""
+        turn = self.turn
+        item = self.item(str(number))
+        if item is None:
+            return f"refused: there is no item {number} on this screen"
+        ref = turn.screen.ax_refs.get(item.index)
+        raw = desktop.element_text(ref) if ref is not None else None
+        source = "accessibility"
+        if not raw:
+            raw = item.text
+            source = "ocr"
+        return raw, source
 
-def _record(turn: Turn, name: str, arguments: dict, result: str) -> str:
-    turn.tools.append({"name": name, "arguments": arguments, "result": result[:TOOL_RESULT_LIMIT]})
-    return result
+    @staticmethod
+    def arithmetic(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return DriverTools.arithmetic(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, int | float) and not isinstance(node.value, bool):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
+            value = DriverTools.arithmetic(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
+            return _OPS[type(node.op)](DriverTools.arithmetic(node.left), DriverTools.arithmetic(node.right))
+        raise ValueError("only numbers and + - * / // % ** are allowed")
 
+    def read_text(self, item: int) -> str:
+        got = self.read(item)
+        if isinstance(got, str):
+            return self.record("read_text", {"item": item}, got)
+        raw, source = got
+        shown = raw[:MAX_READ]
+        note = " truncated" if len(raw) > MAX_READ else ""
+        result = f"source={source} length={len(raw)}{note}\n{shown}"
+        return self.record("read_text", {"item": item}, result)
 
-def _accept(ctx: RunContextWrapper[Turn], step: DriveStep, arguments: dict) -> str:
-    turn = ctx.context
-    if turn.move is not None:
-        return _record(turn, step.action, arguments, ONE_ACTION)
-    turn.move = step
-    return _record(turn, step.action, arguments, "accepted")
+    def count(
+        self,
+        word: str,
+        item: int = -1,
+        text: str = "",
+        whole_word: bool = True,
+        case_sensitive: bool = False,
+    ) -> str:
+        if item >= 0:
+            got = self.read(item)
+            if isinstance(got, str):
+                return self.record("count", {"word": word, "item": item}, got)
+            raw = got[0]
+        elif text:
+            raw = text
+        else:
+            return self.record("count", {"word": word}, "refused: give an item or a text")
+        flags = 0 if case_sensitive else re.IGNORECASE
+        pattern = rf"\b{re.escape(word)}\b" if whole_word else re.escape(word)
+        found = len(re.findall(pattern, raw, flags))
+        return self.record("count", {"word": word, "item": item}, str(found))
 
+    def calculate(self, expression: str) -> str:
+        try:
+            value = DriverTools.arithmetic(ast.parse(expression, mode="eval"))
+        except (SyntaxError, ValueError, ZeroDivisionError) as e:
+            return self.record("calculate", {"expression": expression}, f"error: {e}")
+        shown = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+        return self.record("calculate", {"expression": expression}, shown)
 
-def _read(turn: Turn, number: int) -> tuple[str, str] | str:
-    """An element's text and its source, or a refused line when the number is not on the screen."""
-    item = _item(turn, str(number))
-    if item is None:
-        return f"refused: there is no item {number} on this screen"
-    ref = turn.screen.ax_refs.get(item.index)
-    raw = desktop.element_text(ref) if ref is not None else None
-    source = "accessibility"
-    if not raw:
-        raw = item.text
-        source = "ocr"
-    return raw, source
+    def click(self, reason: str, item: str, target: str = "", modifier: str = "") -> str:
+        step = DriveStep(reason=reason, action="click", item=item, target=target, modifier=modifier)
+        return self.accept(step, {"reason": reason, "item": item, "target": target, "modifier": modifier})
+
+    def double_click(self, reason: str, item: str, target: str = "") -> str:
+        step = DriveStep(reason=reason, action="double_click", item=item, target=target)
+        return self.accept(step, {"reason": reason, "item": item, "target": target})
+
+    def right_click(self, reason: str, item: str, target: str = "") -> str:
+        step = DriveStep(reason=reason, action="right_click", item=item, target=target)
+        return self.accept(step, {"reason": reason, "item": item, "target": target})
+
+    def type_text(self, reason: str, text: str, item: str = "", target: str = "") -> str:
+        step = DriveStep(reason=reason, action="type", item=item, target=target, text=text)
+        return self.accept(step, {"reason": reason, "text": text, "item": item, "target": target})
+
+    def press_key(self, reason: str, key: str) -> str:
+        step = DriveStep(reason=reason, action="key", key=key)
+        return self.accept(step, {"reason": reason, "key": key})
+
+    def shortcut(self, reason: str, key: str) -> str:
+        step = DriveStep(reason=reason, action="shortcut", key=key)
+        return self.accept(step, {"reason": reason, "key": key})
+
+    def scroll_down(self, reason: str, item: str = "", target: str = "") -> str:
+        step = DriveStep(reason=reason, action="scroll_down", item=item, target=target)
+        return self.accept(step, {"reason": reason, "item": item, "target": target})
+
+    def scroll_up(self, reason: str, item: str = "", target: str = "") -> str:
+        step = DriveStep(reason=reason, action="scroll_up", item=item, target=target)
+        return self.accept(step, {"reason": reason, "item": item, "target": target})
+
+    def drag(
+        self,
+        reason: str,
+        item: str,
+        target: str = "",
+        to: str = "",
+        dx: str = "",
+        dy: str = "",
+    ) -> str:
+        step = DriveStep(reason=reason, action="drag", item=item, target=target, to=to, dx=dx, dy=dy)
+        return self.accept(step, {"reason": reason, "item": item, "target": target, "to": to, "dx": dx, "dy": dy})
+
+    def set_value(self, reason: str, item: str, text: str, target: str = "") -> str:
+        step = DriveStep(reason=reason, action="set_value", item=item, target=target, text=text)
+        return self.accept(step, {"reason": reason, "item": item, "text": text, "target": target})
+
+    def focus_offscreen(self, reason: str, item: str, target: str = "") -> str:
+        step = DriveStep(reason=reason, action="focus_offscreen", item=item, target=target)
+        return self.accept(step, {"reason": reason, "item": item, "target": target})
+
+    def wait(self, reason: str) -> str:
+        step = DriveStep(reason=reason, action="wait")
+        return self.accept(step, {"reason": reason})
+
+    def done(self, reason: str, achieved: bool = True) -> str:
+        step = DriveStep(reason=reason, action="done", achieved=achieved)
+        return self.accept(step, {"reason": reason, "achieved": achieved})
+
+    def give_up(self, reason: str) -> str:
+        step = DriveStep(reason=reason, action="give_up", achieved=False)
+        return self.accept(step, {"reason": reason})
 
 
 @function_tool(strict_mode=False)
 async def read_text(ctx: RunContextWrapper[Turn], item: int) -> str:
     """Read item number `item`'s own text. Accessibility text is the control's; ocr is only what the picture showed."""
-    got = _read(ctx.context, item)
-    if isinstance(got, str):
-        return _record(ctx.context, "read_text", {"item": item}, got)
-    raw, source = got
-    shown = raw[:MAX_READ]
-    note = " truncated" if len(raw) > MAX_READ else ""
-    result = f"source={source} length={len(raw)}{note}\n{shown}"
-    return _record(ctx.context, "read_text", {"item": item}, result)
+    return DriverTools(ctx.context).read_text(item)
 
 
 @function_tool(strict_mode=False)
@@ -271,99 +370,61 @@ async def count(
     case_sensitive: bool = False,
 ) -> str:
     """Count `word` in item `item`'s text, or in `text` when item is -1. whole_word matches a whole word only."""
-    if item >= 0:
-        got = _read(ctx.context, item)
-        if isinstance(got, str):
-            return _record(ctx.context, "count", {"word": word, "item": item}, got)
-        raw = got[0]
-    elif text:
-        raw = text
-    else:
-        return _record(ctx.context, "count", {"word": word}, "refused: give an item or a text")
-    flags = 0 if case_sensitive else re.IGNORECASE
-    pattern = rf"\b{re.escape(word)}\b" if whole_word else re.escape(word)
-    found = len(re.findall(pattern, raw, flags))
-    return _record(ctx.context, "count", {"word": word, "item": item}, str(found))
-
-
-def _arithmetic(node: ast.AST) -> float:
-    if isinstance(node, ast.Expression):
-        return _arithmetic(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, int | float) and not isinstance(node.value, bool):
-        return node.value
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
-        value = _arithmetic(node.operand)
-        return value if isinstance(node.op, ast.UAdd) else -value
-    if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
-        return _OPS[type(node.op)](_arithmetic(node.left), _arithmetic(node.right))
-    raise ValueError("only numbers and + - * / // % ** are allowed")
+    return DriverTools(ctx.context).count(word, item, text, whole_word, case_sensitive)
 
 
 @function_tool(strict_mode=False)
 async def calculate(ctx: RunContextWrapper[Turn], expression: str) -> str:
     """Evaluate an arithmetic expression. Names, calls, and anything else come back as an error."""
-    try:
-        value = _arithmetic(ast.parse(expression, mode="eval"))
-    except (SyntaxError, ValueError, ZeroDivisionError) as e:
-        return _record(ctx.context, "calculate", {"expression": expression}, f"error: {e}")
-    shown = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
-    return _record(ctx.context, "calculate", {"expression": expression}, shown)
+    return DriverTools(ctx.context).calculate(expression)
 
 
 @function_tool(strict_mode=False)
 async def click(ctx: RunContextWrapper[Turn], reason: str, item: str, target: str = "", modifier: str = "") -> str:
     """Click item number `item`. modifier is add, range, or empty. target is that item's text."""
-    step = DriveStep(reason=reason, action="click", item=item, target=target, modifier=modifier)
-    return _accept(ctx, step, {"reason": reason, "item": item, "target": target, "modifier": modifier})
+    return DriverTools(ctx.context).click(reason, item, target, modifier)
 
 
 @function_tool(strict_mode=False)
 async def double_click(ctx: RunContextWrapper[Turn], reason: str, item: str, target: str = "") -> str:
     """Open item number `item`, the way a file, folder, or list entry opens."""
-    step = DriveStep(reason=reason, action="double_click", item=item, target=target)
-    return _accept(ctx, step, {"reason": reason, "item": item, "target": target})
+    return DriverTools(ctx.context).double_click(reason, item, target)
 
 
 @function_tool(strict_mode=False)
 async def right_click(ctx: RunContextWrapper[Turn], reason: str, item: str, target: str = "") -> str:
     """Open the menu of item number `item`."""
-    step = DriveStep(reason=reason, action="right_click", item=item, target=target)
-    return _accept(ctx, step, {"reason": reason, "item": item, "target": target})
+    return DriverTools(ctx.context).right_click(reason, item, target)
 
 
 @function_tool(strict_mode=False)
 async def type_text(ctx: RunContextWrapper[Turn], reason: str, text: str, item: str = "", target: str = "") -> str:
     """Type `text`, replacing what is there. Set item for a spinner, a number box, or one part of a time."""
-    step = DriveStep(reason=reason, action="type", item=item, target=target, text=text)
-    return _accept(ctx, step, {"reason": reason, "text": text, "item": item, "target": target})
+    return DriverTools(ctx.context).type_text(reason, text, item, target)
 
 
 @function_tool(strict_mode=False)
 async def press_key(ctx: RunContextWrapper[Turn], reason: str, key: str) -> str:
     """Press one key: return, escape, tab, the arrows, pageup, pagedown, home, end, delete, space, backspace, f2, f5, start, or run."""
-    step = DriveStep(reason=reason, action="key", key=key)
-    return _accept(ctx, step, {"reason": reason, "key": key})
+    return DriverTools(ctx.context).press_key(reason, key)
 
 
 @function_tool(strict_mode=False)
 async def shortcut(ctx: RunContextWrapper[Turn], reason: str, key: str) -> str:
     """Press `key` with the platform's command key. Never q, w, h, or m. tab switches to the next tab."""
-    step = DriveStep(reason=reason, action="shortcut", key=key)
-    return _accept(ctx, step, {"reason": reason, "key": key})
+    return DriverTools(ctx.context).shortcut(reason, key)
 
 
 @function_tool(strict_mode=False)
 async def scroll_down(ctx: RunContextWrapper[Turn], reason: str, item: str = "", target: str = "") -> str:
     """Scroll down. item is an item in the pane that should move, or empty for the window under the pointer."""
-    step = DriveStep(reason=reason, action="scroll_down", item=item, target=target)
-    return _accept(ctx, step, {"reason": reason, "item": item, "target": target})
+    return DriverTools(ctx.context).scroll_down(reason, item, target)
 
 
 @function_tool(strict_mode=False)
 async def scroll_up(ctx: RunContextWrapper[Turn], reason: str, item: str = "", target: str = "") -> str:
     """Scroll up. item is an item in the pane that should move, or empty for the window under the pointer."""
-    step = DriveStep(reason=reason, action="scroll_up", item=item, target=target)
-    return _accept(ctx, step, {"reason": reason, "item": item, "target": target})
+    return DriverTools(ctx.context).scroll_up(reason, item, target)
 
 
 @function_tool(strict_mode=False)
@@ -377,43 +438,37 @@ async def drag(
     dy: str = "",
 ) -> str:
     """Drag from item to item `to`, or by dx and dy pixels, each between -600 and 600."""
-    step = DriveStep(reason=reason, action="drag", item=item, target=target, to=to, dx=dx, dy=dy)
-    return _accept(ctx, step, {"reason": reason, "item": item, "target": target, "to": to, "dx": dx, "dy": dy})
+    return DriverTools(ctx.context).drag(reason, item, target, to, dx, dy)
 
 
 @function_tool(strict_mode=False)
 async def set_value(ctx: RunContextWrapper[Turn], reason: str, item: str, text: str, target: str = "") -> str:
     """Set item number `item` to `text`. Use it for a slider or a number box that lists a value."""
-    step = DriveStep(reason=reason, action="set_value", item=item, target=target, text=text)
-    return _accept(ctx, step, {"reason": reason, "item": item, "text": text, "target": target})
+    return DriverTools(ctx.context).set_value(reason, item, text, target)
 
 
 @function_tool(strict_mode=False)
 async def focus_offscreen(ctx: RunContextWrapper[Turn], reason: str, item: str, target: str = "") -> str:
     """Focus off-screen control number `item`. The next screen shows it as the focused field."""
-    step = DriveStep(reason=reason, action="focus_offscreen", item=item, target=target)
-    return _accept(ctx, step, {"reason": reason, "item": item, "target": target})
+    return DriverTools(ctx.context).focus_offscreen(reason, item, target)
 
 
 @function_tool(strict_mode=False)
 async def wait(ctx: RunContextWrapper[Turn], reason: str) -> str:
     """The screen is still loading or changing."""
-    step = DriveStep(reason=reason, action="wait")
-    return _accept(ctx, step, {"reason": reason})
+    return DriverTools(ctx.context).wait(reason)
 
 
 @function_tool(strict_mode=False)
 async def done(ctx: RunContextWrapper[Turn], reason: str, achieved: bool = True) -> str:
     """The screen itself shows the goal reached, every part of it."""
-    step = DriveStep(reason=reason, action="done", achieved=achieved)
-    return _accept(ctx, step, {"reason": reason, "achieved": achieved})
+    return DriverTools(ctx.context).done(reason, achieved)
 
 
 @function_tool(strict_mode=False)
 async def give_up(ctx: RunContextWrapper[Turn], reason: str) -> str:
     """No action would get closer, or the next step is one only the user should take. Say what is missing."""
-    step = DriveStep(reason=reason, action="give_up", achieved=False)
-    return _accept(ctx, step, {"reason": reason})
+    return DriverTools(ctx.context).give_up(reason)
 
 
 TOOLS = [
@@ -437,165 +492,190 @@ TOOLS = [
 ]
 
 
-def make_agent(model, reasoning: str | None) -> Agent:
-    """The one agent a takeover asks. `reasoning` is the answer model's effort, or None."""
-    effort = {"effort": reasoning} if reasoning else None
-    return Agent(
-        name="driver",
-        instructions=INSTRUCTIONS,
-        tools=TOOLS,
-        model=model,
-        model_settings=ModelSettings(parallel_tool_calls=False, reasoning=effort),
-        tool_use_behavior={"stop_at_tool_names": list(SCREEN_TOOLS)},
-    )
+class DriverConversation:
+    """接管问模型的那一段对话：客户端、屏幕报文、以及跑完一轮工具。"""
 
+    @staticmethod
+    def driver_client():
+        """The async client the driver's model uses, or None when the API is not OpenAI's."""
+        chosen = openai_credentials()
+        if chosen is None:
+            return None
+        base_url, key, timeout = chosen
+        return openai.AsyncOpenAI(base_url=base_url, api_key=key, timeout=timeout, max_retries=1)
 
-def screen_packet(
-    goal: str,
-    screen: Screen,
-    items: list[Item],
-    history: list[str],
-    stopped: str,
-    earlier: list[dict],
-    earlier_stops: list[dict],
-    guidance,
-    steps_left: int,
-    tried: list[dict] | None = None,
-    *,
-    denied: list[str] | None = None,
-    change_course: dict | None = None,
-) -> dict:
-    """What one screen tells the model. The same fields the takeover used to send in one JSON object."""
-    return {
-        "kind": "screen",
-        "goal": goal,
-        **(guidance.state() if guidance else {}),
-        "now": now_context(),
-        "actions_taken": history,
-        **({"earlier_stops": earlier_stops} if earlier_stops else {}),
-        "why_the_classifier_stopped": stopped,
-        **({"earlier_screens": earlier} if earlier else {}),
-        "actions_left": steps_left,
-        "already_tried_on_this_screen": tried or [],
-        **({"change_course": change_course} if change_course else {}),
-        "on_screen": _on_screen(items),
-        **({"listed_names_the_previous_reply_denied": denied} if denied else {}),
-        "selected_files": _selected_files(items),
-        "last_action": _last_action(history),
-        "frontmost_app": screen.app,
-        "browser_active_tab_url": screen.url,
-        "focused_field": screen.field.summary() if screen.field else None,
-        **_menu_highlight(screen),
-        "offscreen_controls": _offscreen_controls(screen),
-        "screen_items": [
-            {
-                "i": it.index,
-                "text": it.text,
-                "where": screen.region(it),
-                **({"role": it.role} if it.role else {}),
-                **({"controls": list(it.controls)} if it.controls else {}),
-                **({"checked": it.checked} if it.checked is not None else {}),
-                **({"expanded": it.expanded} if it.expanded is not None else {}),
-                **({"selected": True} if it.selected else {}),
-                **({"value": it.current} if it.current else {}),
-                **({"under": screen.covered[it.index].title} if it.index in screen.covered else {}),
-            }
-            for it in items
-        ],
-    }
+    @staticmethod
+    def model_for():
+        """The chat-completions model the takeover asks. None when there is no OpenAI endpoint."""
+        client = DriverConversation.driver_client()
+        if client is None:
+            return None
+        return OpenAIChatCompletionsModel(model=settings().resolved_driver_model, openai_client=client)
 
-
-def opening_message(
-    goal: str, history: list[str], stopped: str, earlier: list[dict], earlier_stops: list[dict], guidance
-) -> dict:
-    """The story up to the takeover, once, before the first screen."""
-    packet = {
-        "kind": "opening",
-        "goal": goal,
-        "actions_taken": history,
-        "why_the_classifier_stopped": stopped,
-        **({"earlier_stops": earlier_stops} if earlier_stops else {}),
-        **({"earlier_screens": earlier} if earlier else {}),
-        **(guidance.state() if guidance else {}),
-    }
-    return _user(json.dumps(packet))
-
-
-def screen_message(packet: dict, image: Image.Image | None) -> dict:
-    """One screen as a user message. `image` is the numbered capture, omitted when vision is off."""
-    return _user(json.dumps(packet), image if settings().writer_vision else None)
-
-
-def _user(text: str, image: Image.Image | None = None) -> dict:
-    content: list[dict] = [{"type": "input_text", "text": text}]
-    if image is not None:
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-        content.append({"type": "input_image", "image_url": f"data:image/png;base64,{encoded}"})
-    return {"role": "user", "content": content}
-
-
-def _text_of(item: dict) -> str:
-    content = item.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "input_text")
-    return ""
-
-
-def _is_screen(item) -> bool:
-    return isinstance(item, dict) and item.get("role") == "user" and '"kind": "screen"' in _text_of(item)
-
-
-def keep_recent_screens(data: CallModelData) -> ModelInputData:
-    """Drop pictures and item lists from screens older than the last `KEEP_SCREENS`."""
-    items = list(data.model_data.input)
-    screens = [index for index, item in enumerate(items) if _is_screen(item)]
-    drop = set(screens[:-KEEP_SCREENS])
-    trimmed = [_summary(item) if index in drop else item for index, item in enumerate(items)]
-    return ModelInputData(input=trimmed, instructions=data.model_data.instructions)
-
-
-def _summary(item: dict) -> dict:
-    try:
-        packet = json.loads(_text_of(item))
-    except json.JSONDecodeError:
-        packet = {}
-    brief = {
-        "kind": "screen",
-        "frontmost_app": packet.get("frontmost_app"),
-        "focused_field": packet.get("focused_field"),
-        "last_action": packet.get("last_action"),
-        "note": "(earlier screen; picture and items dropped)",
-    }
-    return {"role": "user", "content": [{"type": "input_text", "text": json.dumps(brief)}]}
-
-
-def run_segment(model, messages: list, turn: Turn, reasoning: str | None) -> Segment:
-    """Ask the model about one screen until it chooses a screen action, or the read budget runs out."""
-    agent = make_agent(model, reasoning)
-    try:
-        result = Runner.run_sync(
-            agent,
-            messages,
-            context=turn,
-            max_turns=MAX_TOOL_TURNS,
-            run_config=RunConfig(call_model_input_filter=keep_recent_screens),
+    @staticmethod
+    def make_agent(model, reasoning: str | None) -> Agent:
+        """The one agent a takeover asks. `reasoning` is the answer model's effort, or None."""
+        effort = {"effort": reasoning} if reasoning else None
+        return Agent(
+            name="driver",
+            instructions=INSTRUCTIONS,
+            tools=TOOLS,
+            model=model,
+            model_settings=ModelSettings(parallel_tool_calls=False, reasoning=effort),
+            tool_use_behavior={"stop_at_tool_names": list(SCREEN_TOOLS)},
         )
-    except MaxTurnsExceeded:
-        return Segment(tools=list(turn.tools), calls=1, unusable=True, error="too many read and calculate calls on one screen")
-    except openai.BadRequestError as e:
-        drop = "reasoning" in str(e).lower()
-        return Segment(error=str(e), drop_reasoning=drop, failed=not drop)
-    except openai.APIError as e:
-        return Segment(error=str(e), failed=True)
-    return Segment(
-        move=turn.move,
-        tools=list(turn.tools),
-        calls=len(result.raw_responses),
-        history=result.to_input_list(),
-        usages=[response.usage for response in result.raw_responses],
-        unusable=turn.move is None,
-    )
+
+    @staticmethod
+    def screen_packet(
+        goal: str,
+        screen: Screen,
+        items: list[Item],
+        history: list[str],
+        stopped: str,
+        earlier: list[dict],
+        earlier_stops: list[dict],
+        guidance,
+        steps_left: int,
+        tried: list[dict] | None = None,
+        *,
+        denied: list[str] | None = None,
+        change_course: dict | None = None,
+    ) -> dict:
+        """What one screen tells the model. The same fields the takeover used to send in one JSON object."""
+        return {
+            "kind": "screen",
+            "goal": goal,
+            **(guidance.state() if guidance else {}),
+            "now": now_context(),
+            "actions_taken": history,
+            **({"earlier_stops": earlier_stops} if earlier_stops else {}),
+            "why_the_classifier_stopped": stopped,
+            **({"earlier_screens": earlier} if earlier else {}),
+            "actions_left": steps_left,
+            "already_tried_on_this_screen": tried or [],
+            **({"change_course": change_course} if change_course else {}),
+            "on_screen": _on_screen(items),
+            **({"listed_names_the_previous_reply_denied": denied} if denied else {}),
+            "selected_files": _selected_files(items),
+            "last_action": _last_action(history),
+            "frontmost_app": screen.app,
+            "browser_active_tab_url": screen.url,
+            "focused_field": screen.field.summary() if screen.field else None,
+            **_menu_highlight(screen),
+            "offscreen_controls": _offscreen_controls(screen),
+            "screen_items": [
+                {
+                    "i": it.index,
+                    "text": it.text,
+                    "where": screen.region(it),
+                    **({"role": it.role} if it.role else {}),
+                    **({"controls": list(it.controls)} if it.controls else {}),
+                    **({"checked": it.checked} if it.checked is not None else {}),
+                    **({"expanded": it.expanded} if it.expanded is not None else {}),
+                    **({"selected": True} if it.selected else {}),
+                    **({"value": it.current} if it.current else {}),
+                    **({"under": screen.covered[it.index].title} if it.index in screen.covered else {}),
+                }
+                for it in items
+            ],
+        }
+
+    @staticmethod
+    def opening_message(
+        goal: str, history: list[str], stopped: str, earlier: list[dict], earlier_stops: list[dict], guidance
+    ) -> dict:
+        """The story up to the takeover, once, before the first screen."""
+        packet = {
+            "kind": "opening",
+            "goal": goal,
+            "actions_taken": history,
+            "why_the_classifier_stopped": stopped,
+            **({"earlier_stops": earlier_stops} if earlier_stops else {}),
+            **({"earlier_screens": earlier} if earlier else {}),
+            **(guidance.state() if guidance else {}),
+        }
+        return DriverConversation._user(json.dumps(packet))
+
+    @staticmethod
+    def screen_message(packet: dict, image: Image.Image | None) -> dict:
+        """One screen as a user message. `image` is the numbered capture, omitted when vision is off."""
+        return DriverConversation._user(json.dumps(packet), image if settings().writer_vision else None)
+
+    @staticmethod
+    def _user(text: str, image: Image.Image | None = None) -> dict:
+        content: list[dict] = [{"type": "input_text", "text": text}]
+        if image is not None:
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+            content.append({"type": "input_image", "image_url": f"data:image/png;base64,{encoded}"})
+        return {"role": "user", "content": content}
+
+    @staticmethod
+    def _text_of(item: dict) -> str:
+        content = item.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(
+                part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "input_text"
+            )
+        return ""
+
+    @staticmethod
+    def _is_screen(item) -> bool:
+        return isinstance(item, dict) and item.get("role") == "user" and '"kind": "screen"' in DriverConversation._text_of(item)
+
+    @staticmethod
+    def keep_recent_screens(data: CallModelData) -> ModelInputData:
+        """Drop pictures and item lists from screens older than the last `KEEP_SCREENS`."""
+        items = list(data.model_data.input)
+        screens = [index for index, item in enumerate(items) if DriverConversation._is_screen(item)]
+        drop = set(screens[:-KEEP_SCREENS])
+        trimmed = [DriverConversation._summary(item) if index in drop else item for index, item in enumerate(items)]
+        return ModelInputData(input=trimmed, instructions=data.model_data.instructions)
+
+    @staticmethod
+    def _summary(item: dict) -> dict:
+        try:
+            packet = json.loads(DriverConversation._text_of(item))
+        except json.JSONDecodeError:
+            packet = {}
+        brief = {
+            "kind": "screen",
+            "frontmost_app": packet.get("frontmost_app"),
+            "focused_field": packet.get("focused_field"),
+            "last_action": packet.get("last_action"),
+            "note": "(earlier screen; picture and items dropped)",
+        }
+        return {"role": "user", "content": [{"type": "input_text", "text": json.dumps(brief)}]}
+
+    @staticmethod
+    def run_segment(model, messages: list, turn: Turn, reasoning: str | None) -> Segment:
+        """Ask the model about one screen until it chooses a screen action, or the read budget runs out."""
+        agent = DriverConversation.make_agent(model, reasoning)
+        try:
+            result = Runner.run_sync(
+                agent,
+                messages,
+                context=turn,
+                max_turns=MAX_TOOL_TURNS,
+                run_config=RunConfig(call_model_input_filter=DriverConversation.keep_recent_screens),
+            )
+        except MaxTurnsExceeded:
+            return Segment(
+                tools=list(turn.tools), calls=1, unusable=True, error="too many read and calculate calls on one screen"
+            )
+        except openai.BadRequestError as e:
+            drop = "reasoning" in str(e).lower()
+            return Segment(error=str(e), drop_reasoning=drop, failed=not drop)
+        except openai.APIError as e:
+            return Segment(error=str(e), failed=True)
+        return Segment(
+            move=turn.move,
+            tools=list(turn.tools),
+            calls=len(result.raw_responses),
+            history=result.to_input_list(),
+            usages=[response.usage for response in result.raw_responses],
+            unusable=turn.move is None,
+        )

@@ -9,9 +9,9 @@ import pytest
 from PIL import Image
 
 from yuanji_computer_use.actions import Context
-from yuanji_computer_use.agents.driver import wants
+from yuanji_computer_use.agents.driver import DriverAgent
 from yuanji_computer_use.agents.outcomes import CLASSIFIER_STOPPED
-from yuanji_computer_use.agents.policy.stages import resolve
+from yuanji_computer_use.agents.policy.stages import DecideStrategy
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.agents.writer import WriterAgent
 from yuanji_computer_use.llm import writer
@@ -37,7 +37,7 @@ def wants_driver(cfg, ctx, state, log=None):
     state.cfg, state.ctx = cfg, ctx
     if log is not None:
         state.log = log
-    return wants(state)
+    return DriverAgent.wants(state)
 
 
 GOAL = "find the next upcoming bruno mars concert"
@@ -264,7 +264,9 @@ def test_every_stop_names_its_outcome(kind, confidence, outcome, tmp_path, scree
     state = Session()
     _, log = logged()
 
-    keep_going = resolve(RunConfig(goal=GOAL, out=tmp_path), context(), state, screen, [], decision(kind, confidence), {}, log)
+    keep_going = DecideStrategy().resolve(
+        RunConfig(goal=GOAL, out=tmp_path), context(), state, screen, [], decision(kind, confidence), {}, log
+    )
 
     assert not keep_going
     assert state.outcome == outcome
@@ -593,7 +595,7 @@ def test_an_action_makes_the_last_capture_stale(tmp_path, screen, monkeypatch):
     state = Session(view=(screen, []))
     _, log = logged()
 
-    keep_going = resolve(
+    keep_going = DecideStrategy().resolve(
         RunConfig(goal=GOAL, out=tmp_path, act=True), context(), state, screen, [], decision("scroll_down"), {}, log
     )
 

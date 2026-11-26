@@ -16,14 +16,10 @@ from yuanji_computer_use.agents.driver.conversation import (
     INSTRUCTIONS,
     KEEP_SCREENS,
     TOOLS,
+    DriverConversation,
     Turn,
-    keep_recent_screens,
-    make_agent,
-    run_segment,
-    screen_message,
-    screen_packet,
 )
-from yuanji_computer_use.agents.driver.takeover import load_driver_record, take_over
+from yuanji_computer_use.agents.driver.takeover import Takeover
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.config import reset_settings
 from yuanji_computer_use.llm.writer import PLACEHOLDER_KEY
@@ -53,7 +49,7 @@ def test_a_custom_endpoint_does_not_receive_the_openai_key(clean_env):
     clean_env.delenv("CLICKER_WRITER_API_KEY", raising=False)
     reset_settings()
 
-    client = driver_agent.driver_client()
+    client = DriverConversation.driver_client()
 
     assert client.api_key == PLACEHOLDER_KEY
     assert client.max_retries == 1
@@ -81,18 +77,20 @@ def _turn(text: str = "Save", ref=None) -> Turn:
 def test_read_text_prefers_accessibility_then_ocr_and_names_a_missing_item(monkeypatch):
     monkeypatch.setattr(desktop, "element_text", lambda ref: "from the control" if ref == "node" else None)
     turn = _turn("from the picture", ref="node")
-    segment = run_segment(ScriptedModel([{"action": "read_text", "item": 0}]), [{"role": "user", "content": "go"}], turn, None)
+    segment = DriverConversation.run_segment(
+        ScriptedModel([{"action": "read_text", "item": 0}]), [{"role": "user", "content": "go"}], turn, None
+    )
     assert segment.tools[0]["result"].startswith("source=accessibility")
     assert "from the control" in segment.tools[0]["result"]
 
     pictured = _turn("from the picture")
-    segment = run_segment(
+    segment = DriverConversation.run_segment(
         ScriptedModel([{"action": "read_text", "item": 0}]), [{"role": "user", "content": "go"}], pictured, None
     )
     assert segment.tools[0]["result"].startswith("source=ocr")
     assert "from the picture" in segment.tools[0]["result"]
 
-    missing = run_segment(
+    missing = DriverConversation.run_segment(
         ScriptedModel([{"action": "read_text", "item": 4}]), [{"role": "user", "content": "go"}], _turn("from the picture"), None
     )
     assert next(tool["result"] for tool in missing.tools if tool["name"] == "read_text").startswith("refused")
@@ -102,7 +100,9 @@ def test_read_text_truncates_past_the_limit(monkeypatch):
     monkeypatch.setattr(driver_agent, "MAX_READ", 8)
     monkeypatch.setattr(desktop, "element_text", lambda ref: "abcdefghijklmnop")
     turn = _turn("short", ref="node")
-    segment = run_segment(ScriptedModel([{"action": "read_text", "item": 0}]), [{"role": "user", "content": "go"}], turn, None)
+    segment = DriverConversation.run_segment(
+        ScriptedModel([{"action": "read_text", "item": 0}]), [{"role": "user", "content": "go"}], turn, None
+    )
     assert "truncated" in segment.tools[0]["result"]
     assert "abcdefgh" in segment.tools[0]["result"]
     assert "ijklmnop" not in segment.tools[0]["result"]
@@ -111,14 +111,16 @@ def test_read_text_truncates_past_the_limit(monkeypatch):
 def test_count_of_example_in_the_notepad_fixture_is_22():
     turn = _turn("unused")
     script = {"action": "count", "word": "example", "text": LARGE}
-    segment = run_segment(ScriptedModel([script]), [{"role": "user", "content": "go"}], turn, None)
+    segment = DriverConversation.run_segment(ScriptedModel([script]), [{"role": "user", "content": "go"}], turn, None)
     assert segment.tools[0]["result"] == "22"
 
 
 def test_calculate_allows_arithmetic_and_refuses_names_and_calls():
     def once(expression: str) -> str:
         script = {"action": "calculate", "expression": expression}
-        segment = run_segment(ScriptedModel([script]), [{"role": "user", "content": "go"}], _turn("unused"), None)
+        segment = DriverConversation.run_segment(
+            ScriptedModel([script]), [{"role": "user", "content": "go"}], _turn("unused"), None
+        )
         return next(tool["result"] for tool in segment.tools if tool["name"] == "calculate")
 
     assert once("(230-1)*2") == "458"
@@ -132,7 +134,7 @@ def test_a_second_screen_tool_is_refused_and_the_first_is_kept():
         {"action": "click", "item": "0", "target": "Save"},
         {"action": "click", "item": "1", "target": "Other"},
     ]
-    segment = run_segment(ScriptedModel([script]), [{"role": "user", "content": "go"}], turn, None)
+    segment = DriverConversation.run_segment(ScriptedModel([script]), [{"role": "user", "content": "go"}], turn, None)
     assert segment.move is not None and segment.move.action == "click" and segment.move.target == "Save"
     assert segment.tools[0]["result"] == "accepted"
     assert segment.tools[1]["result"].startswith("refused")
@@ -144,14 +146,14 @@ def test_the_segment_stops_when_a_click_follows_a_count():
         {"action": "count", "word": "a", "text": "a a"},
         {"action": "click", "item": "0", "target": "Save", "reason": "open it"},
     ]
-    segment = run_segment(ScriptedModel(scripts), [{"role": "user", "content": "go"}], turn, None)
+    segment = DriverConversation.run_segment(ScriptedModel(scripts), [{"role": "user", "content": "go"}], turn, None)
     assert [tool["name"] for tool in segment.tools] == ["count", "click"]
     assert segment.move is not None and segment.move.action == "click" and segment.move.reason == "open it"
     assert segment.calls == 2
 
 
 def test_the_agent_stops_on_a_screen_tool_and_can_reason():
-    agent = make_agent(ScriptedModel([]), "low")
+    agent = DriverConversation.make_agent(ScriptedModel([]), "low")
     assert agent.model_settings.parallel_tool_calls is False
     assert agent.model_settings.reasoning.effort == "low"
     stopped = set(agent.tool_use_behavior["stop_at_tool_names"])
@@ -162,15 +164,15 @@ def test_the_agent_stops_on_a_screen_tool_and_can_reason():
 
 
 def test_a_screen_message_carries_the_picture_only_when_vision_is_on(screen, clean_env):
-    packet = screen_packet("save", screen, [], [], "stuck", [], [], None, 3)
+    packet = DriverConversation.screen_packet("save", screen, [], [], "stuck", [], [], None, 3)
     assert packet["kind"] == "screen"
     clean_env.setenv("CLICKER_WRITER_VISION", "true")
     reset_settings()
-    seen = screen_message(packet, Image.new("RGB", (4, 4), "white"))
+    seen = DriverConversation.screen_message(packet, Image.new("RGB", (4, 4), "white"))
     assert any(part["type"] == "input_image" for part in seen["content"])
     clean_env.setenv("CLICKER_WRITER_VISION", "false")
     reset_settings()
-    bare = screen_message(packet, Image.new("RGB", (4, 4), "white"))
+    bare = DriverConversation.screen_message(packet, Image.new("RGB", (4, 4), "white"))
     assert [part["type"] for part in bare["content"]] == ["input_text"]
 
 
@@ -186,13 +188,13 @@ def test_only_the_last_two_screens_keep_their_picture(clean_env):
             "focused_field": None,
             "screen_items": [{"i": 0, "text": "row"}],
         }
-        messages.append(screen_message(packet, Image.new("RGB", (4, 4), "white")))
+        messages.append(DriverConversation.screen_message(packet, Image.new("RGB", (4, 4), "white")))
         if index == 0:
             messages.append({"type": "function_call_output", "call_id": "count", "output": "22"})
-    kept = keep_recent_screens(
+    kept = DriverConversation.keep_recent_screens(
         CallModelData(
             model_data=ModelInputData(input=messages, instructions="stay"),
-            agent=make_agent(ScriptedModel([]), None),
+            agent=DriverConversation.make_agent(ScriptedModel([]), None),
             context=None,
         )
     )
@@ -212,17 +214,19 @@ def _drive(monkeypatch, tmp_path, screen, scripts):
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     clicks = []
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: clicks.append(args))
-    from yuanji_computer_use.agents import driver as driver_role
+    from yuanji_computer_use.agents.driver import DriverAgent
 
     def look(state):
         state.view = (screen, [])
         return (screen, [])
 
-    monkeypatch.setattr(driver_role, "look", look)
-    monkeypatch.setattr(driver_agent, "model_for", lambda: ScriptedModel(list(scripts)))
+    monkeypatch.setattr(DriverAgent, "look", staticmethod(look))
+    monkeypatch.setattr(DriverConversation, "model_for", staticmethod(lambda: ScriptedModel(list(scripts))))
     lines = []
     state = Session(outcome="nothing helps")
-    take_over(RunConfig(goal="save", out=tmp_path, driver_steps=4), type("W", (), {"writer": object()})(), state, lines.append, 0)
+    Takeover(
+        RunConfig(goal="save", out=tmp_path, driver_steps=4), type("W", (), {"writer": object()})(), state, lines.append, 0
+    ).run()
     return state, clicks, lines
 
 
@@ -332,7 +336,7 @@ def test_an_offline_takeover_records_the_read_the_count_and_the_action(monkeypat
         driver_steps=4,
     )
     assert state.outcome == "driver done"
-    records = [load_driver_record(path) for path in (tmp_path / "run").glob("step-*-driver.json")]
+    records = [Takeover.load_driver_record(path) for path in (tmp_path / "run").glob("step-*-driver.json")]
     counted = next(record for record in records if record.get("tools") and record["tools"][0]["name"] == "read_text")
     assert [tool["name"] for tool in counted["tools"]] == ["read_text", "count", "shortcut"]
     assert counted["tools"][1]["result"] == "22"

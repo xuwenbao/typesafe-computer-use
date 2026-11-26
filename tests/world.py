@@ -24,7 +24,7 @@ from typesafe_sdk import Noul
 
 from yuanji_computer_use import actions, runner
 from yuanji_computer_use.actions import Context
-from yuanji_computer_use.agents.driver import conversation as driver_agent
+from yuanji_computer_use.agents.driver.conversation import DriverConversation
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.llm.writer import WriterError
 from yuanji_computer_use.models import AxNode, ElementState, Field, Item, Popup, Screen
@@ -633,7 +633,7 @@ def drive(
     packets = getattr(client, "drive_packets", None)
     model = ScriptedModel(scripts if scripts is not None else [], packets if packets is not None else [])
     model.on_request = getattr(client, "on_drive_request", None)
-    monkeypatch.setattr(driver_agent, "model_for", lambda: model)
+    monkeypatch.setattr(DriverConversation, "model_for", staticmethod(lambda: model))
     left = list(replies or [])
 
     def ask(question: str) -> str:

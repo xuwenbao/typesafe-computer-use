@@ -16,7 +16,7 @@ from ...platforms.windows_session import report_action
 from ...report import annotate, render_payload
 from ...timing import format_timing
 from ..session import Session, StepContext
-from .stages import answers
+from .stages import DecideStrategy
 
 
 class StepMiddleware(Protocol):
@@ -58,7 +58,7 @@ class StepFiles:
         if sc.prefix is None or sc.decision is None:
             return
         sc.prefix.with_name(sc.prefix.name + "-answers.json").write_text(
-            json.dumps(answers(sc.decision, sc.screen, sc.items, sc.timing, sc.tried, session), indent=2),
+            json.dumps(DecideStrategy.answers(sc.decision, sc.screen, sc.items, sc.timing, sc.tried, session), indent=2),
             encoding="utf-8",
         )
 

@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from yuanji_computer_use.actions import Context
-from yuanji_computer_use.agents.policy.stages import run_step
+from yuanji_computer_use.agents.policy import PolicyAgent
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.perception import pipeline as perception
 from yuanji_computer_use.platforms.adapter import desktop
@@ -115,7 +115,7 @@ def test_a_stuck_screenshot_ends_the_step(monkeypatch, tmp_path):
     cfg = RunConfig(goal="open notepad", out=tmp_path)
     state = Session()
     ctx = Context(goal="open notepad", browser="", email=None, typesafe=None, writer=None, history=[])
-    assert run_step(cfg, ctx, state, 1, Log(tmp_path / "run.log")) is False
+    assert PolicyAgent().run_step(cfg, ctx, state, 1, Log(tmp_path / "run.log")) is False
     assert state.outcome == "capture timed out"
     assert state.timings[0]["screenshot_timeout"] == 1.0
     assert list(tmp_path.glob("step-*")) == []

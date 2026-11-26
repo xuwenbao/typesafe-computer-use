@@ -1,9 +1,9 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from yuanji_computer_use.agents.policy.stages import MAX_REPEATS, answers, repeating, tried_here
+from yuanji_computer_use.agents.policy.stages import MAX_REPEATS, DecideStrategy, MemoryStrategy, PerceiveStrategy
 from yuanji_computer_use.agents.session import Session
-from yuanji_computer_use.agents.writer import earlier_screens
+from yuanji_computer_use.agents.writer import RunMemory
 from yuanji_computer_use.llm.classifier import Decision
 from yuanji_computer_use.models import LINES_PER_DIFFERENCE, Field, Item, same_screen, signature
 
@@ -94,8 +94,8 @@ def test_tried_here_lists_the_actions_taken_on_the_current_screen_oldest_first()
     home = ("Google Chrome", "https://a/", None, texts("Home", "Tickets", "Blog"))
     blog = ("Google Chrome", "https://a/blog", None, texts("Blog", "Posts"))
     state = Session(last=home, seen=[(home, "clicked 'Blog'"), (blog, "went back"), (home, "clicked 'Tickets'")])
-    assert tried_here(state) == ["clicked 'Blog'", "clicked 'Tickets'"]
-    assert tried_here(Session()) == []
+    assert PerceiveStrategy.tried_here(state) == ["clicked 'Blog'", "clicked 'Tickets'"]
+    assert PerceiveStrategy.tried_here(Session()) == []
 
 
 def test_earlier_screens_are_the_distinct_ones_before_the_last_oldest_first():
@@ -105,17 +105,17 @@ def test_earlier_screens_are_the_distinct_ones_before_the_last_oldest_first():
     tickets_later = ("Google Chrome", "https://a/tickets", None, texts("Standard $45", *rows, "12:01"))  # the same screen
     checkout = ("Google Chrome", "https://a/checkout", None, texts("Order summary", "Pay now"))
     state = Session(seen=[(home, "clicked 'Tickets'"), (tickets, "waited"), (tickets_later, "clicked 'Buy'")])
-    assert earlier_screens(state, checkout) == [
+    assert RunMemory(state).earlier_screens(checkout) == [
         {"app": "Google Chrome", "url": "https://a/", "text": ["Home", "Tickets"], "actions_since": 3},
         {"app": "Google Chrome", "url": "https://a/tickets", "text": ["Standard $45", *rows, "12:01"], "actions_since": 1},
     ]
-    assert earlier_screens(state, checkout, budget=12) == [  # eleven lines fit; home's two more do not
+    assert RunMemory(state).earlier_screens(checkout, budget=12) == [  # eleven lines fit; home's two more do not
         {"app": "Google Chrome", "url": "https://a/tickets", "text": ["Standard $45", *rows, "12:01"], "actions_since": 1},
     ]
-    assert earlier_screens(state, tickets) == [
+    assert RunMemory(state).earlier_screens(tickets) == [
         {"app": "Google Chrome", "url": "https://a/", "text": ["Home", "Tickets"], "actions_since": 3}
     ]
-    assert earlier_screens(Session(), checkout) == []
+    assert RunMemory(Session()).earlier_screens(checkout) == []
 
 
 def test_a_wait_is_neither_a_repeat_nor_something_the_classifier_is_told_it_tried():
@@ -123,13 +123,13 @@ def test_a_wait_is_neither_a_repeat_nor_something_the_classifier_is_told_it_trie
     state = Session(last=loading)
     lines: list[str] = []
     for _ in range(MAX_REPEATS + 1):
-        assert not repeating(state, "waited", True, lines.append)
+        assert not MemoryStrategy().repeating(state, "waited", True, lines.append)
     assert state.seen == [(loading, None)] * (MAX_REPEATS + 1)  # the screen is on record, with no action to steer around
-    assert tried_here(state) == [] and lines == []
-    assert not repeating(state, "clicked 'Buy'", False, lines.append)  # the first time on this screen
-    assert not repeating(state, "clicked 'Buy'", False, lines.append)  # one repeat is a warning shot
-    assert repeating(state, "clicked 'Buy'", False, lines.append) and state.outcome == "stalled"
-    assert tried_here(state) == ["clicked 'Buy'"] * MAX_REPEATS + ["clicked 'Buy'"]
+    assert PerceiveStrategy.tried_here(state) == [] and lines == []
+    assert not MemoryStrategy().repeating(state, "clicked 'Buy'", False, lines.append)  # the first time on this screen
+    assert not MemoryStrategy().repeating(state, "clicked 'Buy'", False, lines.append)  # one repeat is a warning shot
+    assert MemoryStrategy().repeating(state, "clicked 'Buy'", False, lines.append) and state.outcome == "stalled"
+    assert PerceiveStrategy.tried_here(state) == ["clicked 'Buy'"] * MAX_REPEATS + ["clicked 'Buy'"]
 
 
 def _stateful(text: str, **kwargs) -> Item:
@@ -154,7 +154,7 @@ def test_the_step_record_carries_the_stop_rules_standing(screen, make_item):
     site = SimpleNamespace(choice="none", confidence=1.0, probabilities={"none": 1.0})
     decision = Decision(kind=kind, item=item, site=site)
     state = Session(idle=1, repeats=0)
-    record = answers(decision, screen, [make_item(0, "Buy")], {"total": 0.5}, ["clicked 'Terms'"], state)
+    record = DecideStrategy.answers(decision, screen, [make_item(0, "Buy")], {"total": 0.5}, ["clicked 'Terms'"], state)
     assert record["already_tried_on_this_screen"] == ["clicked 'Terms'"]
     assert record["idle_actions"] == 1 and record["repeated_actions"] == 0
     assert record["chosen"] == "0" and record["items"][0]["text"] == "Buy"

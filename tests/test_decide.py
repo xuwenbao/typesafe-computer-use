@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuanji_computer_use.agents.policy.stages import resolve
+from yuanji_computer_use.agents.policy.stages import DecideStrategy
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.config import SITES
 from yuanji_computer_use.llm.classifier import (
@@ -239,7 +239,7 @@ def test_the_item_question_steers_around_what_was_tried_here_as_the_kind_questio
 
 def _stopped(tmp_path, screen, decision, floor: float = 0.4) -> str:
     state = Session()
-    resolve(
+    DecideStrategy().resolve(
         RunConfig(goal="open the chat", out=tmp_path, min_confidence=floor),
         None,
         state,
@@ -319,7 +319,9 @@ def test_a_stop_names_the_layer_that_missed_the_floor(tmp_path, screen):
         item=answer("25", 0.41, {"25": 0.43, "5": 0.15}),
         site=answer("none", 1.0),
     )
-    resolve(RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], kind_low, {}, lines.append)
+    DecideStrategy().resolve(
+        RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], kind_low, {}, lines.append
+    )
     assert any("kind 0.30, item 0.41" in line and "the kind layer is below the floor" in line for line in lines)
 
     lines.clear()
@@ -328,7 +330,9 @@ def test_a_stop_names_the_layer_that_missed_the_floor(tmp_path, screen):
         item=answer("23", 0.34, {"23": 0.35, "20": 0.28}),
         site=answer("none", 1.0),
     )
-    resolve(RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], no_lead, {}, lines.append)
+    DecideStrategy().resolve(
+        RunConfig(goal="open it", out=tmp_path, min_confidence=0.4), None, Session(), screen, [], no_lead, {}, lines.append
+    )
     assert any("kind 0.50, item 0.34" in line and "the target layer has no clear lead" in line for line in lines)
 
 

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from yuanji_computer_use.agents.driver import look
+from yuanji_computer_use.agents.driver import DriverAgent
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.agents.writer import WriterAgent
 from yuanji_computer_use.perception import pipeline as perception
@@ -126,7 +126,7 @@ def test_the_driver_reads_with_the_runs_parse_cache(monkeypatch, tmp_path, scree
     seen = []
     monkeypatch.setattr(perception, "capture", lambda *args, **kwargs: screen)
     monkeypatch.setattr(perception, "perceive", lambda *args, **kwargs: seen.append(kwargs.get("cache")) or [])
-    look(state)
+    DriverAgent.look(state)
     assert seen == [state.parse_cache]
 
 

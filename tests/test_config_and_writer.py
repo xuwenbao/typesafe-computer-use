@@ -7,7 +7,7 @@ import httpx
 import openai
 import pytest
 
-from yuanji_computer_use.agents.driver.conversation import INSTRUCTIONS, screen_packet
+from yuanji_computer_use.agents.driver.conversation import INSTRUCTIONS, DriverConversation
 from yuanji_computer_use.config import load_dotenv, reset_settings, settings
 from yuanji_computer_use.llm.calls import Calls, MeteredWriter
 from yuanji_computer_use.llm.writer import (
@@ -344,12 +344,12 @@ def test_a_highlighted_menu_item_is_named_and_a_plain_focus_is_not(screen, clean
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
     menu = replace(screen, field=Field("AXMenuBarItem", "文件夹", "", "", 0, 0, 20, 20))
-    drive = screen_packet("make a folder", menu, [], [], "stuck", [], [], None, 3)
+    drive = DriverConversation.screen_packet("make a folder", menu, [], [], "stuck", [], [], None, 3)
     compose_answer(writer, "make a folder", menu, [], [], "stuck")
     assert [drive["highlighted_menu_item"], seen[0]["highlighted_menu_item"]] == ["文件夹", "文件夹"]
 
     seen.clear()
-    drive = screen_packet("make a folder", screen, [], [], "stuck", [], [], None, 3)
+    drive = DriverConversation.screen_packet("make a folder", screen, [], [], "stuck", [], [], None, 3)
     compose_answer(writer, "make a folder", screen, [], [], "stuck")
     assert "highlighted_menu_item" not in drive
     assert all("highlighted_menu_item" not in packet for packet in seen)
@@ -367,7 +367,7 @@ def test_the_writer_is_told_about_controls_that_are_not_in_view(screen, clean_en
         return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
 
     writer = SimpleNamespace(messages=SimpleNamespace(create=create))
-    drive = screen_packet("set the folder", showing, [], [], "stuck", [], [], None, 3)
+    drive = DriverConversation.screen_packet("set the folder", showing, [], [], "stuck", [], [], None, 3)
     compose_answer(writer, "set the folder", showing, [], [], "stuck")
     assert drive["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]
     assert seen[0]["offscreen_controls"] == [{"i": 0, "control": "field 'Record directory'"}]

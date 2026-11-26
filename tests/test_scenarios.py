@@ -13,7 +13,7 @@ import json
 import pytest
 from world import FakeWriter, Page, World, drive, scripted
 
-from yuanji_computer_use.agents import driver as driver_role
+from yuanji_computer_use.agents.driver import DriverAgent
 from yuanji_computer_use.agents.driver import takeover as driver
 from yuanji_computer_use.agents.driver.takeover import BANNED, DONE_BEFORE
 from yuanji_computer_use.agents.outcomes import CLASSIFIER_STOPPED as STOPPED
@@ -2122,7 +2122,7 @@ def test_a_takeover_that_cannot_load_keeps_the_classifiers_answer(monkeypatch, t
     def missing():
         raise FileNotFoundError("memory_consolidation_prompt.md")
 
-    monkeypatch.setattr(driver_role, "_takeover", missing)
+    monkeypatch.setattr(DriverAgent, "_takeover", staticmethod(missing))
     writer = FakeWriter(reviews=[{"achieved": False}])
 
     state = drive(

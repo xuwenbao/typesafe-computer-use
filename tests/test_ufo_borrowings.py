@@ -15,9 +15,9 @@ import pytest
 
 from yuanji_computer_use import cli
 from yuanji_computer_use.actions import Context, add_item, click_item, press_offscreen
-from yuanji_computer_use.agents.driver.conversation import TOOLS, screen_packet
-from yuanji_computer_use.agents.driver.takeover import act, load_driver_record, take_over
-from yuanji_computer_use.agents.policy.stages import UNCHANGED, resolve, screen_moved
+from yuanji_computer_use.agents.driver.conversation import TOOLS, DriverConversation
+from yuanji_computer_use.agents.driver.takeover import MoveExecutor, Takeover
+from yuanji_computer_use.agents.policy.stages import UNCHANGED, DecideStrategy, PerceiveStrategy
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.llm.classifier import Decision, kind_criteria
 from yuanji_computer_use.llm.writer import DRIVE_ACTIONS, DriveStep, WriterError, _drive_step
@@ -199,12 +199,14 @@ def test_a_cut_does_not_count_as_an_unchanged_screen(screen, monkeypatch, tmp_pa
     )
     state = Session()
     ctx = Context(goal="cut the files", browser="Google Chrome", email=None, typesafe=None, writer=None, history=[])
-    assert resolve(RunConfig(goal="cut the files", out=tmp_path, act=True), ctx, state, screen, [], decision, {}, lambda _m: None)
+    assert DecideStrategy().resolve(
+        RunConfig(goal="cut the files", out=tmp_path, act=True), ctx, state, screen, [], decision, {}, lambda _m: None
+    )
     assert pressed == [("x", True)]
     assert state.history == ["pressed command+x (to the clipboard; the screen need not change)"]
     assert state.quiet and not state.markable
     state.last = signature(screen, [])
-    assert screen_moved(state, screen, [], lambda _m: None)
+    assert PerceiveStrategy().screen_moved(state, screen, [], lambda _m: None)
     assert state.idle == 0 and UNCHANGED not in state.history[0]
 
 
@@ -233,7 +235,7 @@ def test_a_shift_click_stays_a_pointer_click(screen, monkeypatch):
     monkeypatch.setattr(desktop, "ax_operate", lambda *args, **kwargs: calls.append("operate") or False)
     monkeypatch.setattr(desktop, "click_at", lambda *args, **kwargs: calls.append(("click", kwargs.get("modifier"))))
     item = Item(0, "Archive", 1.0, 100, 100, 300, 140)
-    assert "with range" in act(step("click", item="0", target="Archive", modifier="shift"), screen, [item])
+    assert "with range" in MoveExecutor(screen, [item]).act(step("click", item="0", target="Archive", modifier="shift"))
     assert calls == [("click", "range")]
 
 
@@ -291,7 +293,7 @@ def test_the_takeover_tools_name_one_action_each():
 
 def test_the_model_sees_controls_and_the_classifier_does_not_gain_set_value(screen):
     item = Item(0, "Volume", 1.0, 0, 0, 20, 20, source="ax", controls=("range_value",), current="10")
-    seen = screen_packet("set it", screen, [item], [], "stuck", [], [], None, 3)
+    seen = DriverConversation.screen_packet("set it", screen, [item], [], "stuck", [], [], None, 3)
     assert seen["screen_items"][0]["controls"] == ["range_value"]
     assert seen["screen_items"][0]["value"] == "10"
     assert "batch_size" not in seen and "change_course" not in seen
@@ -326,21 +328,20 @@ def _run_steps(monkeypatch, tmp_path, screen, items, moves, steps: int = 5):
     looks = []
     from scripted_driver import ScriptedModel
 
-    from yuanji_computer_use.agents.driver import conversation as driver_agent
+    from yuanji_computer_use.agents.driver import DriverAgent
 
-    monkeypatch.setattr(driver_agent, "model_for", lambda: ScriptedModel(planned))
-    from yuanji_computer_use.agents import driver as driver_role
+    monkeypatch.setattr(DriverConversation, "model_for", staticmethod(lambda: ScriptedModel(planned)))
 
     def look(state):
         looks.append(len(state.history))
         state.view = (screen, items)
-        return (screen, items) if screen_moved(state, screen, items, state.log) else None
+        return (screen, items) if PerceiveStrategy().screen_moved(state, screen, items, state.log) else None
 
-    monkeypatch.setattr(driver_role, "look", look)
+    monkeypatch.setattr(DriverAgent, "look", staticmethod(look))
     state = Session(outcome="nothing helps")
-    take_over(
+    Takeover(
         RunConfig(goal="save", out=tmp_path, driver_steps=steps), SimpleNamespace(writer=object()), state, lambda *a: None, 0
-    )
+    ).run()
     return state, clicks, looks
 
 
@@ -358,7 +359,7 @@ def test_each_action_is_chosen_from_a_screen_seen_after_the_one_before(monkeypat
     assert looks == [0, 1, 2]
     assert state.outcome == "driver gave up" and state.driver_actions == 2 and state.driver_calls == 3
     for index, name in ((0, "Archive"), (1, "Tools")):
-        record = load_driver_record(tmp_path / f"step-{index:03d}-driver.json")
+        record = Takeover.load_driver_record(tmp_path / f"step-{index:03d}-driver.json")
         assert record["call"] == index + 1
         assert [entry["did"] for entry in record["actions"]] == [f"clicked {name!r}"]
 
@@ -379,7 +380,7 @@ def test_the_drive_packet_names_the_selected_files(screen):
         _file_row(1, "draft.txt"),
         Item(2, "文档", 1.0, 0, 40, 20, 60, role="tab", source="ax", controls=("selection_item",), selected=True),
     ]
-    seen = screen_packet("move the files", screen, rows, [], "stuck", [], [], None, 3)
+    seen = DriverConversation.screen_packet("move the files", screen, rows, [], "stuck", [], [], None, 3)
     assert seen["selected_files"] == ["Doc01.docx"]
     assert seen["on_screen"]["file_rows"] == ["Doc01.docx", "draft.txt"]
     assert "文档" in seen["on_screen"]["names"]
@@ -430,24 +431,22 @@ def _ask_the_driver(monkeypatch, tmp_path, screen, items, script, steps: int):
     monkeypatch.setattr(desktop, "sleep_watching", lambda seconds: None)
     pressed = []
     monkeypatch.setattr(desktop, "press", lambda key, command=False: pressed.append((key, command)))
-    from yuanji_computer_use.agents import driver as driver_role
+    from yuanji_computer_use.agents.driver import DriverAgent
 
     def look(state):
         state.view = (screen, items)
-        return (screen, items) if screen_moved(state, screen, items, state.log) else None
+        return (screen, items) if PerceiveStrategy().screen_moved(state, screen, items, state.log) else None
 
-    monkeypatch.setattr(driver_role, "look", look)
-    from yuanji_computer_use.agents.driver import conversation as driver_agent
-
-    monkeypatch.setattr(driver_agent, "model_for", lambda: script)
+    monkeypatch.setattr(DriverAgent, "look", staticmethod(look))
+    monkeypatch.setattr(DriverConversation, "model_for", staticmethod(lambda: script))
     state = Session(outcome="nothing helps")
-    take_over(
+    Takeover(
         RunConfig(goal="move the docx files into Archive", out=tmp_path, driver_steps=steps),
         SimpleNamespace(writer=object()),
         state,
         lambda *args: None,
         0,
-    )
+    ).run()
     return state, pressed
 
 
@@ -473,7 +472,7 @@ def test_a_driver_that_calls_a_listed_folder_empty_is_asked_again_without_the_ca
     second = json.loads(second_parts[0]["text"])
     assert second["on_screen"]["file_rows"] == ["Doc01.docx", "Doc02.docx"]
     assert second["listed_names_the_previous_reply_denied"] == ["Doc01.docx", "Doc02.docx"]
-    record = load_driver_record(tmp_path / "step-000-driver.json")
+    record = Takeover.load_driver_record(tmp_path / "step-000-driver.json")
     assert record["call"] == 2 and record["reasked"] == ["Doc01.docx", "Doc02.docx"]
     assert record["actions"][0]["action"] == "done" and record["actions"][0]["did"] == "driver done"
 
@@ -491,7 +490,7 @@ def test_a_missing_name_that_is_not_listed_is_not_asked_of_the_driver_again(monk
 def test_an_old_driver_record_reads_as_one_call_and_one_action(tmp_path):
     path = tmp_path / "step-003-driver.json"
     path.write_text(json.dumps({"step": 3, "action": "wait", "did": "waited"}), encoding="utf-8")
-    record = load_driver_record(path)
+    record = Takeover.load_driver_record(path)
     assert record["call"] == 1
     assert record["actions"] == [{"step": 3, "action": "wait", "did": "waited"}]
 
@@ -502,12 +501,12 @@ def test_set_value_sets_a_slider_and_refuses_a_range_and_a_password(screen, monk
     monkeypatch.setattr(desktop, "ax_operate", lambda ref, operation, value=None: calls.append((operation, value)) or True)
     slider = Item(0, "Volume", 1.0, 0, 0, 40, 20, source="ax", controls=("range_value",), low=0.0, high=100.0)
     live = replace(screen, ax_refs={0: "volume"})
-    assert "RangeValue" in act(step("set_value", item="0", target="Volume", text="40"), live, [slider])
+    assert "RangeValue" in MoveExecutor(live, [slider]).act(step("set_value", item="0", target="Volume", text="40"))
     assert calls == [("set_range", "40")]
     calls.clear()
-    assert "outside" in act(step("set_value", item="0", target="Volume", text="120"), live, [slider])
+    assert "outside" in MoveExecutor(live, [slider]).act(step("set_value", item="0", target="Volume", text="120"))
     assert calls == []
-    assert "password" in act(step("set_value", item="0", target="Volume", text="my password"), live, [slider])
+    assert "password" in MoveExecutor(live, [slider]).act(step("set_value", item="0", target="Volume", text="my password"))
 
 
 def test_pattern_ids_are_shared_and_not_copied_into_either_walker():

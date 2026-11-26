@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from world import FakeWriter, Page, World, drive, scripted
 
-from yuanji_computer_use.agents.host import HostAgent, _same_app, executable_name
+from yuanji_computer_use.agents.host import HostAgent
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.platforms.adapter import desktop
 from yuanji_computer_use.report import Log
@@ -92,10 +92,10 @@ def test_a_missing_app_is_launched_by_name(monkeypatch, tmp_path):
 
 
 def test_a_name_with_a_path_or_arguments_is_refused(monkeypatch, tmp_path):
-    assert executable_name("notepad") == "notepad"
-    assert executable_name("notepad.exe") == "notepad.exe"
-    assert executable_name(r"C:\Windows\notepad.exe") is None
-    assert executable_name("notepad /c calc") is None
+    assert HostAgent.executable_name("notepad") == "notepad"
+    assert HostAgent.executable_name("notepad.exe") == "notepad.exe"
+    assert HostAgent.executable_name(r"C:\Windows\notepad.exe") is None
+    assert HostAgent.executable_name("notepad /c calc") is None
     state = Session()
     launched = _desktop(monkeypatch, [], {"app": "explorer.exe"})
     _prepare(
@@ -119,7 +119,7 @@ def test_settings_counts_as_open_when_the_frame_host_is_in_front(monkeypatch, tm
 
     def activate(app, timeout=3.0):
         launched.activated.append(app)
-        return any(_same_app(app, process) for _, _, process in windows)
+        return any(HostAgent._same_app(app, process) for _, _, process in windows)
 
     monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
     monkeypatch.setattr(desktop, "launch_app", launch)
@@ -149,7 +149,7 @@ def test_control_panel_counts_when_explorer_shows_that_title(monkeypatch, tmp_pa
 
     def activate(app, timeout=3.0):
         launched.activated.append(app)
-        return any(_same_app(app, process) for _, _, process in windows)
+        return any(HostAgent._same_app(app, process) for _, _, process in windows)
 
     monkeypatch.setattr(desktop, "list_windows", lambda: list(windows))
     monkeypatch.setattr(desktop, "launch_app", launch)

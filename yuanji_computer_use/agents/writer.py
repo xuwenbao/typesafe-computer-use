@@ -14,10 +14,9 @@ from ..llm.writer import Answer, WriterError, compose_answer, denied_listed_name
 from ..models import Signature, same_screen, signature
 from ..perception import pipeline as perception
 from ..platforms.adapter import desktop
-from .base import register
-from .driver import ready, wants
+from .base import BaseAgent, register
 from .outcomes import CLASSIFIER_STOPPED
-from .session import Handoff
+from .session import Handoff, Session
 from .status import Status
 
 # ---- 判断“卡住了”的阈值 ----
@@ -29,14 +28,52 @@ EARLIER_LINES = 600  # 除了最后一屏，写手最多还能看之前屏幕上
 MAX_QUESTIONS = 3  # 一次运行里写手最多向用户提问几次；用户回了空内容会提前结束提问
 
 
+class RunMemory:
+    """一次运行里，写手和接管都要回看的屏幕与停下记录。"""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def stops_so_far(self) -> list[dict]:
+        """之前每次“分类器停下 → 写手让它继续”的记录：第几个动作后停的、为什么停、写手给了什么提示。"""
+        return [
+            {"after_action": handoff.actions, "why": CLASSIFIER_STOPPED[handoff.outcome], "focus_given": handoff.focus}
+            for handoff in self.session.handoffs
+        ]
+
+    def earlier_screens(self, final: Signature, budget: int = EARLIER_LINES) -> list[dict]:
+        """最后一屏之前经过的其他屏幕上的文字，按时间从早到晚排列，一并发给写手。
+
+        原因：答案可能出现在中途的页面上（比如价格在商品列表页，结账页上没有）。
+        规则：重复的屏幕只发一次；从最新的往前取，总行数超过 budget 就不再往前取。
+        """
+        out: list[tuple[Signature, int]] = []
+        lines_left = budget
+        total = len(self.session.seen)
+        for index in range(total - 1, -1, -1):
+            seen = self.session.seen[index][0]
+            if same_screen(seen, final) or any(same_screen(seen, kept) for kept, _ in out):
+                continue
+            lines_left -= len(seen[3])
+            if lines_left < 0:
+                break
+            out.append((seen, total - index))
+        return [
+            {"app": app, "url": url, "text": [text for text, _ in lines], "actions_since": since}
+            for (app, url, _, lines), since in ((sig[:4], since) for sig, since in reversed(out))
+        ]
+
+
 @register("writer")
-class WriterAgent:
+class WriterAgent(BaseAgent):
     def handle(self, session) -> Status:
         """分类器停下后的一次交回。继续就回到分类器；要接管就交给接管；否则结束。"""
+        from .driver import DriverAgent
+
         if self.hand_off(session):
             session.ctx = replace(session.ctx, guidance=session.guidance)
             return Status.POLICY
-        if wants(session):
+        if DriverAgent.wants(session):
             return Status.DRIVER
         return Status.FINISH
 
@@ -53,9 +90,12 @@ class WriterAgent:
         - 上一个提示没让分类器做出任何动作，就直接用上次的回答结束；
         - 卡住次数到 MAX_STALLS 也直接结束（见 stuck）。
         """
-        cfg, ctx, state, log = session.cfg, session.ctx, session, session.log
+        from .driver import DriverAgent
+
+        self.bind(session)
+        cfg, ctx, state, log = self.cfg, self.ctx, self.session, self.log
         step = session.step
-        stuck(state, log)
+        self.stuck()
         stopped = CLASSIFIER_STOPPED.get(state.outcome)
         if stopped is None:
             return False
@@ -66,7 +106,7 @@ class WriterAgent:
             return False
         if state.handoffs and state.handoffs[-1].actions == len(state.history) and state.answer is not None:
             log(
-                f"\nanswer ({verdict(state.answer)}; the focus led to no action, so the last answer stands):\n  {state.answer.text}"
+                f"\nanswer ({self.verdict(state.answer)}; the focus led to no action, so the last answer stands):\n  {state.answer.text}"
             )
             return False
 
@@ -93,7 +133,9 @@ class WriterAgent:
             try:
                 resuming = may_resume and not answer.achieved
                 if resuming and can_ask and answer.question:
-                    log(f"\nreview ({verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n  the writer asks: {answer.question}")
+                    log(
+                        f"\nreview ({self.verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n  the writer asks: {answer.question}"
+                    )
                     reply = ctx.ask(answer.question).strip()
                     record["reply"] = reply
                     log(f"  > {reply}", echo=False)  # 只写日志不打印，用户刚在终端里打过这些字
@@ -113,24 +155,24 @@ class WriterAgent:
                     and answer.route == "classifier"
                     and answer.focus
                     and any(earlier.page == page for earlier in state.handoffs)
-                    and ready(cfg, ctx)
+                    and DriverAgent.ready(cfg, ctx)
                 ):
                     state.route = "driver"
                     log(
-                        f"\nreview ({verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n"
+                        f"\nreview ({self.verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n"
                         "  the classifier already stopped on this page after a focus; the driver takes over"
                     )
                     return False
                 if resuming and answer.route == "classifier" and answer.focus:
                     log(
-                        f"\nreview ({verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n  back to the classifier, focus: {answer.focus}"
+                        f"\nreview ({self.verdict(answer)}, {seconds:.1f}s):\n  {answer.text}\n  back to the classifier, focus: {answer.focus}"
                     )
                     record["handed_back"] = True
                     state.handoffs.append(Handoff(step, state.outcome, answer.focus, len(state.history), page))
                     state.guidance = state.guidance.focused(answer.focus)
                     state.idle = state.repeats = 0  # 有了新提示，卡住计数清零重来
                     return True
-                log(f"\nanswer ({verdict(answer)}, route {answer.route}, {seconds:.1f}s):\n  {answer.text}")
+                log(f"\nanswer ({self.verdict(answer)}, route {answer.route}, {seconds:.1f}s):\n  {answer.text}")
                 return False
             finally:
                 (cfg.out / f"step-{step:03d}-review.json").write_text(json.dumps(reviews, indent=2), encoding="utf-8")
@@ -150,8 +192,9 @@ class WriterAgent:
                 perception.perceive(screen, settings().max_options, cfg.goal, cache=None if cfg.replay else state.parse_cache),
             )
         screen, items = state.view
-        earlier = earlier_screens(state, signature(screen, items))
-        earlier_stops = stops_so_far(state)
+        memory = RunMemory(state)
+        earlier = memory.earlier_screens(signature(screen, items))
+        earlier_stops = memory.stops_so_far()
         answer = compose_answer(
             ctx.writer,
             cfg.goal,
@@ -191,10 +234,11 @@ class WriterAgent:
 
         接管已经判定完成、写手却说没完成时，把接管的理由和当前画面再给写手看一次，以这次为准。
         """
-        from .driver import _takeover
+        from .driver import DriverAgent
 
-        cfg, ctx, state, log = session.cfg, session.ctx, session, session.log
-        takeover = _takeover()
+        self.bind(session)
+        cfg, ctx, state, log = self.cfg, self.ctx, self.session, self.log
+        takeover = DriverAgent._takeover()
         try:
             answer = self.review(session, takeover.STOPPED[state.outcome], False)
         except WriterError as e:
@@ -203,6 +247,7 @@ class WriterAgent:
         if not answer.achieved and state.driver_done and state.view is not None:
             log("\nthe driver said done; asking the writer once more")
             screen, items = state.view
+            memory = RunMemory(state)
             try:
                 answer = compose_answer(
                     ctx.writer,
@@ -211,62 +256,34 @@ class WriterAgent:
                     items,
                     state.history,
                     takeover.STOPPED[state.outcome],
-                    earlier_screens(state, signature(screen, items)),
+                    memory.earlier_screens(signature(screen, items)),
                     state.guidance,
-                    stops_so_far(state),
+                    memory.stops_so_far(),
                     False,
                     driver_said_done=state.driver_done,
                 )
             except WriterError as e:
                 log(f"\nno answer: the writer failed ({e})")
         state.answer = answer
-        log(f"\nanswer ({verdict(answer)}):\n  {answer.text}")
+        log(f"\nanswer ({self.verdict(answer)}):\n  {answer.text}")
         return Status.FINISH
 
+    def stuck(self) -> None:
+        """记录一次卡住；没到过新页面就第 MAX_STALLS（3）次卡住时，把结局改成 stuck，运行结束。
 
-def stuck(state, log) -> None:
-    """记录一次卡住；没到过新页面就第 MAX_STALLS（3）次卡住时，把结局改成 stuck，运行结束。
+        为什么是 3 次：卡住后写手给的提示通常能让分类器继续。但如果在同样的页面上又卡住，说明提示没用，
+        再试只会多花一次写手调用和几个无效动作。在 Chrome 任务上实测：第 3 次卡住的运行最后全部失败，
+        成功的运行从没卡住超过 2 次。
+        到达新页面会把计数清零，所以长任务偶尔卡一下不会被误判。
+        """
+        state, log = self.session, self.log
+        if state.outcome != "stalled":
+            return
+        state.stalls += 1
+        if state.stalls >= MAX_STALLS:
+            log(f"  stuck: {state.stalls} stalls without reaching a new page; the run ends here")
+            state.outcome = "stuck"
 
-    为什么是 3 次：卡住后写手给的提示通常能让分类器继续。但如果在同样的页面上又卡住，说明提示没用，
-    再试只会多花一次写手调用和几个无效动作。在 Chrome 任务上实测：第 3 次卡住的运行最后全部失败，
-    成功的运行从没卡住超过 2 次。
-    到达新页面会把计数清零，所以长任务偶尔卡一下不会被误判。
-    """
-    if state.outcome != "stalled":
-        return
-    state.stalls += 1
-    if state.stalls >= MAX_STALLS:
-        log(f"  stuck: {state.stalls} stalls without reaching a new page; the run ends here")
-        state.outcome = "stuck"
-
-
-def verdict(answer: Answer) -> str:
-    return "goal achieved" if answer.achieved else "goal not achieved"
-
-
-def stops_so_far(state) -> list[dict]:
-    """之前每次“分类器停下 → 写手让它继续”的记录：第几个动作后停的、为什么停、写手给了什么提示。"""
-    return [{"after_action": h.actions, "why": CLASSIFIER_STOPPED[h.outcome], "focus_given": h.focus} for h in state.handoffs]
-
-
-def earlier_screens(state, final: Signature, budget: int = EARLIER_LINES) -> list[dict]:
-    """最后一屏之前经过的其他屏幕上的文字，按时间从早到晚排列，一并发给写手。
-
-    原因：答案可能出现在中途的页面上（比如价格在商品列表页，结账页上没有）。
-    规则：重复的屏幕只发一次；从最新的往前取，总行数超过 budget 就不再往前取。
-    """
-    out: list[tuple[Signature, int]] = []
-    lines_left = budget
-    total = len(state.seen)
-    for index in range(total - 1, -1, -1):
-        seen = state.seen[index][0]
-        if same_screen(seen, final) or any(same_screen(seen, kept) for kept, _ in out):
-            continue
-        lines_left -= len(seen[3])
-        if lines_left < 0:
-            break
-        out.append((seen, total - index))
-    return [
-        {"app": app, "url": url, "text": [text for text, _ in lines], "actions_since": since}
-        for (app, url, _, lines), since in ((sig[:4], since) for sig, since in reversed(out))
-    ]
+    @staticmethod
+    def verdict(answer: Answer) -> str:
+        return "goal achieved" if answer.achieved else "goal not achieved"
