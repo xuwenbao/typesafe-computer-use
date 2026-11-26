@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..models import AxNode, Field
-from ..platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
+from ..platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, AxWalk
 from ..platforms.uia_patterns import ID_TO_NAME
 
 WALK_SECONDS = 8.0  # the script stops itself here
@@ -226,7 +226,7 @@ class Tree:
         if not nodes:
             return Reading(app, pid, window, None, None, [], [], False, title)
         root = {"role": "", "name": "", "rect": None, "pressable": False, "children": nodes}
-        found, offscreen, capped = walk_actionable(root, Tree._children, Tree._attrs, Tree._actions, display_w, display_h)
+        found, offscreen, capped = AxWalk.walk_actionable(root, Tree._children, Tree._attrs, Tree._actions, display_w, display_h)
         return Reading(
             app,
             pid,

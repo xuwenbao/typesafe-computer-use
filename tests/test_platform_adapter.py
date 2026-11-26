@@ -22,14 +22,15 @@ def shape(function) -> list[tuple[str, object, object]]:
 
 
 # Read at collection, before the conftest guard swaps the machine-touching functions for refusals.
+ADAPTERS = (macos.MacDesktop, windows.WindowsDesktop, WAADesktop)
 PROVIDED = {
     (adapter.__name__, name): shape(getattr(adapter, name)) if callable(getattr(adapter, name, None)) else None
-    for adapter in (macos, windows, WAADesktop)
+    for adapter in ADAPTERS
     for name in SURFACE
 }
 
 
-@pytest.mark.parametrize("adapter", [macos, windows, WAADesktop], ids=["macos", "windows", "waa"])
+@pytest.mark.parametrize("adapter", ADAPTERS, ids=["macos", "windows", "waa"])
 @pytest.mark.parametrize("name", SURFACE)
 def test_each_adapter_provides_the_desktop_surface(adapter, name):
     provided = PROVIDED[(adapter.__name__, name)]
@@ -44,7 +45,7 @@ def test_the_surface_covers_what_the_callers_use():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows picks windows.py")
 def test_macos_is_the_adapter_off_windows():
-    assert host is macos and current() is macos
+    assert isinstance(host, macos.MacDesktop) and current() is host
 
 
 def test_off_macos_a_host_without_the_mac_packages_has_no_desktop(monkeypatch):

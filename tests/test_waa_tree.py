@@ -247,10 +247,10 @@ def test_the_script_embeds_the_one_role_table_and_fits_a_windows_command():
     assert (tree.PACKAGE / "platforms" / "uia_roles.py").read_text(encoding="utf-8") in source
     compile(source, "<waa-tree>", "exec")
     assert windows.CONTROL_TYPE_TO_ROLE == uia_roles.CONTROL_TYPE_TO_ROLE
-    assert windows.pressable is uia_roles.pressable
+    assert windows.Roles.pressable is uia_roles.Roles.pressable
     for name, role in uia_roles.CONTROL_TYPE_TO_ROLE.items():
         type_id = next(type_id for type_name, type_id, _ in uia_roles._TYPES if type_name == name)
-        assert uia_roles.role_for_id(type_id) == role
+        assert uia_roles.Roles.role_for_id(type_id) == role
     assert len(source.encode("utf-8")) < tree.COMMAND_LIMIT
 
 

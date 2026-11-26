@@ -179,6 +179,6 @@ def test_the_child_runs_at_full_speed_and_warms_up_before_it_starts():
 def test_the_child_session_task_runs_at_normal_priority():
     module = getsource(windows_session)
     start = module.index("def launch_in_session(")
-    launch = module[start : module.index("\ndef ", start + 1)]
+    launch = module[start : module.index("\n    @staticmethod", start)]
     assert "definition.Settings.Priority = TASK_PRIORITY_NORMAL" in launch
     assert 4 <= windows_session.TASK_PRIORITY_NORMAL <= 6

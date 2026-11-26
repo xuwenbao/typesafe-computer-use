@@ -11,21 +11,14 @@ from yuanji_computer_use.agents.policy import PolicyAgent
 from yuanji_computer_use.agents.session import Session
 from yuanji_computer_use.perception import pipeline as perception
 from yuanji_computer_use.platforms.adapter import desktop
-from yuanji_computer_use.platforms.bound import (
-    CaptureLines,
-    CaptureTimeout,
-    SilentEvent,
-    assemble_capture,
-    await_capture,
-    call_within,
-)
+from yuanji_computer_use.platforms.bound import Bound, CaptureLines, CaptureTimeout, SilentEvent
 from yuanji_computer_use.report import Log
 from yuanji_computer_use.runner import RunConfig
 
 
 def test_call_within_returns_a_value_that_arrives_in_time():
-    assert call_within(1.0, lambda: "ready", "late") == "ready"
-    assert call_within(1.0, lambda: None, "late") is None
+    assert Bound.call_within(1.0, lambda: "ready", "late") == "ready"
+    assert Bound.call_within(1.0, lambda: None, "late") is None
 
 
 def test_call_within_returns_the_default_when_the_call_is_still_running():
@@ -33,7 +26,7 @@ def test_call_within_returns_the_default_when_the_call_is_still_running():
         time.sleep(1)
         return "late"
 
-    assert call_within(0.05, slow, "default") == "default"
+    assert Bound.call_within(0.05, slow, "default") == "default"
 
 
 def test_call_within_raises_an_error_that_arrives_in_time():
@@ -41,7 +34,7 @@ def test_call_within_raises_an_error_that_arrives_in_time():
         raise OSError("grab failed")
 
     with pytest.raises(OSError, match="grab failed"):
-        call_within(1.0, fail, None)
+        Bound.call_within(1.0, fail, None)
 
 
 def _quiet_desktop(monkeypatch, screenshot, field=lambda: None, url=lambda browser: None):
@@ -127,10 +120,10 @@ def test_a_shot_without_the_detail_keeps_the_picture_and_stops_the_process():
     lines = CaptureLines(shot, done)
     lines.feed("shot\n")
     killed = []
-    got_shot, got_detail = await_capture(shot, done, 1.0, 0.05, lambda: killed.append("killed"))
+    got_shot, got_detail = Bound.await_capture(shot, done, 1.0, 0.05, lambda: killed.append("killed"))
     image = Image.new("RGB", (4, 4))
     timing: dict[str, float] = {}
-    found, field, url = assemble_capture(got_shot, lines.detail if got_detail else None, image, timing)
+    found, field, url = Bound.assemble_capture(got_shot, lines.detail if got_detail else None, image, timing)
     assert found is image
     assert field is None and url is None
     assert killed == ["killed"]
@@ -142,9 +135,9 @@ def test_a_shot_without_the_detail_keeps_the_picture_and_stops_the_process():
 def test_no_shot_line_is_a_capture_timeout():
     shot, done = SilentEvent(), SilentEvent()
     killed = []
-    got_shot, got_detail = await_capture(shot, done, 0.05, 0.05, lambda: killed.append("killed"))
+    got_shot, got_detail = Bound.await_capture(shot, done, 0.05, 0.05, lambda: killed.append("killed"))
     with pytest.raises(CaptureTimeout):
-        assemble_capture(got_shot, None, None, {})
+        Bound.assemble_capture(got_shot, None, None, {})
     assert (got_shot, got_detail) == (False, False)
     assert killed == ["killed"]
     shot.close()
@@ -167,9 +160,9 @@ def test_a_detail_line_keeps_the_focus_and_the_address():
     }
     lines.feed(json.dumps({"field": field, "url": None}) + "\n")
     killed = []
-    got_shot, got_detail = await_capture(shot, done, 1.0, 1.0, lambda: killed.append("killed"))
+    got_shot, got_detail = Bound.await_capture(shot, done, 1.0, 1.0, lambda: killed.append("killed"))
     image = Image.new("RGB", (2, 2))
-    found, field, url = assemble_capture(got_shot, lines.detail if got_detail else None, image, {})
+    found, field, url = Bound.assemble_capture(got_shot, lines.detail if got_detail else None, image, {})
     assert killed == []
     assert found is image
     assert url is None

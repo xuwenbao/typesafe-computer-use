@@ -25,7 +25,7 @@ from yuanji_computer_use.models import Abort, AxNode, ElementState, Item, signat
 from yuanji_computer_use.perception.pipeline import Perceiver
 from yuanji_computer_use.platforms import macos, windows, windows_session
 from yuanji_computer_use.platforms.adapter import desktop
-from yuanji_computer_use.platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, walk_actionable
+from yuanji_computer_use.platforms.ax_walk import AX_PRESS, AxAttrs, AxFacts, AxWalk
 from yuanji_computer_use.platforms.uia_patterns import PATTERN_IDS
 from yuanji_computer_use.runner import RunConfig
 from yuanji_computer_use.waa import tree
@@ -36,7 +36,7 @@ from yuanji_computer_use.waa.walk_vm import Walker as TreeWalk
 PACKAGE = Path(__file__).resolve().parent.parent / "yuanji_computer_use"
 # Captured before the machine guard replaces it, so the test can drive the real function
 # against a patched attribute copy and still not touch Accessibility.
-_MAC_ELEMENT_STATE = macos.element_state
+_MAC_ELEMENT_STATE = macos.MacDesktop.element_state
 
 
 def step(action: str, **fields) -> DriveStep:
@@ -52,17 +52,17 @@ def test_a_toggle_on_a_node_is_a_control_on_its_item():
     def actions(raw):
         return AxFacts((AX_PRESS, "toggle"), enabled=True, checked=True)
 
-    found, _, _ = walk_actionable(node, lambda raw: [], attrs, actions, 100, 100)
+    found, _, _ = AxWalk.walk_actionable(node, lambda raw: [], attrs, actions, 100, 100)
     item = Perceiver.to_ax_items(found, 1.0)[0]
     assert item.controls == ("toggle",)
     assert item.checked is True
 
 
 def test_windows_reads_enabled_disabled_and_unknown(monkeypatch):
-    monkeypatch.setattr(windows, "_ui_value", lambda element: None)
-    monkeypatch.setattr(windows, "_ui_default_action", lambda element: "")
-    monkeypatch.setattr(windows, "_range_bounds", lambda element: (None, None))
-    monkeypatch.setattr(windows, "_writable", lambda element: None)
+    monkeypatch.setattr(windows.WindowsDesktop, "_ui_value", staticmethod(lambda element: None))
+    monkeypatch.setattr(windows.WindowsDesktop, "_ui_default_action", staticmethod(lambda element: ""))
+    monkeypatch.setattr(windows.WindowsDesktop, "_range_bounds", staticmethod(lambda element: (None, None)))
+    monkeypatch.setattr(windows.WindowsDesktop, "_writable", staticmethod(lambda element: None))
 
     class Live:
         IsEnabled = True
@@ -73,7 +73,7 @@ def test_windows_reads_enabled_disabled_and_unknown(monkeypatch):
                 return SimpleNamespace(ToggleState=1)
             raise OSError("unsupported")
 
-    facts = windows._ui_actions(Live())
+    facts = windows.WindowsDesktop._ui_actions(Live())
     assert facts.enabled is True
     assert "toggle" in facts.names
     assert facts.checked is True
@@ -81,7 +81,7 @@ def test_windows_reads_enabled_disabled_and_unknown(monkeypatch):
     class Disabled(Live):
         IsEnabled = False
 
-    assert windows._ui_actions(Disabled()).enabled is False
+    assert windows.WindowsDesktop._ui_actions(Disabled()).enabled is False
 
     class Unreadable:
         @property
@@ -91,9 +91,9 @@ def test_windows_reads_enabled_disabled_and_unknown(monkeypatch):
         def GetPattern(self, pattern_id):
             raise OSError("gone")
 
-    assert windows._ui_actions(Unreadable()).enabled is None
-    assert windows.read_uia_state(Live()) == ElementState(True, True, True)
-    assert windows.read_uia_state(Unreadable()) is None
+    assert windows.WindowsDesktop._ui_actions(Unreadable()).enabled is None
+    assert windows.WindowsDesktop.read_uia_state(Live()) == ElementState(True, True, True)
+    assert windows.WindowsDesktop.read_uia_state(Unreadable()) is None
 
 
 def test_macos_reports_presence_and_visibility_but_not_enabled(monkeypatch):
@@ -627,42 +627,42 @@ def test_vm_operate_waits_for_the_tree_and_quotes_the_shared_pattern_id():
 
 def test_session_messages_and_a_cancel_aborts(monkeypatch):
     for kind in windows_session.KINDS:
-        assert windows_session.decode(windows_session.encode(kind, text="x"))["type"] == kind
+        assert windows_session.WindowsSession.decode(windows_session.WindowsSession.encode(kind, text="x"))["type"] == kind
     facts = windows_session.SessionFacts("Core", True, False, False)
-    assert windows_session.rejection(facts) == "Windows Home cannot host a child session"
-    assert windows_session.rejection(windows_session.SessionFacts("Professional", True, False, True)) == (
+    assert windows_session.WindowsSession.rejection(facts) == "Windows Home cannot host a child session"
+    assert windows_session.WindowsSession.rejection(windows_session.SessionFacts("Professional", True, False, True)) == (
         "a child session is already running"
     )
-    assert windows_session.rejection(windows_session.SessionFacts("Enterprise", False, False, False)) == (
+    assert windows_session.WindowsSession.rejection(windows_session.SessionFacts("Enterprise", False, False, False)) == (
         "remote desktop cannot connect to localhost"
     )
-    assert windows_session.rejection(windows_session.SessionFacts("Education", True, False, False)) is None
-    assert windows_session.should_refuse_session(True, True) is True
-    assert windows_session.should_refuse_session(True, False) is False
+    assert windows_session.WindowsSession.rejection(windows_session.SessionFacts("Education", True, False, False)) is None
+    assert windows_session.WindowsSession.should_refuse_session(True, True) is True
+    assert windows_session.WindowsSession.should_refuse_session(True, False) is False
 
     child_to_parent = queue.Queue()
     parent_to_child = queue.Queue()
     child = windows_session.SessionChannel(child_to_parent.put, parent_to_child.get)
 
     def answer():
-        windows_session.decode(child_to_parent.get())
-        parent_to_child.put(windows_session.encode("answer", text="42"))
+        windows_session.WindowsSession.decode(child_to_parent.get())
+        parent_to_child.put(windows_session.WindowsSession.encode("answer", text="42"))
 
     threading.Thread(target=answer).start()
     assert child.ask("which?") == "42"
 
     def cancel():
         child_to_parent.get()
-        parent_to_child.put(windows_session.encode("cancel"))
+        parent_to_child.put(windows_session.WindowsSession.encode("cancel"))
 
-    windows_session.reset_cancel()
+    windows_session.WindowsSession.reset_cancel()
     threading.Thread(target=cancel).start()
     with pytest.raises(Abort):
         child.ask("which?")
     monkeypatch.setenv("JEV_SESSION", "1")
     with pytest.raises(Abort, match="cancelled"):
-        windows.check_abort()
-    windows_session.reset_cancel()
+        windows.WindowsDesktop.check_abort()
+    windows_session.WindowsSession.reset_cancel()
 
 
 def test_the_picture_in_picture_opens_before_connect_and_launch_waits(monkeypatch):
@@ -675,15 +675,15 @@ def test_the_picture_in_picture_opens_before_connect_and_launch_waits(monkeypatc
         order.append("wait")
         pump()
 
-    monkeypatch.setattr(windows_session, "wait_for_child_explorer", wait)
+    monkeypatch.setattr(windows_session.WindowsSession, "wait_for_child_explorer", staticmethod(wait))
 
     def host(relay, hwnd, pipe, pid):
         relay.join(timeout=2)
         order.append("host")
         return "done"
 
-    monkeypatch.setattr(windows_session, "_host_until", host)
-    windows_session.run_controller(["open notepad"])
+    monkeypatch.setattr(windows_session.WindowsSession, "_host_until", staticmethod(host))
+    windows_session.WindowsSession.run_controller(["open notepad"])
     assert order.index("window") < order.index("connect") < order.index("wait") < order.index("launch")
     assert order.index("launch") < order.index("mask") < order.index("relay") < order.index("host")
     assert order.index("pump") < order.index("launch")
@@ -698,30 +698,30 @@ def test_a_failed_window_does_not_launch_into_the_session(monkeypatch):
         order.append("connect")
         raise OSError("no control")
 
-    monkeypatch.setattr(windows_session, "connect_child_session", connect)
+    monkeypatch.setattr(windows_session.WindowsSession, "connect_child_session", staticmethod(connect))
     with pytest.raises(SystemExit, match="did not start"):
-        windows_session.run_controller(["open notepad"])
+        windows_session.WindowsSession.run_controller(["open notepad"])
     assert "launch" not in order
     assert "close" in order
 
 
 def test_an_action_is_shown_under_the_mask_title():
-    assert windows_session.mask_line("driver: pressed run") == "pressed run"
-    assert windows_session.mask_line("clicked 'Archive'") == "clicked 'Archive'"
-    windows_session._bind_action_report(None)
-    windows_session.report_action("clicked 'Archive'")
+    assert windows_session.WindowsSession.mask_line("driver: pressed run") == "pressed run"
+    assert windows_session.WindowsSession.mask_line("clicked 'Archive'") == "clicked 'Archive'"
+    windows_session.WindowsSession._bind_action_report(None)
+    windows_session.WindowsSession.report_action("clicked 'Archive'")
     sent = []
-    windows_session._bind_action_report(sent.append)
-    windows_session.report_action("clicked 'Archive'")
+    windows_session.WindowsSession._bind_action_report(sent.append)
+    windows_session.WindowsSession.report_action("clicked 'Archive'")
     assert sent == ["clicked 'Archive'"]
-    windows_session._bind_action_report(None)
+    windows_session.WindowsSession._bind_action_report(None)
     messages = iter(
         [
-            windows_session.encode("log", text="driver: pressed run"),
-            windows_session.encode("done", text="ok"),
+            windows_session.WindowsSession.encode("log", text="driver: pressed run"),
+            windows_session.WindowsSession.encode("done", text="ok"),
         ]
     )
-    windows_session._relay(
+    windows_session.ChildSession._relay(
         object(),
         "goal",
         connect=lambda pipe: None,
@@ -729,23 +729,27 @@ def test_an_action_is_shown_under_the_mask_title():
         read=lambda pipe: next(messages),
     )
     assert windows_session._mask_action == "pressed run"
-    windows_session._note_mask_action("")
-    windows_session._bind_action_report(None)
+    windows_session.WindowsSession._note_mask_action("")
+    windows_session.WindowsSession._bind_action_report(None)
 
 
 def test_a_pending_read_does_not_take_the_blocking_write(monkeypatch):
     """The child keeps a read outstanding for cancel. That read must not block the log write."""
     windows_session._OVERLAPPED.add(7)
     calls = []
-    monkeypatch.setattr(windows_session, "_overlapped_write", lambda pipe, data: calls.append(("overlapped", pipe, data)))
+    monkeypatch.setattr(
+        windows_session.ChildSession,
+        "_overlapped_write",
+        staticmethod(lambda pipe, data: calls.append(("overlapped", pipe, data))),
+    )
 
     def blocking(pipe, data):
         calls.append(("blocking", pipe, data))
 
-    monkeypatch.setattr(windows_session, "_blocking_write", blocking)
+    monkeypatch.setattr(windows_session.ChildSession, "_blocking_write", staticmethod(blocking))
     try:
-        windows_session._write_line(7, "host: launched notepad.exe")
-        windows_session._write_line(object(), "parent")
+        windows_session.ChildSession._write_line(7, "host: launched notepad.exe")
+        windows_session.ChildSession._write_line(object(), "parent")
     finally:
         windows_session._OVERLAPPED.discard(7)
     assert calls[0] == ("overlapped", 7, b"host: launched notepad.exe")
@@ -766,11 +770,11 @@ def test_the_child_leaves_once_it_has_reported(monkeypatch):
 
     monkeypatch.setattr(windows_session.os, "_exit", stop)
     with pytest.raises(SystemExit):
-        windows_session.end_child(finish, "driver stalled", "runs/x")
+        windows_session.WindowsSession.end_child(finish, "driver stalled", "runs/x")
     assert seen == [("driver stalled", "runs/x"), 0]
     seen.clear()
     with pytest.raises(SystemExit):
-        windows_session.end_child(finish, "aborted (Ctrl-C)", "runs/x")
+        windows_session.WindowsSession.end_child(finish, "aborted (Ctrl-C)", "runs/x")
     assert seen == [("aborted (Ctrl-C)", "runs/x"), 130]
 
 
@@ -781,42 +785,46 @@ def test_the_relay_connects_before_it_writes_and_a_closed_window_cancels():
         calls.append("connect")
 
     def write(pipe, line):
-        calls.append(windows_session.decode(line)["type"])
+        calls.append(windows_session.WindowsSession.decode(line)["type"])
 
-    windows_session._relay(
+    windows_session.ChildSession._relay(
         object(),
         "goal",
         connect=connect,
         write=write,
-        read=lambda pipe: windows_session.encode("done", text="ok"),
+        read=lambda pipe: windows_session.WindowsSession.encode("done", text="ok"),
     )
     assert calls == ["connect", "task"]
     sent = []
-    windows_session._notify_closed(object(), write=lambda pipe, line: sent.append(windows_session.decode(line)["type"]))
+    windows_session.ChildSession._notify_closed(
+        object(), write=lambda pipe, line: sent.append(windows_session.WindowsSession.decode(line)["type"])
+    )
     assert sent == ["cancel"]
 
 
 def test_waiting_reports_a_disconnect_and_a_timeout_differently():
-    assert windows_session.child_wait_failure(1, False, False, 90, False) is None
-    gone = windows_session.child_wait_failure(1, False, False, 90, True)
-    late = windows_session.child_wait_failure(90, True, False, 90, True)
+    assert windows_session.WindowsSession.child_wait_failure(1, False, False, 90, False) is None
+    gone = windows_session.WindowsSession.child_wait_failure(1, False, False, 90, True)
+    late = windows_session.WindowsSession.child_wait_failure(90, True, False, 90, True)
     assert gone != late
     assert "disconnected" in gone
     assert "logging on" in late
-    assert windows_session.child_wait_failure(90, False, True, 90, False) is None
-    assert windows_session.host_stop(False, True, True) is None
-    assert windows_session.host_stop(True, True, True) == "done"
-    assert windows_session.host_stop(False, False, True) == "closed"
-    assert windows_session.host_stop(False, True, False) == "exited"
+    assert windows_session.WindowsSession.child_wait_failure(90, False, True, 90, False) is None
+    assert windows_session.WindowsSession.host_stop(False, True, True) is None
+    assert windows_session.WindowsSession.host_stop(True, True, True) == "done"
+    assert windows_session.WindowsSession.host_stop(False, False, True) == "closed"
+    assert windows_session.WindowsSession.host_stop(False, True, False) == "exited"
 
 
 def test_a_configured_password_is_remembered_and_the_desktop_stays_small(monkeypatch, clean_env):
     remembered = []
-    monkeypatch.setattr(windows_session, "_remember_credentials", lambda user, password: remembered.append(user))
+    monkeypatch.setattr(
+        windows_session.WindowsSession, "_remember_credentials", staticmethod(lambda user, password: remembered.append(user))
+    )
     clean_env.setenv("CLICKER_SESSION_USERNAME", "Administrator")
     clean_env.setenv("CLICKER_SESSION_PASSWORD", "secret-value")
     client = _connection_client()
-    windows_session._prepare_connection(client)
+    windows_session.WindowsSession._prepare_connection(client)
     assert remembered == ["Administrator"]
     assert client.UserName == "Administrator"
     assert client.ClearTextPassword == "secret-value"
@@ -829,11 +837,13 @@ def test_a_configured_password_is_remembered_and_the_desktop_stays_small(monkeyp
 def test_without_a_password_the_control_is_not_given_a_user(monkeypatch, clean_env, tmp_path):
     remembered = []
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(windows_session, "_remember_credentials", lambda user, password: remembered.append(user))
+    monkeypatch.setattr(
+        windows_session.WindowsSession, "_remember_credentials", staticmethod(lambda user, password: remembered.append(user))
+    )
     clean_env.delenv("CLICKER_SESSION_PASSWORD", raising=False)
     clean_env.delenv("CLICKER_SESSION_USERNAME", raising=False)
     client = _connection_client()
-    windows_session._prepare_connection(client)
+    windows_session.WindowsSession._prepare_connection(client)
     assert remembered == []
     assert not hasattr(client, "UserName")
     assert client.FullScreen is False
@@ -851,20 +861,20 @@ def _connection_client():
 def test_the_picture_window_is_the_small_frame():
     assert (windows_session.FRAME_WIDTH, windows_session.FRAME_HEIGHT) == (1280, 800)
     assert (windows_session.DESKTOP_WIDTH, windows_session.DESKTOP_HEIGHT) == (1280, 800)
-    assert windows_session.desktop_oversized(1920, 1080)
-    assert not windows_session.desktop_oversized(1280, 800)
-    assert "WS_EX_TOPMOST" not in getsource(windows_session._create_frame)
-    assert "SetWindowPos" not in getsource(windows_session._reveal_hosted_windows)
+    assert windows_session.WindowsSession.desktop_oversized(1920, 1080)
+    assert not windows_session.WindowsSession.desktop_oversized(1280, 800)
+    assert "WS_EX_TOPMOST" not in getsource(windows_session.WindowsSession._create_frame)
+    assert "SetWindowPos" not in getsource(windows_session.WindowsSession._reveal_hosted_windows)
 
 
 def test_the_run_covers_the_window_while_the_agent_works():
     assert windows_session.MASK_TEXT == "智能体执行中"
-    source = getsource(windows_session.run_controller)
+    source = getsource(windows_session.WindowsSession.run_controller)
     assert source.index("_show_execution_mask") < source.index("_host_until")
 
 
 def test_the_child_session_is_launched_acting():
-    assert "--act" in windows_session.child_command(r"C:\Python\python.exe")
+    assert "--act" in windows_session.WindowsSession.child_command(r"C:\Python\python.exe")
     assert cli.Clicker.child_argv("save it", ["--act"]) == ["save it", "--act"]
 
 
@@ -877,26 +887,38 @@ def test_the_child_binds_the_input_desktop_before_it_starts():
 
 def test_attaching_the_input_desktop_is_refused_off_the_machine():
     with pytest.raises(RuntimeError, match="real machine"):
-        windows_session.attach_input_desktop()
+        windows_session.WindowsSession.attach_input_desktop()
 
 
 def _patch_session(monkeypatch, order, client):
     monkeypatch.setattr(
-        windows_session, "collect_facts", lambda: windows_session.SessionFacts("Professional", True, False, False)
+        windows_session.WindowsSession,
+        "collect_facts",
+        staticmethod(lambda: windows_session.SessionFacts("Professional", True, False, False)),
     )
-    monkeypatch.setattr(windows_session, "create_session_pipe", lambda name: object())
-    monkeypatch.setattr(windows_session, "enable_child_session", lambda: order.append("enable"))
-    monkeypatch.setattr(windows_session, "open_child_window", lambda: order.append("window") or (1, client))
-    monkeypatch.setattr(windows_session, "connect_child_session", lambda got: order.append("connect") if got is client else None)
-    monkeypatch.setattr(windows_session, "wait_for_child_explorer", lambda pump, deadline, got: order.append("wait"))
-    monkeypatch.setattr(windows_session, "launch_in_session", lambda name: order.append("launch") or 0)
-    monkeypatch.setattr(windows_session, "_show_execution_mask", lambda hwnd: order.append("mask"))
-    monkeypatch.setattr(windows_session, "_hide_execution_mask", lambda: None)
-    monkeypatch.setattr(windows_session, "_relay", lambda pipe, goal: order.append("relay"))
-    monkeypatch.setattr(windows_session, "_host_until", lambda relay, hwnd, pipe, pid: "done")
-    monkeypatch.setattr(windows_session, "_close_window", lambda hwnd, got: order.append("close"))
-    monkeypatch.setattr(windows_session, "_pump_messages", lambda: order.append("pump"))
-    monkeypatch.setattr(windows_session, "_window_open", lambda hwnd: True)
+    monkeypatch.setattr(windows_session.WindowsSession, "create_session_pipe", staticmethod(lambda name: object()))
+    monkeypatch.setattr(windows_session.WindowsSession, "enable_child_session", staticmethod(lambda: order.append("enable")))
+    monkeypatch.setattr(
+        windows_session.WindowsSession, "open_child_window", staticmethod(lambda: order.append("window") or (1, client))
+    )
+    monkeypatch.setattr(
+        windows_session.WindowsSession,
+        "connect_child_session",
+        staticmethod(lambda got: order.append("connect") if got is client else None),
+    )
+    monkeypatch.setattr(
+        windows_session.WindowsSession, "wait_for_child_explorer", staticmethod(lambda pump, deadline, got: order.append("wait"))
+    )
+    monkeypatch.setattr(
+        windows_session.WindowsSession, "launch_in_session", staticmethod(lambda name: order.append("launch") or 0)
+    )
+    monkeypatch.setattr(windows_session.WindowsSession, "_show_execution_mask", staticmethod(lambda hwnd: order.append("mask")))
+    monkeypatch.setattr(windows_session.WindowsSession, "_hide_execution_mask", staticmethod(lambda: None))
+    monkeypatch.setattr(windows_session.ChildSession, "_relay", staticmethod(lambda pipe, goal: order.append("relay")))
+    monkeypatch.setattr(windows_session.WindowsSession, "_host_until", staticmethod(lambda relay, hwnd, pipe, pid: "done"))
+    monkeypatch.setattr(windows_session.WindowsSession, "_close_window", staticmethod(lambda hwnd, got: order.append("close")))
+    monkeypatch.setattr(windows_session.WindowsSession, "_pump_messages", staticmethod(lambda: order.append("pump")))
+    monkeypatch.setattr(windows_session.WindowsSession, "_window_open", staticmethod(lambda hwnd: True))
 
 
 def test_clicker_session_on_this_platform_does_not_start_a_process():

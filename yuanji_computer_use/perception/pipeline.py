@@ -27,7 +27,7 @@ from ..parse import ocr as parse_ocr
 from ..parse import weights as parse_weights
 from ..parse.fuse import Fuser
 from ..platforms.adapter import desktop
-from ..platforms.bound import CaptureTimeout, call_within
+from ..platforms.bound import Bound, CaptureTimeout
 from ..timing import (
     FIELD_TIMEOUT,
     OCR_AHEAD,
@@ -287,7 +287,7 @@ class Capture:
         A screenshot that misses raises CaptureTimeout after the timing flag is set. The sentinel is
         not None: a focused control that is genuinely absent must not look like a timeout.
         """
-        found = call_within(seconds, lambda: fn(*args), _MISSED)
+        found = Bound.call_within(seconds, lambda: fn(*args), _MISSED)
         if found is not _MISSED:
             return found
         if timing is not None:

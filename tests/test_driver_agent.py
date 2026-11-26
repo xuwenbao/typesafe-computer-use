@@ -28,7 +28,7 @@ from yuanji_computer_use.platforms import macos
 from yuanji_computer_use.platforms.adapter import desktop
 from yuanji_computer_use.runner import RunConfig
 
-_MAC_ELEMENT_TEXT = macos.element_text
+_MAC_ELEMENT_TEXT = macos.MacDesktop.element_text
 LARGE = (Path(__file__).parent / "fixtures" / "largefile.txt").read_text(encoding="utf-8")
 
 
@@ -57,11 +57,11 @@ def test_a_custom_endpoint_does_not_receive_the_openai_key(clean_env):
 
 
 def test_macos_element_text_is_the_accessibility_value(monkeypatch):
-    monkeypatch.setattr(macos, "element_text", _MAC_ELEMENT_TEXT)
-    monkeypatch.setattr(macos, "ax_value", lambda ref: "hello" if ref == "there" else None)
+    monkeypatch.setattr(macos.MacDesktop, "element_text", staticmethod(_MAC_ELEMENT_TEXT))
+    monkeypatch.setattr(macos.MacDesktop, "ax_value", staticmethod(lambda ref: "hello" if ref == "there" else None))
 
-    assert macos.element_text("there") == "hello"
-    assert macos.element_text("missing") is None
+    assert macos.MacDesktop.element_text("there") == "hello"
+    assert macos.MacDesktop.element_text("missing") is None
 
 
 def _turn(text: str = "Save", ref=None) -> Turn:

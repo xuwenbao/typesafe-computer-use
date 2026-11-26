@@ -64,18 +64,18 @@ class Clicker:
             if sys.platform != "win32":
                 sys.exit("clicker session only runs on Windows")
             config.Config.load_dotenv(DOTENV)
-            from .platforms.windows_session import run_controller
+            from .platforms.windows_session import WindowsSession
 
-            run_controller(args[1:])
+            WindowsSession.run_controller(args[1:])
             return
         # 子会话里的 jev 若仍在控制台会话，必须在截图和输入之前退出。提问走管道。
         session_ask = None
         session_done = None
         if os.environ.get("JEV_SESSION") == "1":
-            from .platforms.windows_session import child_startup, end_child, refuse_if_console
+            from .platforms.windows_session import WindowsSession
 
-            refuse_if_console()
-            goal, session_ask, session_done = child_startup()
+            WindowsSession.refuse_if_console()
+            goal, session_ask, session_done = WindowsSession.child_startup()
             extra = list(sys.argv[1:] if argv is None else argv)
             argv = Clicker.child_argv(goal, extra)
         Capture.mark("main")
@@ -148,7 +148,7 @@ class Clicker:
 
         state = Runner.run(cfg, ctx_factory)
         if session_done is not None:
-            end_child(session_done, state.outcome, str(args.out))
+            WindowsSession.end_child(session_done, state.outcome, str(args.out))
         if state.outcome.startswith("aborted"):
             sys.exit(130)
 

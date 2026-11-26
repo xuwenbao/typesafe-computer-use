@@ -23,7 +23,7 @@ from ..config import Config
 from ..models import AxNode, ElementState, Field
 from ..platforms.uia_patterns import ID_TO_NAME, OPERATION_PATTERN, OPERATIONS, PATTERN_IDS, VALUE
 from ..platforms.uia_roles import ROLE_TO_CONTROL_TYPE_ID
-from ..platforms.wheel import wheel_delta
+from ..platforms.wheel import Wheel
 from . import tree
 
 NextObs = Callable[[list[str]], dict]
@@ -412,7 +412,7 @@ class WAADesktop:
         The actions ask for lines. pyautogui on Windows sends that number as a wheel delta, and one
         notch is 120, so the lines are converted first. Ten lines is a few notches, not a twelfth.
         """
-        delta = wheel_delta(lines)
+        delta = Wheel.wheel_delta(lines)
         if at is not None:
             self._do(f"pyautogui.scroll({delta}, x={round(at[0])}, y={round(at[1])})")
             return

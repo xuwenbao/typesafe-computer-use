@@ -131,8 +131,8 @@ def no_real_machine(monkeypatch):
         return call
 
     for name in ("_post", "osascript", "screenshot", "open_path", "list_windows", "launch_app", "element_state", "element_text"):
-        monkeypatch.setattr(macos, name, refuse(f"macos.{name}"))
-    monkeypatch.setattr(macos, "mouse_location", lambda: (500.0, 500.0))
+        monkeypatch.setattr(macos.MacDesktop, name, staticmethod(refuse(f"macos.{name}")))
+    monkeypatch.setattr(macos.MacDesktop, "mouse_location", staticmethod(lambda: (500.0, 500.0)))
     if REAL_ACCESSIBILITY:
         for name in ("AXUIElementPerformAction", "AXUIElementSetAttributeValue"):
             monkeypatch.setattr(macos.AS, name, refuse(f"ApplicationServices.{name}"))
@@ -155,7 +155,7 @@ def no_real_machine(monkeypatch):
         "element_text",
         "owned_popup_bounds",
     ):
-        monkeypatch.setattr(windows, name, refuse(f"windows.{name}"))
+        monkeypatch.setattr(windows.WindowsDesktop, name, staticmethod(refuse(f"windows.{name}")))
     for name in (
         "enable_child_session",
         "open_child_window",
@@ -169,8 +169,8 @@ def no_real_machine(monkeypatch):
         "in_console_session",
         "collect_facts",
     ):
-        monkeypatch.setattr(windows_session, name, refuse(f"windows_session.{name}"))
-    monkeypatch.setattr(windows, "mouse_location", lambda: (500.0, 500.0))
+        monkeypatch.setattr(windows_session.WindowsSession, name, staticmethod(refuse(f"windows_session.{name}")))
+    monkeypatch.setattr(windows.WindowsDesktop, "mouse_location", staticmethod(lambda: (500.0, 500.0)))
 
     # The browser backend: no Chrome and no process of any kind, nothing over CDP, and no
     # connection except to a server on this machine that the test started itself.

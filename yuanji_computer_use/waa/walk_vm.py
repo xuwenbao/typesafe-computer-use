@@ -36,12 +36,13 @@ class Walker:
     def _rules():
         """The role table. The import works in jev; the names work in the concatenated VM script."""
         try:
-            from yuanji_computer_use.platforms.uia_roles import DOCUMENT_ID, document_role, pressable, role_for_id
+            from yuanji_computer_use.platforms.uia_roles import DOCUMENT_ID, Roles
         except ImportError:
-            pressable = globals()["pressable"]
-            role_for_id = globals()["role_for_id"]
-            document_role = globals()["document_role"]
+            Roles = globals()["Roles"]
             DOCUMENT_ID = globals()["DOCUMENT_ID"]
+        document_role = Roles.document_role
+        pressable = Roles.pressable
+        role_for_id = Roles.role_for_id
 
         def role_of(node):
             control_type = node.control_type()

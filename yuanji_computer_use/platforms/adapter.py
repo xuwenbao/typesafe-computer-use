@@ -101,13 +101,15 @@ def pick_host() -> Desktop:
     """The adapter for the OS this process runs on. Off macOS and Windows, macos.py when it loads (the
     Linux test runner stands in for its packages), and a `NoDesktop` when it does not."""
     if sys.platform == "win32":
-        return importlib.import_module(f"{__package__}.windows")
+        windows = importlib.import_module(f"{__package__}.windows")
+        return windows.WindowsDesktop()
     try:
-        return importlib.import_module(f"{__package__}.macos")
+        macos = importlib.import_module(f"{__package__}.macos")
     except ImportError as missing:
         if sys.platform == "darwin":
             raise
         return NoDesktop(f"{sys.platform} has no desktop adapter ({missing})")
+    return macos.MacDesktop()
 
 
 host: Desktop = pick_host()

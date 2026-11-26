@@ -6,7 +6,7 @@ from conftest import busy_page
 from yuanji_computer_use.models import AxNode, Item
 from yuanji_computer_use.perception import pipeline as perception
 from yuanji_computer_use.platforms.adapter import desktop
-from yuanji_computer_use.platforms.ax_walk import AxAttrs, walk_actionable
+from yuanji_computer_use.platforms.ax_walk import AxAttrs, AxWalk
 
 DISPLAY = (1728.0, 1117.0)
 
@@ -16,7 +16,7 @@ def node(role, label="", frame=(10.0, 10.0, 100.0, 20.0), press=False, children=
 
 
 def walk(root, **kwargs):
-    return walk_actionable(
+    return AxWalk.walk_actionable(
         root,
         lambda n: n["children"],
         lambda n: AxAttrs(n["role"], n["label"], n["frame"]),
@@ -341,7 +341,7 @@ def test_a_subtree_repeated_under_several_parents_is_walked_once():
     def attrs(n):
         return AxAttrs(roles.get(n, "AXMenuBar" if n.startswith("bar") else "AXMenuBarItem"), labels.get(n, ""), frames[n])
 
-    found, _, cap_hit = walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
+    found, _, cap_hit = AxWalk.walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
     assert [n.label for n in found] == ["File"]
     assert not cap_hit
 
@@ -364,7 +364,7 @@ def test_a_wrapper_keyed_like_its_parent_is_walked_into_and_not_listed_twice():
     def attrs(n):
         return AxAttrs(roles.get(n, "AXButton"), "OK" if n in ("button", "twin") else "", frames[n])
 
-    found, _, cap_hit = walk_actionable("app", lambda n: tree[n], attrs, lambda n: [], 1000, 800)
+    found, _, cap_hit = AxWalk.walk_actionable("app", lambda n: tree[n], attrs, lambda n: [], 1000, 800)
     assert [(n.label, n.ref) for n in found] == [("OK", "button")]
     assert not cap_hit
 
@@ -377,6 +377,6 @@ def test_an_app_that_lists_itself_as_a_child_terminates():
     def attrs(n):
         return AxAttrs(roles[n], "File" if n == "file" else "", frames[n])
 
-    found, _, cap_hit = walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
+    found, _, cap_hit = AxWalk.walk_actionable("app", lambda n: tree[n], attrs, lambda n: ["AXPress"], 1000, 800)
     assert [n.label for n in found] == ["File"]
     assert not cap_hit

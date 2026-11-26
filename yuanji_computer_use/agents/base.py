@@ -38,9 +38,9 @@ class BaseAgent:
         self.log = session.log
 
     def report(self, line: str) -> None:
-        from ..platforms.windows_session import report_action
+        from ..platforms.windows_session import WindowsSession
 
-        report_action(line)
+        WindowsSession.report_action(line)
 
     def say(self, line: str, *, remember: bool = True) -> None:
         """写进运行日志。`remember` 时同时留下给后面的角色，并送到蒙板。"""

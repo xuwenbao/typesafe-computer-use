@@ -10,29 +10,37 @@ from __future__ import annotations
 import json
 
 
-def main() -> None:
-    import sys
+class CaptureProc:
+    """One screenshot, then the focused control and the address bar, in a process of its own."""
 
-    png = sys.argv[1]
-    browser = sys.argv[2] if len(sys.argv) > 2 else ""
-    from yuanji_computer_use.platforms.windows_session import attach_input_desktop
+    @staticmethod
+    def main() -> None:
+        import sys
 
-    attach_input_desktop()
-    from yuanji_computer_use.platforms.windows import browser_url, focused_field, screenshot
+        png = sys.argv[1]
+        browser = sys.argv[2] if len(sys.argv) > 2 else ""
+        from yuanji_computer_use.platforms.windows_session import WindowsSession
 
-    screenshot().save(png)
-    print("shot", flush=True)
-    field = None
-    url = None
-    try:
-        field = focused_field()
-    except Exception:
+        WindowsSession.attach_input_desktop()
+        from yuanji_computer_use.platforms.windows import WindowsDesktop
+
+        WindowsDesktop.screenshot().save(png)
+        print("shot", flush=True)
         field = None
-    try:
-        url = browser_url(browser) if browser else None
-    except Exception:
         url = None
-    print(json.dumps({"field": None if field is None else field.record(), "url": url}), flush=True)
+        try:
+            field = WindowsDesktop.focused_field()
+        except Exception:
+            field = None
+        try:
+            url = WindowsDesktop.browser_url(browser) if browser else None
+        except Exception:
+            url = None
+        print(json.dumps({"field": None if field is None else field.record(), "url": url}), flush=True)
+
+
+def main() -> None:
+    return CaptureProc.main()
 
 
 if __name__ == "__main__":

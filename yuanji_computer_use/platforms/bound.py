@@ -21,33 +21,6 @@ class CaptureTimeout(Exception):
     """A screenshot did not return before its limit, so the step cannot start."""
 
 
-def call_within[T](seconds: float, fn: Callable[[], T], default: T) -> T:
-    """Return what `fn` returns, or `default` when it has not returned in `seconds`.
-
-    An error that arrives in time is raised here. One that arrives after the limit is
-    dropped with the thread, which ends on its own. macOS and the tests use this. Windows
-    capture does not: that wait would run the UI call on this thread.
-    """
-    box: list[T] = []
-    error: list[Exception] = []
-    done = threading.Event()
-
-    def run() -> None:
-        try:
-            box.append(fn())
-        except Exception as caught:
-            error.append(caught)
-        finally:
-            done.set()
-
-    threading.Thread(target=run, name="jev-bound", daemon=True).start()
-    if not done.wait(seconds):
-        return default
-    if error:
-        raise error[0]
-    return box[0]
-
-
 class SilentEvent:
     """Set from one thread, waited on from another. The Windows wait does not dispatch COM."""
 
@@ -105,35 +78,66 @@ class CaptureLines:
         self.done.set()
 
 
-def await_capture(shot, done, shot_wait: float, detail_wait: float, kill: Callable[[], None]) -> tuple[bool, bool]:
-    """Wait for the screenshot line, then for the focus and address. Kill the process if either misses.
+class Bound:
+    """A call that gives up when it does not return in time."""
 
-    Returns whether the screenshot arrived and whether the detail line arrived.
-    """
-    if not shot.wait(shot_wait):
-        kill()
-        return False, False
-    if not done.wait(detail_wait):
-        kill()
-        return True, False
-    return True, True
+    @staticmethod
+    def call_within[T](seconds: float, fn: Callable[[], T], default: T) -> T:
+        """Return what `fn` returns, or `default` when it has not returned in `seconds`.
 
+        An error that arrives in time is raised here. One that arrives after the limit is
+        dropped with the thread, which ends on its own. macOS and the tests use this. Windows
+        capture does not: that wait would run the UI call on this thread.
+        """
+        box: list[T] = []
+        error: list[Exception] = []
+        done = threading.Event()
 
-def assemble_capture(got_shot: bool, detail: str | None, image, timing: dict | None):
-    """The image from a finished read, or CaptureTimeout when the screenshot never arrived.
+        def run() -> None:
+            try:
+                box.append(fn())
+            except Exception as caught:
+                error.append(caught)
+            finally:
+                done.set()
 
-    A screenshot with no detail line is a screen whose focus and address counted as absent.
-    `detail` is the JSON line: `{"field": record | null, "url": str | null}`.
-    """
-    if not got_shot or image is None:
-        raise CaptureTimeout("screenshot")
-    if not detail:
-        if timing is not None:
-            timing[FIELD_TIMEOUT] = 1.0
-            timing[URL_TIMEOUT] = 1.0
-        return image, None, None
-    try:
-        data = json.loads(detail)
-    except json.JSONDecodeError:
-        data = {}
-    return image, data.get("field"), data.get("url")
+        threading.Thread(target=run, name="jev-bound", daemon=True).start()
+        if not done.wait(seconds):
+            return default
+        if error:
+            raise error[0]
+        return box[0]
+
+    @staticmethod
+    def await_capture(shot, done, shot_wait: float, detail_wait: float, kill: Callable[[], None]) -> tuple[bool, bool]:
+        """Wait for the screenshot line, then for the focus and address. Kill the process if either misses.
+
+        Returns whether the screenshot arrived and whether the detail line arrived.
+        """
+        if not shot.wait(shot_wait):
+            kill()
+            return False, False
+        if not done.wait(detail_wait):
+            kill()
+            return True, False
+        return True, True
+
+    @staticmethod
+    def assemble_capture(got_shot: bool, detail: str | None, image, timing: dict | None):
+        """The image from a finished read, or CaptureTimeout when the screenshot never arrived.
+
+        A screenshot with no detail line is a screen whose focus and address counted as absent.
+        `detail` is the JSON line: `{"field": record | null, "url": str | null}`.
+        """
+        if not got_shot or image is None:
+            raise CaptureTimeout("screenshot")
+        if not detail:
+            if timing is not None:
+                timing[FIELD_TIMEOUT] = 1.0
+                timing[URL_TIMEOUT] = 1.0
+            return image, None, None
+        try:
+            data = json.loads(detail)
+        except json.JSONDecodeError:
+            data = {}
+        return image, data.get("field"), data.get("url")

@@ -12,7 +12,7 @@ from typing import Protocol
 from ...parse.marks import Marker
 from ...perception import pipeline as perception
 from ...perception.pipeline import Perceiver
-from ...platforms.windows_session import report_action
+from ...platforms.windows_session import WindowsSession
 from ...report import ScreenReport
 from ...timing import Timing as Phases
 from ..session import Session, StepContext
@@ -99,7 +99,7 @@ class SessionReport:
 
     def after(self, session: Session, sc: StepContext, log) -> None:
         if sc.what:
-            report_action(sc.what)
+            WindowsSession.report_action(sc.what)
 
     def on_error(self, session: Session, sc: StepContext, error: BaseException) -> None:
         return None
